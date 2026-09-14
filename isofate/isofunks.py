@@ -12,6 +12,7 @@ from scipy.interpolate import RegularGridInterpolator as RGI
 # import imports
 from isofate.constants import const, binary_diffusion
 from isofate.orbit_params import *
+from isofate.species import SYMBOLS
 
 # for melt fraction data
 import importlib.resources
@@ -556,10 +557,9 @@ def Phi_minor_species(Phi_1, Phi_2, H_1, H_2, H_minor, N_values, T, minor_specie
     if sum(N_values) == 0:
         return 0
 
-    species_names = ['H', 'He', 'D', 'O', 'C', 'N', 'S']
-    minor_name = species_names[minor_species_idx]
-    light_name = species_names[light_dominant_idx]    # species 1
-    heavy_name = species_names[heavy_dominant_idx]    # species 2
+    minor_name = SYMBOLS[minor_species_idx]
+    light_name = SYMBOLS[light_dominant_idx]    # species 1
+    heavy_name = SYMBOLS[heavy_dominant_idx]    # species 2
 
     # Get binary diffusion coefficients
     b_1_minor = get_binary_diffusion_coeff(light_name, minor_name, T)  # b between species 1 and minor
