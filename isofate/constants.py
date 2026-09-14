@@ -182,7 +182,7 @@ class BinaryDiffusionCoefficients:
         return 7.183e19 * T**0.728
 
     def H_He(self, T):
-        """From Mason & Marrero 1970 for H in He."""
+        """From Mason & Marrero 1970 (and Hu, Seager, Yung 2015) for H in He."""
         return 1.04e20 * T**0.732
 
     def He_D(self, T):
