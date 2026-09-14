@@ -31,17 +31,12 @@ from isofate.isofunks import (
     phiE_CP,
 )
 from isofate.species import ATOMIC_MASSES, SYMBOLS
-from isofate.system import Planet, System
+from isofate.system import System
 
 
 def isocalc(
-    f_atm,
-    Mp,
-    Mstar,
+    system: System,
     F0,
-    Fp,
-    T,
-    d,
     time=5e9,
     mechanism="XUV",
     rad_evol=True,
@@ -74,8 +69,6 @@ def isocalc(
     save_molecules=False,
     mantle_iron_dict=False,
     dynamic_phi=False,
-    planet: Planet | None = None,
-    system: System | None = None,
 ):
     """
     This is a test
@@ -152,26 +145,22 @@ def isocalc(
     #  - 'Phi_D': D number flux [atoms/s/m2]
     # '''
 
-    # If a System is given, it overrides Mstar/d/T/Fp *and* implies its .planet (handled by the
-    # `planet` branch below) - Mstar, d, T, and Fp are all confirmed fixed for the whole run
-    # (never reassigned anywhere below), so it's safe to read them from `system` once, here.
-    # F0 is deliberately NOT sourced from System: it's a modeling choice (e.g. F0 = Fp*1e-3 "for
-    # M stars"), not a strict derived quantity, so the caller must still supply it directly.
-    if system is not None:
-        planet = system.planet
-        Mstar = system.star.mass
-        d = system.semi_major_axis
-        T = system.equilibrium_temperature
-        Fp = system.insolation
+    # Mstar, d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere
+    # below), so they're read from `system` once, here. F0 is deliberately NOT derived from
+    # System: it's a modeling choice (e.g. F0 = Fp*1e-3 "for M stars"), not a strict derived
+    # quantity, so the caller must still supply it directly.
+    planet = system.planet
+    Mstar = system.star.mass
+    d = system.semi_major_axis
+    T = system.equilibrium_temperature
+    Fp = system.insolation
 
-    # If a Planet is given, it overrides the f_atm/Mp arguments. Only planet.mass and
-    # planet.f_atm are ever read, and only here, once, to seed the *initial* conditions: Mp
-    # never changes over the run, but f_atm is immediately reassigned to a plain float and
-    # becomes this loop's own time-evolving local variable (see M_atm/f_atm below) - it must
-    # never be read from `planet` again after this point.
-    if planet is not None:
-        Mp = planet.mass
-        f_atm = planet.f_atm
+    # Only planet.mass and planet.f_atm are ever read, and only here, once, to seed the
+    # *initial* conditions: Mp never changes over the run, but f_atm is immediately reassigned
+    # to a plain float and becomes this loop's own time-evolving local variable (see M_atm/f_atm
+    # below) - it must never be read from `planet` (or `system`) again after this point.
+    Mp = planet.mass
+    f_atm = planet.f_atm
 
     ###_____Initialize physical values_____###
 

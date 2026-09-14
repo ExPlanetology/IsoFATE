@@ -23,14 +23,6 @@ def SemiMajor(M, P):
     a = ((const.G*M/4/np.pi**2)*P**2)**(1/3)
     return a
 
-def Period(a, M):
-    '''
-    Input: M, stellar mass [kg]; a, semi-major axis [m]
-    Output: orbital period [s]
-    '''
-    P = np.sqrt(a**3*4*np.pi**2/const.G/M)
-    return P
-
 def Insolation(L, a):
     '''
     Input: L, stellar luminosity [W]; a, semi-major axis [m]

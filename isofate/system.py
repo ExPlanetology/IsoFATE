@@ -12,6 +12,8 @@ blocks with a single `Star(...)`/`Planet(...)` instance per system.
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from isofate.constants import const
 from isofate.isofunks import R_Bondi, R_core, R_Hill
 from isofate.orbit_params import EqTemp, Insolation, Luminosity, SemiMajor
@@ -58,6 +60,12 @@ class Star:
         """
         # TODO: Maybe remove if only relevant for LHS 1140?
         return 5.9 - 15.4 * (self.mass / const.Ms)
+
+    def period_for_semi_major_axis(self, a: float) -> float:
+        """Orbital period [s] a planet at semi-major axis `a` [m] would need, around this star.
+        The inverse of `System.semi_major_axis` - a "what-if" helper for picking a
+        `Planet.period` at construction time, before any Planet/System exists yet."""
+        return (a**3 * 4 * np.pi**2 / const.G / self.mass) ** 0.5
 
 
 @dataclass(frozen=True)

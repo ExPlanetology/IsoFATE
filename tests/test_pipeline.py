@@ -2,14 +2,17 @@
 interactive/plotting driver this is derived from).
 
 These pin the current (atmodeller v2preview) behavior of AtmodellerCoupler/isocalc so future
-refactoring has something concrete to check against. The pinned values were cross-checked once,
-by hand, against ../IsoFATE_main running the pre-v2 atmodeller API (0.9.1): the single-solve
-values agree to ~1e-4 relative, and the short isocalc() run agrees to ~1e-3 relative (small
-residual differences are expected from atmodeller's own solver/thermodynamic-data changes between
-versions, not from this coupling code). Longer, escape-dominated runs are NOT suitable for tight
-value-pinning: with as few as ~50 timesteps, the explicit time integration is sensitive enough to
-tiny per-step differences that trajectories diverge by orders of magnitude between otherwise
-equivalent runs, so only structural/invariant checks are used for those.
+refactoring has something concrete to check against. isocalc() now requires a `system=System(...)`
+argument (Mstar/d/T/Fp are derived from it; only F0 stays a separate, independent input - see
+isofate_coupler.py). The toy scenario below was re-cross-checked, by hand, against
+../IsoFATE_main running the pre-v2 atmodeller API (0.9.1) with the equivalent Mp/f_atm/Mstar/F0/
+Fp/T/d passed directly: the single-solve values agree to ~1e-4 relative, and the short isocalc()
+run agrees to ~1e-4 relative (small residual differences are expected from atmodeller's own
+solver/thermodynamic-data changes between versions, not from this coupling code). Longer,
+escape-dominated runs are NOT suitable for tight value-pinning: with as few as ~50 timesteps, the
+explicit time integration is sensitive enough to tiny per-step differences that trajectories
+diverge by orders of magnitude between otherwise equivalent runs, so only structural/invariant
+checks are used for those.
 
 Tolerances here are deliberately loose (rtol=1e-2) relative to the ~1e-4 cross-check agreement, to
 avoid false failures from ordinary atmodeller version bumps while still catching real regressions
@@ -66,9 +69,18 @@ def test_atmodeller_coupler_single_solve():
         assert results[key] == pytest.approx(value, rel=1e-2), key
 
 
+def _toy_system():
+    """A close-in, sun-like-star scenario. Not physically tuned to anything in particular - it
+    only exists to give isocalc() a small, fast, non-escape-dominated System to run."""
+    star = Star(radius=const.Rs, mass=1.989e30, temperature=5000)
+    period = star.period_for_semi_major_axis(0.05 * 1.496e11)  # ~0.05 au orbital distance
+    planet = Planet(mass=5.0 * const.Me, period=period, f_atm=0.01)
+    return System(star=star, planet=planet)
+
+
 def _toy_isocalc_kwargs(**overrides):
     kwargs = dict(
-        f_atm=0.01, Mp=5.0 * const.Me, Mstar=1.989e30, F0=500.0, Fp=1000.0, T=800.0, d=0.05 * 1.496e11,
+        system=_toy_system(), F0=500.0,
         time=1e6, n_steps=20, n_atmodeller=5,
         N_H=1e45, N_D=1e41, N_He=1e44, N_O=1.5e45, N_C=1e44, N_N=1e43, N_S=1e43,
     )
@@ -77,73 +89,26 @@ def _toy_isocalc_kwargs(**overrides):
 
 
 def test_isocalc_regression():
-    """Short, non-escape-dominated run; cross-checked against ../IsoFATE_main to ~1e-3 relative."""
+    """Short, non-escape-dominated run; cross-checked against ../IsoFATE_main to ~1e-4 relative."""
     sol = isocalc(**_toy_isocalc_kwargs())
 
     _assert_finite(sol['Matm'], sol['N_H'], sol['N_O_int'], sol['N_C_int'])
 
-    assert sol['Matm'][-1] == pytest.approx(2.809444108402718e+19, rel=1e-2)
-    assert sol['N_H'][-1] == pytest.approx(7.42475743016181e+38, rel=1e-2)
-    assert sol['N_O_int'][-1] == pytest.approx(5.303089889401503e+44, rel=1e-2)
-    assert sol['N_C_int'][-1] == pytest.approx(2.444968076267616e+43, rel=1e-2)
+    assert sol['Matm'][-1] == pytest.approx(2.883283328826164e+19, rel=1e-2)
+    assert sol['N_H'][-1] == pytest.approx(4.324375408000459e+38, rel=1e-2)
+    assert sol['N_O_int'][-1] == pytest.approx(4.89707843982286e+44, rel=1e-2)
+    assert sol['N_C_int'][-1] == pytest.approx(2.052401665343788e+43, rel=1e-2)
 
     final = sol['atmodeller_final']
-    assert final['O2_fugacity'] == pytest.approx(4.10970886379247, rel=1e-2)
-    assert final['log10dIW_1_bar'] == pytest.approx(1.732605765559164, rel=1e-2)
-    assert final['H2O_atm'] == pytest.approx(551580150905925.06, rel=1e-2)
-    assert final['H2O_mantle'] == pytest.approx(8.079300962092979e+20, rel=1e-2)
-
-
-def test_isocalc_accepts_planet():
-    """Passing planet=Planet(mass=Mp, f_atm=f_atm, ...) must exactly reproduce passing Mp/f_atm
-    directly - it only seeds the initial conditions, it must never be read again once the loop's
-    own (time-evolving) Mp/f_atm locals take over."""
-    kwargs = _toy_isocalc_kwargs()
-    Mp = kwargs.pop('Mp')
-    f_atm = kwargs.pop('f_atm')
-
-    sol_direct = isocalc(f_atm, Mp, **kwargs)
-
-    planet = Planet(mass=Mp, period=1e6, f_atm=f_atm)
-    sol_planet = isocalc(None, None, planet=planet, **kwargs)
-
-    for key in ('Matm', 'N_H', 'N_O_int', 'fatm'):
-        assert np.array_equal(sol_direct[key], sol_planet[key]), key
-
-
-def test_isocalc_accepts_system():
-    """Passing system=System(star=..., planet=...) must exactly reproduce passing
-    Mstar/d/T/Fp/Mp/f_atm directly - Mstar, d, T, and Fp are all confirmed fixed for the whole
-    run (never reassigned in isocalc), so System may seed them once, up front, same as planet
-    does for Mp/f_atm. F0 is NOT sourced from System (it's a modeling choice, not a strict
-    derived quantity) and must still be passed explicitly."""
-    kwargs = _toy_isocalc_kwargs()
-    Mp = kwargs.pop('Mp')
-    f_atm = kwargs.pop('f_atm')
-    Mstar = kwargs.pop('Mstar')
-    F0 = kwargs.pop('F0')
-    kwargs.pop('Fp')
-    kwargs.pop('T')
-    kwargs.pop('d')
-
-    star = Star(radius=6.957e8, mass=Mstar, temperature=5000)
-    planet = Planet(mass=Mp, period=1e6, f_atm=f_atm)
-    system = System(star=star, planet=planet)
-    d = system.semi_major_axis
-    T = system.equilibrium_temperature
-    Fp = system.insolation
-
-    sol_direct = isocalc(f_atm, Mp, Mstar, F0, Fp, T, d, **kwargs)
-    # F0 is not derived from `system` on purpose: it stays an independent input.
-    sol_system = isocalc(None, None, None, F0, None, None, None, system=system, **kwargs)
-
-    for key in ('Matm', 'N_H', 'N_O_int', 'fatm'):
-        assert np.array_equal(sol_direct[key], sol_system[key]), key
+    assert final['O2_fugacity'] == pytest.approx(4.409428671983565, rel=1e-2)
+    assert final['log10dIW_1_bar'] == pytest.approx(0.03379258263388761, abs=1e-2)
+    assert final['H2O_atm'] == pytest.approx(184845395611210.97, rel=1e-2)
+    assert final['H2O_mantle'] == pytest.approx(7.681862036973651e+20, rel=1e-2)
 
 
 @pytest.mark.parametrize("mantle_iron_type,expected_N_O_int", [
-    ("dynamic", 1.3666946350399496e+45),
-    ("static", 1.3666946350405508e+45),
+    ("dynamic", 1.4096757259007388e+45),
+    ("static", 1.4096757259007388e+45),
 ])
 def test_isocalc_mantle_iron_dict(mantle_iron_type, expected_N_O_int):
     """Regression-only pin (no reference to check against): ../IsoFATE_main crashes on this path

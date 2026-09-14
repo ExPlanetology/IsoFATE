@@ -132,17 +132,11 @@ print("dynamic_phi =", dynamic_phi)
 
 # run simulation (from isofate.py)
 sol = isocalc(
-    None,
-    None,
-    M_star,
+    system,
     F0,
-    Fp,
-    T,
-    d,
     time,
     mechanism,
     rad_evol,
-    planet=planet,
     N_H=N_H,
     N_He=N_He,
     N_D=N_D,
