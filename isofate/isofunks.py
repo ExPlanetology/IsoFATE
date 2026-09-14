@@ -931,14 +931,6 @@ def b_H2_HD(T):
     '''
     return 4.48e19*T**0.75
 
-def b_H_He(T):
-    '''
-    Input: T, temperature [K]
-    Output: Binary diffusion coefficient for H in He [molecules/m/s]
-    from Mason & Marrero 1970 (and Hu, Seager, Yung 2015)
-    '''
-    return 1.04e20*T**0.732
-
 def V_reduction(Mp, Ms, a, Rp):
     '''
     Planetary gravitational reduction factor due to stellar tidal forces
