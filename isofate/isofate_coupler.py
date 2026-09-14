@@ -31,7 +31,7 @@ from isofate.isofunks import (
     phiE_CP,
 )
 from isofate.species import ATOMIC_MASSES, SYMBOLS
-from isofate.system import Planet
+from isofate.system import Planet, System
 
 
 def isocalc(
@@ -75,6 +75,7 @@ def isocalc(
     mantle_iron_dict=False,
     dynamic_phi=False,
     planet: Planet | None = None,
+    system: System | None = None,
 ):
     """
     This is a test
@@ -150,6 +151,18 @@ def isocalc(
     #  - 'Phi_He': He number flux [atoms/s/m2]
     #  - 'Phi_D': D number flux [atoms/s/m2]
     # '''
+
+    # If a System is given, it overrides Mstar/d/T/Fp *and* implies its .planet (handled by the
+    # `planet` branch below) - Mstar, d, T, and Fp are all confirmed fixed for the whole run
+    # (never reassigned anywhere below), so it's safe to read them from `system` once, here.
+    # F0 is deliberately NOT sourced from System: it's a modeling choice (e.g. F0 = Fp*1e-3 "for
+    # M stars"), not a strict derived quantity, so the caller must still supply it directly.
+    if system is not None:
+        planet = system.planet
+        Mstar = system.star.mass
+        d = system.semi_major_axis
+        T = system.equilibrium_temperature
+        Fp = system.insolation
 
     # If a Planet is given, it overrides the f_atm/Mp arguments. Only planet.mass and
     # planet.f_atm are ever read, and only here, once, to seed the *initial* conditions: Mp

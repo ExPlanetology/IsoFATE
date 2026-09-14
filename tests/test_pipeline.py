@@ -21,7 +21,7 @@ import pytest
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller
 from isofate.constants import const
 from isofate.isofate_coupler import isocalc
-from isofate.system import Planet
+from isofate.system import Planet, Star, System
 
 
 def _assert_finite(*values):
@@ -109,6 +109,36 @@ def test_isocalc_accepts_planet():
 
     for key in ('Matm', 'N_H', 'N_O_int', 'fatm'):
         assert np.array_equal(sol_direct[key], sol_planet[key]), key
+
+
+def test_isocalc_accepts_system():
+    """Passing system=System(star=..., planet=...) must exactly reproduce passing
+    Mstar/d/T/Fp/Mp/f_atm directly - Mstar, d, T, and Fp are all confirmed fixed for the whole
+    run (never reassigned in isocalc), so System may seed them once, up front, same as planet
+    does for Mp/f_atm. F0 is NOT sourced from System (it's a modeling choice, not a strict
+    derived quantity) and must still be passed explicitly."""
+    kwargs = _toy_isocalc_kwargs()
+    Mp = kwargs.pop('Mp')
+    f_atm = kwargs.pop('f_atm')
+    Mstar = kwargs.pop('Mstar')
+    F0 = kwargs.pop('F0')
+    kwargs.pop('Fp')
+    kwargs.pop('T')
+    kwargs.pop('d')
+
+    star = Star(radius=6.957e8, mass=Mstar, temperature=5000)
+    planet = Planet(mass=Mp, period=1e6, f_atm=f_atm)
+    system = System(star=star, planet=planet)
+    d = system.semi_major_axis
+    T = system.equilibrium_temperature
+    Fp = system.insolation
+
+    sol_direct = isocalc(f_atm, Mp, Mstar, F0, Fp, T, d, **kwargs)
+    # F0 is not derived from `system` on purpose: it stays an independent input.
+    sol_system = isocalc(None, None, None, F0, None, None, None, system=system, **kwargs)
+
+    for key in ('Matm', 'N_H', 'N_O_int', 'fatm'):
+        assert np.array_equal(sol_direct[key], sol_system[key]), key
 
 
 @pytest.mark.parametrize("mantle_iron_type,expected_N_O_int", [
