@@ -1,15 +1,13 @@
-[build-system]
-requires = ["setuptools >= 61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "isofate"
 version = "0.1.2"
 requires-python = ">=3.11"
+readme = "README.md"
+license = "GPL-3.0-or-later"
 
 dependencies = [
- "numpy>=2.3",
- "scipy>=1.16.1",
+ "numpy>=1.24",
+ "scipy>=1.10.0",
  "matplotlib>=3.10.0",
  "atmodeller @ git+https://github.com/ExPlanetology/atmodeller.git@djbower/v2preview",
  "optimistix>=0.1.0",
@@ -19,7 +17,12 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0.0",
+    "beartype>=0.22.0,<0.23.0",
+    "jaxtyping>=0.3.2,<0.4.0",
+    "pre-commit>=4.2.0",
+    "pytest>=9.0.2",
+    "pytest-beartype>=0.2.0,<0.3.0",
+    "pytest-cov>=7.0.0",
 ]
 
 [tool.pytest.ini_options]
@@ -34,3 +37,7 @@ isofate = ["data/**/*"]
 
 #[tool.setuptools]
 #include-package-data = true
+
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
