@@ -1,6 +1,6 @@
 import numpy as np
 
-from isofate.constants import s2yr
+from isofate.constants import const
 from isofate.isofunks import Fxuv
 
 F0 = 1e2       # main-sequence XUV flux [W/m2]
@@ -13,7 +13,7 @@ PMS_FACTOR = 1e2
 
 
 def _seconds(years):
-    return years / s2yr
+    return years / const.s2yr
 
 
 def test_fxuv_pre_main_sequence_branch():

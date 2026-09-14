@@ -9,7 +9,7 @@ import time as TIME
 
 import matplotlib.pyplot as plt
 
-from isofate.constants import *
+from isofate.constants import const, binary_diffusion
 
 # from debug_isofate_coupler_v2 import *
 from isofate.isofate_coupler import *
@@ -36,11 +36,11 @@ start = TIME.time()
 # T_star = 4440 # [K]
 
 # # # LHS 1140
-R_star = 0.22*Rs # [m]
-M_star = 0.18*Ms # [kg]
+R_star = 0.22*const.Rs # [m]
+M_star = 0.18*const.Ms # [kg]
 T_star = 3096 # [K]
-t_jump = 5.9 - 15.4*(M_star/Ms)
-L = 0.0038*Ls
+t_jump = 5.9 - 15.4*(M_star/const.Ms)
+L = 0.0038*const.Ls
 
 # # Kepler-138
 # R_star = 0.535*Rs # [m]
@@ -111,8 +111,8 @@ L = Luminosity(R_star, T_star) # [W]
 
 # # # LHS 1140 b
 f_atm = 0.00085
-Mp = 5.6*Me
-P = 24.74/s2day
+Mp = 5.6*const.Me
+P = 24.74/const.s2day
 
 # GJ 3090 b
 # f_atm = 0.03
@@ -206,40 +206,40 @@ save_molecules = False
 mantle_iron_dict = False
 dynamic_phi = True
 OtoH_enhancement = 1
-OtoH_enhanced = OtoH_protosolar*OtoH_enhancement
-OtoH_enhanced_mass = OtoH_enhanced*(mu_O/mu_H)
+OtoH_enhanced = const.OtoH_protosolar*OtoH_enhancement
+OtoH_enhanced_mass = OtoH_enhanced*(const.mu_O/const.mu_H)
 
-N_He = (HetoH_protosolar_mass/(1 + HetoH_protosolar_mass))*M_atm/mu_He # initial He number [atoms]# N_He = 0
+N_He = (const.HetoH_protosolar_mass/(1 + const.HetoH_protosolar_mass))*M_atm/const.mu_He # initial He number [atoms]# N_He = 0
 # N_He = 0
 # N_H = (1 - DtoH_solar_mass - OtoH_protosolar_mass - CtoH_protosolar_mass)*M_atm/(1 + HetoH_protosolar_mass)/mu_H  # initial H number [atoms]
-N_H = (1 - DtoH_solar_mass - OtoH_enhanced_mass - CtoH_protosolar_mass - StoH_protosolar_mass - NtoH_protosolar_mass)*M_atm/(1 + HetoH_protosolar_mass)/mu_H  # initial H number [atoms]
+N_H = (1 - const.DtoH_solar_mass - OtoH_enhanced_mass - const.CtoH_protosolar_mass - const.StoH_protosolar_mass - const.NtoH_protosolar_mass)*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_H  # initial H number [atoms]
 # N_H = 0
 # N_H = M_atm/mu_H
-N_D = DtoH_solar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_D
+N_D = const.DtoH_solar_mass*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_D
 # N_D = 0
 # N_O = OtoH_protosolar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_O
-N_O = OtoH_enhanced_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_O
+N_O = OtoH_enhanced_mass*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_O
 # N_O = 0
-N_C = CtoH_protosolar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_C
+N_C = const.CtoH_protosolar_mass*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_C
 # N_C = 0
 # N_N = NtoH_protosolar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_N
-N_N = NtoH_protosolar_mass*M_atm/mu_N
+N_N = const.NtoH_protosolar_mass*M_atm/const.mu_N
 # N_N = 0
 # N_N = M_atm/mu_N
-N_S = StoH_protosolar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_S
+N_S = const.StoH_protosolar_mass*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_S
 # N_S = 0
-mu_avg = (N_H*mu_H + N_He*mu_He + N_D*mu_D + N_O*mu_O + N_C*mu_C + N_N*mu_N + N_S*mu_S)/(N_H+N_He+N_D+N_O+N_C+N_N+N_S)
+mu_avg = (N_H*const.mu_H + N_He*const.mu_He + N_D*const.mu_D + N_O*const.mu_O + N_C*const.mu_C + N_N*const.mu_N + N_S*const.mu_S)/(N_H+N_He+N_D+N_O+N_C+N_N+N_S)
 
 # these print statements serve as a check when running sim.py
 print('n_steps =', n_steps)
 print('n_atmodeller =', n_atmodeller)
 print('f_atm =', f_atm)
-print('Mp =', Mp/Me, 'M_earth')
+print('Mp =', Mp/const.Me, 'M_earth')
 print('F0 =', round(F0, 3), 'W/m2')
 print('flux model:', flux_model)
 print('stellar type:', stellar_type)
-print('P =', P*s2day, 'days')
-print('d =', round(a/au2m, 3), 'au')
+print('P =', P*const.s2day, 'days')
+print('d =', round(a/const.au2m, 3), 'au')
 print('Fp =', round(Fp, 1), 'W/m2')
 print('Teq =', round(T, 1), 'K')
 print('time =', time/1e9, 'Gyr')
@@ -305,7 +305,7 @@ if n_atmodeller != 0:
     n_H2O4S = sol['atmodeller_final']['H2O4S_atm']
     n_SO2 = sol['atmodeller_final']['SO2_atm']
     # n_H2O4S = sol['atmodeller_final']['H2O4S_atm']
-    n_total_atm = n_H2O + n_H2 + n_O2 + n_CO2 + n_CO + n_CH4 + n_N2 + n_S2 + n_H2O4S + n_SO2 + NHe_a[-1]/avogadro
+    n_total_atm = n_H2O + n_H2 + n_O2 + n_CO2 + n_CO + n_CH4 + n_N2 + n_S2 + n_H2O4S + n_SO2 + NHe_a[-1]/const.avogadro
     x_CO2 = n_CO2/n_total_atm
     x_CO = n_CO/n_total_atm
     x_CH4 = n_CH4/n_total_atm
@@ -317,7 +317,7 @@ if n_atmodeller != 0:
     x_H2O4S = n_H2O4S/n_total_atm
     x_SO2 = n_SO2/n_total_atm
     N_tot = N_H + N_He + N_D + N_O + N_C + N_N + N_S
-    N_tot_molecular = (n_H2O + n_H2 + n_O2 + n_CO + n_CO2 + n_N2 + n_S2 + n_H2O4S + n_SO2 + n_CH4)*avogadro + NHe_a[-1]
+    N_tot_molecular = (n_H2O + n_H2 + n_O2 + n_CO + n_CO2 + n_N2 + n_S2 + n_H2O4S + n_SO2 + n_CH4)*const.avogadro + NHe_a[-1]
 
     #### This is all wrong, you need to fix with the actual output. You're just using initial conditions here.
     # x_H = N_H/N_tot
@@ -341,23 +341,23 @@ if n_atmodeller != 0:
     # print('x_SO2 =', x_SO2)
 # calculate mass fraction of He
 
-Y = NHe_a*mu_He/(NH_a*mu_H + NHe_a*mu_He + ND_a*mu_D + NO_a*mu_O + NC_a*mu_C)
+Y = NHe_a*const.mu_He/(NH_a*const.mu_H + NHe_a*const.mu_He + ND_a*const.mu_D + NO_a*const.mu_O + NC_a*const.mu_C)
 
 print('\n')
 print('final f_atm =', fenv_a[-1])
-print('final f_atm by species =', (NH_a[-1]*mu_H + NHe_a[-1]*mu_He + ND_a[-1]*mu_D + NO_a[-1]*mu_O + NC_a[-1]*mu_C)/Mp)
+print('final f_atm by species =', (NH_a[-1]*const.mu_H + NHe_a[-1]*const.mu_He + ND_a[-1]*const.mu_D + NO_a[-1]*const.mu_O + NC_a[-1]*const.mu_C)/Mp)
 print('initial f_atm =', fenv_a[0])
-print('initial f_atm by species =', (N_H*mu_H + N_He*mu_He + N_D*mu_D + N_O*mu_O + N_C*mu_C)/Mp)
-print('final D/H =', ND_a[-1]/NH_a[-1]/DtoH_solar, '[Solar]')
-print('final O/H =', NO_a[-1]/NH_a[-1]/OtoH_protosolar, '[Solar]')
+print('initial f_atm by species =', (N_H*const.mu_H + N_He*const.mu_He + N_D*const.mu_D + N_O*const.mu_O + N_C*const.mu_C)/Mp)
+print('final D/H =', ND_a[-1]/NH_a[-1]/const.DtoH_solar, '[Solar]')
+print('final O/H =', NO_a[-1]/NH_a[-1]/const.OtoH_protosolar, '[Solar]')
 print('final X_He (molar concn) =', NHe_a[-1]/(NH_a[-1] + NHe_a[-1] + ND_a[-1] + NO_a[-1] + NC_a[-1])) # molar concentration
 print('final Y_He (mass concn) =', Y[-1]) # mass fraction
-print('final planetary radius =', rp_a[-1]/Re, 'R_Earth')
+print('final planetary radius =', rp_a[-1]/const.Re, 'R_Earth')
 print('\n')
 
 # more planetary properties for analytics
-mu = mu_solar
-t0 = 1e6/s2yr
+mu = const.mu_solar
+t0 = 1e6/const.s2yr
 r_core = R_core(Mp)
 r_env = R_env(Mp, f_atm, Fp, t0)
 r_atm = R_atm(T, Mp, r_core, r_env, mu)
@@ -396,39 +396,39 @@ fig, ((ax1, ax2, ax3), (ax4, ax5, ax6), (ax7, ax8, ax9)) = plt.subplots(3, 3, sh
 plt.subplots_adjust(wspace = 0.3)
 
 # phi
-g = G*Mp/rp_a**2
-H_H = R_gas*T/(M_H*g) # D scale height [m]
-H_D = R_gas*T/(M_D*g) # D scale height [m]
-ax1.plot(t_a*s2yr, PhiH_a*mu_H, color = 'black', label = 'H flux')
-ax1.plot(t_a*s2yr, PhiHe_a*mu_He, color = 'grey', label = 'He flux')
-ax1.plot(t_a*s2yr, phic_a, '--', color = 'grey', label = 'He critical')
+g = const.G*Mp/rp_a**2
+H_H = const.R_gas*T/(const.M_H*g) # D scale height [m]
+H_D = const.R_gas*T/(const.M_D*g) # D scale height [m]
+ax1.plot(t_a*const.s2yr, PhiH_a*const.mu_H, color = 'black', label = 'H flux')
+ax1.plot(t_a*const.s2yr, PhiHe_a*const.mu_He, color = 'grey', label = 'He flux')
+ax1.plot(t_a*const.s2yr, phic_a, '--', color = 'grey', label = 'He critical')
 if ND_a[0] != 0:
-    ax1.plot(t_a*s2yr, PhiD_a*mu_D, color = 'orangered', label = 'D flux')
-    ax1.plot(t_a*s2yr, b_H_D(T)*x1_a*(mu_D - mu_H)/H_H, '--', color = 'orangered', label = 'D critical') # D/H critical flux
+    ax1.plot(t_a*const.s2yr, PhiD_a*const.mu_D, color = 'orangered', label = 'D flux')
+    ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_D(T)*x1_a*(const.mu_D - const.mu_H)/H_H, '--', color = 'orangered', label = 'D critical') # D/H critical flux
 if NO_a[0] != 0:
-    ax1.plot(t_a*s2yr, PhiO_a*mu_O, color = 'green', label = 'O flux')
-    ax1.plot(t_a*s2yr, b_H_O(T)*x1_a*(mu_O - mu_H)/H_H, '--', color = 'green', label = 'O critical') # O/H critical flux
+    ax1.plot(t_a*const.s2yr, PhiO_a*const.mu_O, color = 'green', label = 'O flux')
+    ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_O(T)*x1_a*(const.mu_O - const.mu_H)/H_H, '--', color = 'green', label = 'O critical') # O/H critical flux
 if NC_a[0] != 0:
-    ax1.plot(t_a*s2yr, PhiC_a*mu_C, color = 'gold', label = 'C flux')
-    ax1.plot(t_a*s2yr, b_H_C(T)*x1_a*(mu_C - mu_H)/H_H, '--', color = 'gold', label = 'C critical') # C/H critical flux
+    ax1.plot(t_a*const.s2yr, PhiC_a*const.mu_C, color = 'gold', label = 'C flux')
+    ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_C(T)*x1_a*(const.mu_C - const.mu_H)/H_H, '--', color = 'gold', label = 'C critical') # C/H critical flux
 # if NN_a[0] != 0:
-    ax1.plot(t_a*s2yr, PhiN_a*mu_N, color = 'blue', label = 'N flux')
-    ax1.plot(t_a*s2yr, b_H_N(T)*x1_a*(mu_N - mu_H)/H_H, '--', color = 'blue', label = 'N critical') # N/H critical flux
+    ax1.plot(t_a*const.s2yr, PhiN_a*const.mu_N, color = 'blue', label = 'N flux')
+    ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_N(T)*x1_a*(const.mu_N - const.mu_H)/H_H, '--', color = 'blue', label = 'N critical') # N/H critical flux
 if NS_a[0] != 0:
-    ax1.plot(t_a*s2yr, PhiS_a*mu_S, color = 'purple', label = 'S flux')
-    ax1.plot(t_a*s2yr, b_H_S(T)*x1_a*(mu_S - mu_H)/H_H, '--', color = 'purple', label = 'S critical') # S/H critical flux
-ax1.plot(t_a*s2yr, phi_a, ':', color = 'mediumslateblue', label = 'total flux')
+    ax1.plot(t_a*const.s2yr, PhiS_a*const.mu_S, color = 'purple', label = 'S flux')
+    ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_S(T)*x1_a*(const.mu_S - const.mu_H)/H_H, '--', color = 'purple', label = 'S critical') # S/H critical flux
+ax1.plot(t_a*const.s2yr, phi_a, ':', color = 'mediumslateblue', label = 'total flux')
 cross = np.where(np.abs(phi_a - phic_a) < 1e-12)
 if len(cross[0]) != 0:
-    ax1.axvline(t_a[cross][0]*s2yr, ls = '--', lw = 0.5, color = 'coral')
-    print('critical flux at ', t_a[cross][0]*s2yr/1e9, 'Gyr')
+    ax1.axvline(t_a[cross][0]*const.s2yr, ls = '--', lw = 0.5, color = 'coral')
+    print('critical flux at ', t_a[cross][0]*const.s2yr/1e9, 'Gyr')
 ax1.set_ylabel('phi [kg m$^{-2}$ s$^{-1}$]', labelpad = 2)
 ax1.legend(fontsize = 8.5, frameon = False, framealpha = 0.7, loc = 3, ncol = 3)
-ax1.set_ylim(PhiH_a[0]*mu_H/1e8, PhiH_a[0]*mu_H*100)
+ax1.set_ylim(PhiH_a[0]*const.mu_H/1e8, PhiH_a[0]*const.mu_H*100)
 ax1.set_yscale('log')
 
 # D/H, O/H
-ax2.loglog(t_a*s2yr, x2_a, color = 'maroon', label = 'IsoFATE')
+ax2.loglog(t_a*const.s2yr, x2_a, color = 'maroon', label = 'IsoFATE')
 ax2.set_ylabel('N$_{He}$/(N$_H$+N$_{He}$)', labelpad = 2)
 # if ND_a[0] != 0:
 #     ax2.loglog(t_a*s2yr, ND_a/NH_a, color = 'maroon', label = 'IsoFATE')
@@ -454,26 +454,26 @@ ax2.set_ylabel('N$_{He}$/(N$_H$+N$_{He}$)', labelpad = 2)
     # ax2.legend(shadow = True)
 # ax2.set_title('atmospheric fractionation')
 if len(cross[0]) != 0:
-    ax1.axvline(t_a[cross][0]*s2yr, ls = '--', lw = 0.5, color = 'coral')
+    ax1.axvline(t_a[cross][0]*const.s2yr, ls = '--', lw = 0.5, color = 'coral')
 #ax2.set_xlabel('time [yr]')
 
 # N_x
-ax3.plot(t_a*s2yr, NH_a/avogadro, color = 'black', label = 'N$_{H}$')
+ax3.plot(t_a*const.s2yr, NH_a/const.avogadro, color = 'black', label = 'N$_{H}$')
 # ax3.set_xlabel('Time [yr]')
 if len(cross[0]) != 0:
-    ax3.axvline(t_a[cross][0]*s2yr, ls = '--', lw = 0.5, color = 'coral')
+    ax3.axvline(t_a[cross][0]*const.s2yr, ls = '--', lw = 0.5, color = 'coral')
 if NHe_a[0] != 0:
-    ax3.plot(t_a*s2yr, NHe_a/avogadro, color = 'grey', label = 'N$_{He}$')
+    ax3.plot(t_a*const.s2yr, NHe_a/const.avogadro, color = 'grey', label = 'N$_{He}$')
 if ND_a[0] != 0:
-    ax3.plot(t_a*s2yr, ND_a/avogadro, color = 'orangered', label = 'N$_D$')
+    ax3.plot(t_a*const.s2yr, ND_a/const.avogadro, color = 'orangered', label = 'N$_D$')
 if NO_a[0] != 0:
-    ax3.plot(t_a*s2yr, NO_a/avogadro, color = 'green', label = 'N$_{O}$')
+    ax3.plot(t_a*const.s2yr, NO_a/const.avogadro, color = 'green', label = 'N$_{O}$')
 if NC_a[0] != 0:
-    ax3.plot(t_a*s2yr, NC_a/avogadro, color = 'gold', label = 'N$_{C}$')
+    ax3.plot(t_a*const.s2yr, NC_a/const.avogadro, color = 'gold', label = 'N$_{C}$')
 if NN_a[0] != 0:
-    ax3.plot(t_a*s2yr, NN_a/avogadro, color = 'blue', label = 'N$_{N}$')
+    ax3.plot(t_a*const.s2yr, NN_a/const.avogadro, color = 'blue', label = 'N$_{N}$')
 if NS_a[0] != 0:
-    ax3.plot(t_a*s2yr, NS_a/avogadro, color = 'purple', label = 'N$_{S}$')
+    ax3.plot(t_a*const.s2yr, NS_a/const.avogadro, color = 'purple', label = 'N$_{S}$')
 # if mechanism == 'fix phi subcritical' or mechanism == 'fix phi supercritical':
 #     ax3.loglog(t_a*s2yr, N1(t_a, A, Phi, N1_0)/avogadro, '--', color = 'skyblue', zorder = 10, label = 'analytic N$_{H}$') # changed H_0 to N1_0
 #     ax3.legend(shadow = True)
@@ -483,12 +483,12 @@ if NS_a[0] != 0:
 # ax3.set_title('hydrogen number')
 ax3.set_ylabel('atmospheric moles', labelpad = 2)
 ax3.legend(frameon = False, fontsize = 9, loc = 4)
-ax3.set_ylim(NH_a[0]/avogadro/1e12, NH_a[0]/avogadro*100)
+ax3.set_ylim(NH_a[0]/const.avogadro/1e12, NH_a[0]/const.avogadro*100)
 ax3.set_yscale('log')
 #ax3.set_xlabel('time [yr]')
 
 # planet radius
-ax4.loglog(t_a*s2yr, rp_a/Re, color = 'mediumseagreen')
+ax4.loglog(t_a*const.s2yr, rp_a/const.Re, color = 'mediumseagreen')
 # ax4.set_title('planetary radius')
 ax4.set_ylabel('radius [R$_\oplus$]', labelpad = 2)
 #ax4.set_xlabel('time [yr]')
@@ -499,13 +499,13 @@ ax4.set_ylabel('radius [R$_\oplus$]', labelpad = 2)
 # ax5.set_ylabel('R$_{env}$ [km]', labelpad = 2)
 # #ax5.set_xlabel('time [yr]')
 
-ax5.plot(t_a*s2yr, Ts_atmod, color = 'mediumslateblue')
+ax5.plot(t_a*const.s2yr, Ts_atmod, color = 'mediumslateblue')
 ax5.set_xscale('log')
 ax5.set_ylabel('surface temp [K]', labelpad = 2)
 ax5.set_ylim(-100, 6100)
-ax5.annotate(f'Rp = {round(rp_a[-1]/Re, 2)} Re, Mp = {round(Mp/Me, 2)} Me, Teq = {round(T, 0)} K', (2e6, 5500), fontsize = 8)
+ax5.annotate(f'Rp = {round(rp_a[-1]/const.Re, 2)} Re, Mp = {round(Mp/const.Me, 2)} Me, Teq = {round(T, 0)} K', (2e6, 5500), fontsize = 8)
 ax5.annotate('final fatm:'+str(round(fenv_a[-1], 6)), (2e6, 5100), fontsize = 8)
-ax5.annotate('final D/H:'+str(round(ND_a[-1]/NH_a[-1]/DtoH_solar, 2))+' [Solar]', (2e6, 4700), fontsize = 8)
+ax5.annotate('final D/H:'+str(round(ND_a[-1]/NH_a[-1]/const.DtoH_solar, 2))+' [Solar]', (2e6, 4700), fontsize = 8)
 if n_atmodeller != 0:
     ax5.annotate('final He concn:'+str(round(x_He_molecular, 4))+'='+str(round(Y[-1], 4))+' kg/kg', (2e6, 4300), fontsize = 8)
     ax5.annotate('final O2 concn:'+str(round(x_O2, 4)), (2e6, 3900), fontsize = 8)
@@ -521,19 +521,19 @@ if n_atmodeller != 0:
 else:
     ax5.annotate('final X_He (molar concn) ='+str(NHe_a[-1]/(NH_a[-1] + NHe_a[-1] + ND_a[-1] + NO_a[-1] + NC_a[-1])), (2e6, 4300), fontsize = 8)
 # envelope mass
-ax6.loglog(t_a*s2yr, menv_a/Me, color = 'midnightblue')
+ax6.loglog(t_a*const.s2yr, menv_a/const.Me, color = 'midnightblue')
 # ax6.set_title('envelope mass')
 ax6.set_ylabel('M$_{env}$ [M$_\oplus$]', labelpad = 2)
 #ax6.set_xlabel('time [yr]')
 
 # grav potential
-ax7.loglog(t_a*s2yr, vpot_a, color = 'orange')
+ax7.loglog(t_a*const.s2yr, vpot_a, color = 'orange')
 # ax7.set_title('gravitational potential')
 ax7.set_ylabel('V$_{pot}$ [J/kg]', labelpad = 2)
 ax7.set_xlabel('time [yr]')
 
 # mass loss
-ax8.loglog(t_a*s2yr, mloss_a, color = 'crimson')
+ax8.loglog(t_a*const.s2yr, mloss_a, color = 'crimson')
 # ax8.set_title('mass loss per time step')
 ax8.set_ylabel('$\Delta$ mass [kg]', labelpad = 2)
 ax8.set_xlabel('time [yr]')
@@ -559,7 +559,7 @@ ax9.set_xlabel('time [yr]')
 ### atmospheric mass fraction
 
 ax9.set_ylabel('f_env [%]', labelpad = 2)
-ax9.plot(t_a*s2yr, fenv_a*100, color = 'gold')
+ax9.plot(t_a*const.s2yr, fenv_a*100, color = 'gold')
 ax9.set_xscale('log')
 
 plt.tight_layout()

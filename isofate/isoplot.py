@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from isofate.isofunks import *
-import isofate.constants as const
+from isofate.constants import const, binary_diffusion
 
 def isoplot(sol,n_atmodeller,Mp,f_atm,Fp,T,M_star,d):
 
@@ -105,7 +105,7 @@ def isoplot(sol,n_atmodeller,Mp,f_atm,Fp,T,M_star,d):
     plt.subplots_adjust(wspace = 0.3)
 
     # phi
-    g = G*Mp/rp_a**2
+    g = const.G*Mp/rp_a**2
     H_H = const.R_gas*T/(const.M_H*g) # D scale height [m]
     H_D = const.R_gas*T/(const.M_D*g) # D scale height [m]
     ax1.plot(t_a*const.s2yr, PhiH_a*const.mu_H, color = 'black', label = 'H flux')
@@ -113,13 +113,13 @@ def isoplot(sol,n_atmodeller,Mp,f_atm,Fp,T,M_star,d):
     ax1.plot(t_a*const.s2yr, phic_a, '--', color = 'grey', label = 'He critical')
     if ND_a[0] != 0:
         ax1.plot(t_a*const.s2yr, PhiD_a*const.mu_D, color = 'orangered', label = 'D flux')
-        ax1.plot(t_a*const.s2yr, const.b_H_D(T)*x1_a*(const.mu_D - const.mu_H)/H_H, '--', color = 'orangered', label = 'D critical') # D/H critical flux
+        ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_D(T)*x1_a*(const.mu_D - const.mu_H)/H_H, '--', color = 'orangered', label = 'D critical') # D/H critical flux
     if NO_a[0] != 0:
         ax1.plot(t_a*const.s2yr, PhiO_a*const.mu_O, color = 'green', label = 'O flux')
-        ax1.plot(t_a*const.s2yr, const.b_H_O(T)*x1_a*(const.mu_O - const.mu_H)/H_H, '--', color = 'green', label = 'O critical') # O/H critical flux
+        ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_O(T)*x1_a*(const.mu_O - const.mu_H)/H_H, '--', color = 'green', label = 'O critical') # O/H critical flux
     if NC_a[0] != 0:
         ax1.plot(t_a*const.s2yr, PhiC_a*const.mu_C, color = 'gold', label = 'C flux')
-        ax1.plot(t_a*const.s2yr, const.b_H_C(T)*x1_a*(const.mu_C - const.mu_H)/H_H, '--', color = 'gold', label = 'C critical') # C/H critical flux
+        ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_C(T)*x1_a*(const.mu_C - const.mu_H)/H_H, '--', color = 'gold', label = 'C critical') # C/H critical flux
     ax1.plot(t_a*const.s2yr, phi_a, ':', color = 'mediumslateblue', label = 'total flux')
     cross = np.where(np.abs(phi_a - phic_a) < 1e-12)
     if len(cross[0]) != 0:

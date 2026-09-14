@@ -9,8 +9,7 @@ import pickle
 import corner
 import matplotlib.pyplot as plt
 import numpy as np
-from isofate.constants import avogadro
-from isofate.constants import Re
+from isofate.constants import const
 
 
 # filename = '/Users/collin/Documents/Harvard/Research/isofate_mcmc/IsoFATE_LHS1140b_MCMC_results_n1e5_natmod0_eps15_tjump_Ffinal17_constant_tpms_OH_48w_7500s.pickle'
@@ -89,7 +88,7 @@ def plot_mcmc_results(filename=filename):
     for output in model_outputs_processed.flat:
         if output is not None:
             # Extract and convert values
-            Rp_final = output['Rp_final'] / Re  # Convert to Earth radii
+            Rp_final = output['Rp_final'] / const.Re  # Convert to Earth radii
             flux_ratio = output['flux_ratio']
             mdot = output['mdot'] * 1e3  # Convert to g/s
             model_output_data.append([Rp_final, flux_ratio, mdot])
@@ -124,7 +123,7 @@ def plot_mcmc_results(filename=filename):
     # Create truth values array (convert to same units as plotted data)
     truths = [None] * len(parameter_names)  # No truth values for parameters
     truths.extend([
-        true_values['Rp_final'] / Re,  # Convert to Earth radii
+        true_values['Rp_final'] / const.Re,  # Convert to Earth radii
         true_values['flux_ratio'],
         true_values['mdot'] * 1e3  # Convert to g/s
     ])
@@ -173,7 +172,7 @@ def plot_mcmc_results(filename=filename):
     # Print true values for comparison
     print("\nTrue values:")
     print("-" * 60)
-    print(f"{'Rp [R_Earth]':20s}: {true_values['Rp_final']/Re:8.4f}")
+    print(f"{'Rp [R_Earth]':20s}: {true_values['Rp_final']/const.Re:8.4f}")
     print(f"{'flux_ratio':20s}: {true_values['flux_ratio']:8.4f}")
     print(f"{'mdot [g/s]':20s}: {true_values['mdot']*1e3:8.4f}")
     
@@ -236,7 +235,7 @@ def plot_model_outputs_corner(filename=filename):
             row_data = []
             for species in species_names:
                 if species in output and output[species] is not None:
-                    row_data.append(output[species]/avogadro)
+                    row_data.append(output[species]/const.avogadro)
                 else:
                     row_data.append(np.nan)
             species_data.append(row_data)

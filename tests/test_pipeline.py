@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 from isofate.atmodeller_coupler import AtmodellerCoupler
-from isofate.constants import Me, mu_H
+from isofate.constants import const
 from isofate.isofate_coupler import isocalc
 
 
@@ -62,12 +62,12 @@ def test_atmodeller_coupler_single_solve():
         ReservoirSpecies.create_dissolved("S2", solubility=solubility_models["S2_sulfide_basalt_boulliung23"]),
     )
 
-    Mp = 5.6 * Me
+    Mp = 5.6 * const.Me
     planet = Planet.from_species(gas_species, silicate_melt_species=melt_species, planet_mass=Mp)
     interior_atmosphere = EquilibriumModel.from_state(planet)
 
     results, sol, mantle_iron_dict = AtmodellerCoupler(
-        Teq=900.0, Mp=Mp, Rp=1.5 * 6.371e6, mu=mu_H, melt_fraction=1.0, mantle_iron_dict=False,
+        Teq=900.0, Mp=Mp, Rp=1.5 * 6.371e6, mu=const.mu_H, melt_fraction=1.0, mantle_iron_dict=False,
         N_H_atm=5e46, N_He_atm=1e44, N_O_atm=1e43, N_C_atm=1e43, N_N_atm=1e42, N_S_atm=1e42,
         N_H_int=0.0, N_He_int=0.0, N_O_int=0.0, N_C_int=0.0, N_N_int=0.0, N_S_int=0.0,
         interior_atmosphere=interior_atmosphere,
@@ -100,7 +100,7 @@ def test_atmodeller_coupler_single_solve():
 
 def _toy_isocalc_kwargs(**overrides):
     kwargs = dict(
-        f_atm=0.01, Mp=5.0 * Me, Mstar=1.989e30, F0=500.0, Fp=1000.0, T=800.0, d=0.05 * 1.496e11,
+        f_atm=0.01, Mp=5.0 * const.Me, Mstar=1.989e30, F0=500.0, Fp=1000.0, T=800.0, d=0.05 * 1.496e11,
         time=1e6, n_steps=20, n_atmodeller=5,
         N_H=1e45, N_D=1e41, N_He=1e44, N_O=1.5e45, N_C=1e44, N_N=1e43, N_S=1e43,
     )

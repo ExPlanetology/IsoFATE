@@ -5,14 +5,14 @@ Miscellaneous functions for planetary orbital parameters
 '''
 
 import numpy as np
-from isofate.constants import *
+from isofate.constants import const
 
 def Luminosity(R, T):
     '''
     Input: R, stellar radius [m]; T, stellar temp [K]
     Output: luminosity [W]
     '''
-    L = 4*np.pi*R**2*sbc*T**4
+    L = 4*np.pi*R**2*const.sbc*T**4
     return L
 
 def SemiMajor(M, P):
@@ -20,7 +20,7 @@ def SemiMajor(M, P):
     Input: M, stellar mass [kg]; P, orbital period [s]
     Output: semi-major axis [m]
     '''
-    a = ((G*M/4/np.pi**2)*P**2)**(1/3)
+    a = ((const.G*M/4/np.pi**2)*P**2)**(1/3)
     return a
 
 def Period(a, M):
@@ -28,7 +28,7 @@ def Period(a, M):
     Input: M, stellar mass [kg]; a, semi-major axis [m]
     Output: orbital period [s]
     '''
-    P = np.sqrt(a**3*4*np.pi**2/G/M)
+    P = np.sqrt(a**3*4*np.pi**2/const.G/M)
     return P
 
 def Insolation(L, a):
@@ -44,7 +44,7 @@ def EqTemp(I, A = 0):
     Input: planetary incident bolometric flux [W/m2]
     Output: eq temp [K]
     '''
-    T = (I*(1 - A)/4/sbc)**(1/4)
+    T = (I*(1 - A)/4/const.sbc)**(1/4)
     return T
 
 def HabZone(L, Teff, HZ = 'runaway greenhouse'):
@@ -94,5 +94,5 @@ def HabZone(L, Teff, HZ = 'runaway greenhouse'):
 
     T_star = Teff - 5780 #[K]
     Seff = Seff_solar + a*T_star + b*T_star**2 + c*T_star**3 + d*T_star**4 # HZ stellar flux
-    d = (L/Ls/Seff)**0.5*au2m # orbtial distance of corresponding HZ
+    d = (L/const.Ls/Seff)**0.5*const.au2m # orbtial distance of corresponding HZ
     return d

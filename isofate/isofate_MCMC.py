@@ -18,7 +18,7 @@ import time
 import datetime as dt
 from zoneinfo import ZoneInfo
 
-from isofate.constants import *
+from isofate.constants import const
 from isofate.isofate_coupler import *
 from isofate.isofunks import *
 from isofate.orbit_params import *
@@ -39,15 +39,15 @@ print("Varying parameters:", [name for name, _ in VARYING_PARAMS])
 print("Fixed parameters:", [(name, config['fixed_value']) for name, config in FIXED_PARAMS])
 
 # Fixed stellar parameters 
-R_star = 0.22*Rs # [m]
-M_star = 0.18*Ms # [kg]
+R_star = 0.22*const.Rs # [m]
+M_star = 0.18*const.Ms # [kg]
 T_star = 3096 # [K]
-t_jump = 5.9 - 15.4*(M_star/Ms)
-L = 0.0038*Ls
+t_jump = 5.9 - 15.4*(M_star/const.Ms)
+L = 0.0038*const.Ls
 
 # Fixed planet parameters
-Mp = 5.6*Me
-P = 24.74/s2day
+Mp = 5.6*const.Me
+P = 24.74/const.s2day
 a = SemiMajor(M_star, P)
 Fp = Insolation(L, a)
 T = EqTemp(Fp, A=0)
@@ -72,8 +72,8 @@ dynamic_phi = False
 t0 = 1e6
 
 # True observed values
-true_Rp_final = 1.73*Re  # True final planet radius
-sigma_Rp = 0.025*Re
+true_Rp_final = 1.73*const.Re  # True final planet radius
+sigma_Rp = 0.025*const.Re
 true_flux_ratio = 0.0011    # True H/He escape flux ratio
 sigma_flux_ratio = 0.00065
 true_mdot = 2e5 # True total mass loss rate [kg/s]
@@ -137,16 +137,16 @@ def run_isocalc_simulation(theta):
         
         # ... rest of the function remains exactly the same ...
         M_atm = Mp*f_atm
-        OtoH_enhanced = OtoH_protosolar*OtoH_enhancement
-        OtoH_enhanced_mass = OtoH_enhanced*(mu_O/mu_H)
-        N_He = (HetoH_protosolar_mass/(1 + HetoH_protosolar_mass))*M_atm/mu_He
-        N_H = (1 - DtoH_solar_mass - OtoH_enhanced_mass - CtoH_protosolar_mass - StoH_protosolar_mass - NtoH_protosolar_mass)*M_atm/(1 + HetoH_protosolar_mass)/mu_H
-        N_D = DtoH_solar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_D
-        N_O = OtoH_enhanced_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_O
-        N_C = CtoH_protosolar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_C
-        N_N = NtoH_protosolar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_N
-        N_S = StoH_protosolar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_S
-        mu_avg = (N_H*mu_H + N_He*mu_He + N_D*mu_D + N_O*mu_O + N_C*mu_C + N_N*mu_N + N_S*mu_S)/(N_H+N_He+N_D+N_O+N_C+N_N+N_S)
+        OtoH_enhanced = const.OtoH_protosolar*OtoH_enhancement
+        OtoH_enhanced_mass = OtoH_enhanced*(const.mu_O/const.mu_H)
+        N_He = (const.HetoH_protosolar_mass/(1 + const.HetoH_protosolar_mass))*M_atm/const.mu_He
+        N_H = (1 - const.DtoH_solar_mass - OtoH_enhanced_mass - const.CtoH_protosolar_mass - const.StoH_protosolar_mass - const.NtoH_protosolar_mass)*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_H
+        N_D = const.DtoH_solar_mass*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_D
+        N_O = OtoH_enhanced_mass*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_O
+        N_C = const.CtoH_protosolar_mass*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_C
+        N_N = const.NtoH_protosolar_mass*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_N
+        N_S = const.StoH_protosolar_mass*M_atm/(1 + const.HetoH_protosolar_mass)/const.mu_S
+        mu_avg = (N_H*const.mu_H + N_He*const.mu_He + N_D*const.mu_D + N_O*const.mu_O + N_C*const.mu_C + N_N*const.mu_N + N_S*const.mu_S)/(N_H+N_He+N_D+N_O+N_C+N_N+N_S)
         sol = isocalc(f_atm, Mp, M_star, F0, Fp, T, d, time, mechanism, rad_evol,
                      N_H=N_H, N_He=N_He, N_D=N_D, N_O=N_O, N_C=N_C, 
                      N_N=N_N, N_S=N_S,
@@ -180,7 +180,7 @@ def run_isocalc_simulation(theta):
                 'log_likelihood': log_likelihood,
                 'T_surf_atmod': sol['T_surf_atmod'][-1],
                 'n_H2_atm': sol['n_H2_a'][-1],
-                'n_He_atm': sol['N_He'][-1]/avogadro,
+                'n_He_atm': sol['N_He'][-1]/const.avogadro,
                 'n_H2O_atm': sol['n_H2O_a'][-1],
                 'n_O2_atm': sol['n_O2_a'][-1],
                 'n_CO2_atm': sol['n_CO2_a'][-1],
@@ -196,7 +196,7 @@ def run_isocalc_simulation(theta):
                 'n_CH4_mantle': sol['n_CH4_a_int'][-1],
                 'n_N2_mantle': sol['n_N2_a_int'][-1],
                 'n_S2_mantle': sol['n_S2_a_int'][-1],
-                'n_He_mantle': sol['N_He_int'][-1]/avogadro,
+                'n_He_mantle': sol['N_He_int'][-1]/const.avogadro,
                 'DtoH': sol['N_D'][-1]/sol['N_H'][-1],
                 'fO2_a': sol['fO2_a'][-1],
             }

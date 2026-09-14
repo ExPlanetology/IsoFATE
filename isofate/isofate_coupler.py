@@ -6,19 +6,20 @@ Main IsoFATE script for coulped model.
 
 import numpy as np
 from isofate.atmodeller_coupler import *
-from isofate.constants import *
+from isofate.constants import const
 from isofate.isofunks import *
 from isofate.orbit_params import *
-from atmodeller import InteriorAtmosphere
-from atmodeller import Species
-from atmodeller import SpeciesCollection
+from atmodeller import ChemicalSpecies
+from atmodeller import EquilibriumModel
+from atmodeller import Planet
+from atmodeller import ReservoirSpecies
 from atmodeller.solubility import get_solubility_models
 solubility_models = get_solubility_models()
 
 
 def isocalc(f_atm, Mp, Mstar, F0, Fp, T, d, time = 5e9, mechanism = 'XUV', rad_evol = True,
 N_H = 0, N_He = 0, N_D = 0, N_O = 0, N_C = 0, N_N = 0, N_S = 0, melt_fraction_override = False,
-mu = mu_solar, eps = 0.15, activity = 'medium', flux_model = 'power law', stellar_type = 'M1',
+mu = const.mu_solar, eps = 0.15, activity = 'medium', flux_model = 'power law', stellar_type = 'M1',
 Rp_override = False, t_sat = 5e8, step_fn = False, F_final = 0, t_pms = 0, pms_factor = 1e2,
 n_steps = int(1e5), t0 = 1e6, rho_rcb = 1.0, RR = True, thermal = True, 
 beta = -1.23, n_atmodeller = int(1e2), save_molecules = False, mantle_iron_dict = False,
@@ -108,13 +109,13 @@ dynamic_phi = False):
 ###_____Initialize timesteps_____###
 
     n_tot = n_steps # timesteps
-    t0 = t0/s2yr # simulation start time [s]
-    t = time/s2yr - t0 # total simulation time [s]
+    t0 = t0/const.s2yr # simulation start time [s]
+    t = time/const.s2yr - t0 # total simulation time [s]
     delta_t = t/n_tot # timestep [s]
 
 ###_____Set initial values____###
 
-    atomic_masses = [mu_H, mu_He, mu_D, mu_O, mu_C, mu_N, mu_S]
+    atomic_masses = [const.mu_H, const.mu_He, const.mu_D, const.mu_O, const.mu_C, const.mu_N, const.mu_S]
     species_names = ['H', 'He', 'D', 'O', 'C', 'N', 'S']
 
     ### atmodeller interior
@@ -131,20 +132,39 @@ dynamic_phi = False):
     if N_H != 0 and N_D != 0: # needed to allow D and H to outgas from mantle
         X_DH = N_D/(N_H + N_D) # ignores D in mantle
 
-    H2O_g = Species.create_gas("H2O", solubility=solubility_models["H2O_basalt_dixon95"])
-    H2_g = Species.create_gas("H2", solubility=solubility_models["H2_basalt_hirschmann12"])
-    O2_g = Species.create_gas("O2")
-    CO_g = Species.create_gas("CO", solubility=solubility_models["CO_basalt_yoshioka19"])
-    CO2_g = Species.create_gas("CO2", solubility=solubility_models["CO2_basalt_dixon95"])
-    CH4_g = Species.create_gas("CH4", solubility=solubility_models["CH4_basalt_ardia13"])
-    He_g = Species.create_gas("He", solubility=solubility_models["He_basalt_jambon86"])
-    N2_g = Species.create_gas("N2", solubility=solubility_models["N2_basalt_libourel03"])
-    S2_g = Species.create_gas("S2", solubility=solubility_models["S2_sulfide_basalt_boulliung23"])
-    H2O4S_g = Species.create_gas("H2O4S")
-    SO2_g = Species.create_gas("SO2")
+    # Gas-phase species (v2preview drops per-species solubility; dissolution is now modeled via a
+    # separate ReservoirSpecies tied to the silicate melt phase, matched by formula below)
+    H2O_g = ChemicalSpecies.create_gas("H2O")
+    H2_g = ChemicalSpecies.create_gas("H2")
+    O2_g = ChemicalSpecies.create_gas("O2")
+    CO_g = ChemicalSpecies.create_gas("CO")
+    CO2_g = ChemicalSpecies.create_gas("CO2")
+    CH4_g = ChemicalSpecies.create_gas("CH4")
+    He_g = ChemicalSpecies.create_gas("He")
+    N2_g = ChemicalSpecies.create_gas("N2")
+    S2_g = ChemicalSpecies.create_gas("S2")
+    H2O4S_g = ChemicalSpecies.create_gas("H2O4S")
+    SO2_g = ChemicalSpecies.create_gas("SO2")
 
-    species = SpeciesCollection((H2_g, H2O_g, O2_g, CO_g, CO2_g, CH4_g, He_g, N2_g, S2_g, H2O4S_g, SO2_g))
-    interior_atmosphere = InteriorAtmosphere(species)
+    gas_species = (H2_g, H2O_g, O2_g, CO_g, CO2_g, CH4_g, He_g, N2_g, S2_g, H2O4S_g, SO2_g)
+
+    # Dissolved (melt-reservoir) species; O2 and H2O4S have no solubility model, so they are
+    # gas-only and have no counterpart here
+    H2O_d = ReservoirSpecies.create_dissolved("H2O", solubility=solubility_models["H2O_basalt_dixon95"])
+    H2_d = ReservoirSpecies.create_dissolved("H2", solubility=solubility_models["H2_basalt_hirschmann12"])
+    CO_d = ReservoirSpecies.create_dissolved("CO", solubility=solubility_models["CO_basalt_yoshioka19"])
+    CO2_d = ReservoirSpecies.create_dissolved("CO2", solubility=solubility_models["CO2_basalt_dixon95"])
+    CH4_d = ReservoirSpecies.create_dissolved("CH4", solubility=solubility_models["CH4_basalt_ardia13"])
+    He_d = ReservoirSpecies.create_dissolved("He", solubility=solubility_models["He_basalt_jambon86"])
+    N2_d = ReservoirSpecies.create_dissolved("N2", solubility=solubility_models["N2_basalt_libourel03"])
+    S2_d = ReservoirSpecies.create_dissolved("S2", solubility=solubility_models["S2_sulfide_basalt_boulliung23"])
+
+    melt_species = (H2O_d, H2_d, CO_d, CO2_d, CH4_d, He_d, N2_d, S2_d)
+
+    # Constructed once; per-timestep state (temperature, melt fraction, radius) and mass
+    # constraints are applied via .update_state()/.update_constraints() in AtmodellerCoupler
+    planet = Planet.from_species(gas_species, silicate_melt_species=melt_species, planet_mass=Mp)
+    interior_atmosphere = EquilibriumModel.from_state(planet)
     atmod_full_output = {} # dictionary to store atmodeller full output
 
     if mantle_iron_dict:
@@ -238,7 +258,7 @@ dynamic_phi = False):
             Renv_a[n:] = 0 #radius_env #Renv_a[n-1]
             Rp_a[n:] = radius_core
             K = np.max([V_reduction(Mp, Mstar, d, radius_core), 0.01]) # grav potential reduction factor due to stellar tidal forces
-            Vpot_a[n:] = K*G*Mp/radius_core
+            Vpot_a[n:] = K*const.G*Mp/radius_core
             phi_a[n:] = 0
             Mloss_a[n:] = 0
 
@@ -340,7 +360,7 @@ dynamic_phi = False):
 
         # time-variable average atomic mass
         N_tot = y1 + y2 + y3 + y4 + y5 + y6 + y7
-        mu = (y1*mu_H + y2*mu_He + y3*mu_D + y4*mu_O + y5*mu_C + y6*mu_N + y7*mu_S)/N_tot
+        mu = (y1*const.mu_H + y2*const.mu_He + y3*const.mu_D + y4*const.mu_O + y5*const.mu_C + y6*const.mu_N + y7*const.mu_S)/N_tot
 
         if rad_evol == False:
             radius_env = 0
@@ -357,37 +377,37 @@ dynamic_phi = False):
             radius_p = np.min([R_B, R_H, radius_p]) # limits Rp to the min of Bondi/Hill/Lopez+Fortney radius
 
         K = np.max([V_reduction(Mp, Mstar, d, radius_p), 0.01]) # grav potential reduction factor due to stellar tidal forces
-        Vpot = K*G*Mp/radius_p
+        Vpot = K*const.G*Mp/radius_p
         A = 4*np.pi*radius_p**2
 
     # sets mass flux [kg/m2/s]
         if mechanism == 'XUV':
             if RR == True:
-                phi = np.min([phi_RR(radius_p, Mp, T, t_a[n], F0, t0*s2yr, t_sat, beta, step_fn, F_final, t_pms, pms_factor), 
-                              phi_E(t_a[n], eps, Vpot, d, F0, t0*s2yr, t_sat, beta, activity, flux_model, stellar_type, step_fn, F_final, t_pms, pms_factor)])
+                phi = np.min([phi_RR(radius_p, Mp, T, t_a[n], F0, t0*const.s2yr, t_sat, beta, step_fn, F_final, t_pms, pms_factor), 
+                              phi_E(t_a[n], eps, Vpot, d, F0, t0*const.s2yr, t_sat, beta, activity, flux_model, stellar_type, step_fn, F_final, t_pms, pms_factor)])
             else:
-                phi = phi_E(t_a[n], eps, Vpot, d, F0, t0*s2yr, t_sat, beta, activity, flux_model, stellar_type, step_fn, F_final, t_pms, pms_factor)
+                phi = phi_E(t_a[n], eps, Vpot, d, F0, t0*const.s2yr, t_sat, beta, activity, flux_model, stellar_type, step_fn, F_final, t_pms, pms_factor)
         elif mechanism == 'CPML':
             phi = phiE_CP(T, Mp, rho_rcb, eps, Vpot, A, mu, radius_env)
         elif mechanism == 'phi kill':
             phi = phi_kill(Mp*f_atm, radius_p, t - t_a[n])
         elif mechanism == 'XUV+CPML':
             if RR == True:
-                phi_XUV = np.min([phi_RR(radius_p, Mp, T, t_a[n], F0, t0*s2yr, t_sat, beta, step_fn, F_final, t_pms, pms_factor), 
-                                  phi_E(t_a[n], eps, Vpot, d, F0, t0*s2yr, t_sat, beta, activity, flux_model, stellar_type, step_fn, F_final, t_pms, pms_factor)])
+                phi_XUV = np.min([phi_RR(radius_p, Mp, T, t_a[n], F0, t0*const.s2yr, t_sat, beta, step_fn, F_final, t_pms, pms_factor), 
+                                  phi_E(t_a[n], eps, Vpot, d, F0, t0*const.s2yr, t_sat, beta, activity, flux_model, stellar_type, step_fn, F_final, t_pms, pms_factor)])
             else:
-                phi_XUV = phi_E(t_a[n], eps, Vpot, d, F0, t0*s2yr, t_sat, beta, activity, flux_model, stellar_type, step_fn, F_final, t_pms, pms_factor)
+                phi_XUV = phi_E(t_a[n], eps, Vpot, d, F0, t0*const.s2yr, t_sat, beta, activity, flux_model, stellar_type, step_fn, F_final, t_pms, pms_factor)
             phi = phi_XUV + phiE_CP(T, Mp, rho_rcb, eps, Vpot, A, mu, radius_env)
         
         mass_loss = phi*A*delta_t
-        g = G*Mp/radius_p**2
-        H_H = R_gas*T/(M_H*g) # H scale height [m]
-        H_He = R_gas*T/(M_He*g) # He scale height [m]
-        H_D = R_gas*T/(M_D*g) # D scale height [m]
-        H_O = R_gas*T/(M_O*g) # O scale height [m]
-        H_C = R_gas*T/(M_C*g) # C scale height [m]
-        H_N = R_gas*T/(M_N*g) # N scale height [m]
-        H_S = R_gas*T/(M_S*g) # S scale height [m]
+        g = const.G*Mp/radius_p**2
+        H_H = const.R_gas*T/(const.M_H*g) # H scale height [m]
+        H_He = const.R_gas*T/(const.M_He*g) # He scale height [m]
+        H_D = const.R_gas*T/(const.M_D*g) # D scale height [m]
+        H_O = const.R_gas*T/(const.M_O*g) # O scale height [m]
+        H_C = const.R_gas*T/(const.M_C*g) # C scale height [m]
+        H_N = const.R_gas*T/(const.M_N*g) # N scale height [m]
+        H_S = const.R_gas*T/(const.M_S*g) # S scale height [m]
 
         x1 = y1/N_tot
         x2 = y2/N_tot
@@ -404,9 +424,9 @@ dynamic_phi = False):
             else:
                 X1 = y1/(y1+y2)
                 X2 = y2/(y1+y2)
-            MU = X1*mu_H + X2*mu_He
-            Phi_H, phi_c = Phi_1(phi, b, H_H, H_He, mu_H, mu_He, X1, X2, MU, output = 1) # H number flux [atoms/s/m2]
-            Phi_He = Phi_2(phi, b, H_H, H_He, mu_H, mu_He, X1, X2, MU) # He number flux [atoms/s/m2]
+            MU = X1*const.mu_H + X2*const.mu_He
+            Phi_H, phi_c = Phi_1(phi, b, H_H, H_He, const.mu_H, const.mu_He, X1, X2, MU, output = 1) # H number flux [atoms/s/m2]
+            Phi_He = Phi_2(phi, b, H_H, H_He, const.mu_H, const.mu_He, X1, X2, MU) # He number flux [atoms/s/m2]
             Phi_D = Phi_D_Z90(Phi_H, Phi_He, H_H, H_D, H_He, y1, y2, y3, y4, y5, y6, y7, T) # D number flux [atoms/s/m2]
             Phi_O = Phi_O_Z90(Phi_H, Phi_He, H_H, H_O, H_He, y1, y2, y3, y4, y5, y6, y7, T) # O number flux [atoms/s/m2]
             Phi_C = Phi_C_Z90(Phi_H, Phi_He, H_H, H_C, H_He, y1, y2, y3, y4, y5, y6, y7, T) # C number flux [atoms/s/m2]
@@ -563,28 +583,28 @@ dynamic_phi = False):
                 # atmod_full_output = {}
                 atmod_sol = AtmodellerCoupler(T, Mp, radius_p, mu, melt_fraction_override, mantle_iron_dict,
                                                   y1+y3, y2, y4, y5, y6, y7, N_H_int+N_D_int, N_He_int, N_O_int, N_C_int, N_N_int, N_S_int, interior_atmosphere)[1]
-                atmod_full_output['H2O_atm'] = atmod_sol['H2O_g']['atmosphere_moles'][0]
-                atmod_full_output['H2O_mantle'] = atmod_sol['H2O_g']['dissolved_moles'][0]
-                atmod_full_output['H2_atm'] = atmod_sol['H2_g']['atmosphere_moles'][0]
-                atmod_full_output['H2_mantle'] = atmod_sol['H2_g']['dissolved_moles'][0]
-                atmod_full_output['O2_atm'] = atmod_sol['O2_g']['atmosphere_moles'][0]
-                atmod_full_output['O2_mantle'] = atmod_sol['O2_g']['dissolved_moles'][0]
-                atmod_full_output['CO_atm'] = atmod_sol['CO_g']['atmosphere_moles'][0]
-                atmod_full_output['CO_mantle'] = atmod_sol['CO_g']['dissolved_moles'][0]
-                atmod_full_output['CO2_atm'] = atmod_sol['CO2_g']['atmosphere_moles'][0]
-                atmod_full_output['CO2_mantle'] = atmod_sol['CO2_g']['dissolved_moles'][0]
-                atmod_full_output['CH4_atm'] = atmod_sol['CH4_g']['atmosphere_moles'][0]
-                atmod_full_output['CH4_mantle'] = atmod_sol['CH4_g']['dissolved_moles'][0]
-                atmod_full_output['N2_atm'] = atmod_sol['N2_g']['atmosphere_moles'][0]
-                atmod_full_output['N2_mantle'] = atmod_sol['N2_g']['dissolved_moles'][0]
-                atmod_full_output['S2_atm'] = atmod_sol['S2_g']['atmosphere_moles'][0]
-                atmod_full_output['S2_mantle'] = atmod_sol['S2_g']['dissolved_moles'][0]
-                atmod_full_output['H2O4S_atm'] = atmod_sol['H2O4S_g']['atmosphere_moles'][0]
-                atmod_full_output['H2O4S_mantle'] = atmod_sol['H2O4S_g']['dissolved_moles'][0]
-                atmod_full_output['SO2_atm'] = atmod_sol['O2S_g']['atmosphere_moles'][0]
-                atmod_full_output['He_mantle'] = atmod_sol['He_g']['dissolved_moles'][0]
-                atmod_full_output['O2_fugacity'] = atmod_sol['O2_g']['fugacity'][0]
-                atmod_full_output['log10dIW_1_bar'] = atmod_sol['O2_g']['log10dIW_1_bar'][0]
+                atmod_full_output['H2O_atm'] = atmod_sol['H2O_g']['gas']['number_moles'][0][0]
+                atmod_full_output['H2O_mantle'] = atmod_sol['H2O_d']['silicate_melt']['number_moles'][0][0]
+                atmod_full_output['H2_atm'] = atmod_sol['H2_g']['gas']['number_moles'][0][0]
+                atmod_full_output['H2_mantle'] = atmod_sol['H2_d']['silicate_melt']['number_moles'][0][0]
+                atmod_full_output['O2_atm'] = atmod_sol['O2_g']['gas']['number_moles'][0][0]
+                atmod_full_output['O2_mantle'] = 0.0 # O2 has no solubility model / melt reservoir
+                atmod_full_output['CO_atm'] = atmod_sol['CO_g']['gas']['number_moles'][0][0]
+                atmod_full_output['CO_mantle'] = atmod_sol['CO_d']['silicate_melt']['number_moles'][0][0]
+                atmod_full_output['CO2_atm'] = atmod_sol['CO2_g']['gas']['number_moles'][0][0]
+                atmod_full_output['CO2_mantle'] = atmod_sol['CO2_d']['silicate_melt']['number_moles'][0][0]
+                atmod_full_output['CH4_atm'] = atmod_sol['CH4_g']['gas']['number_moles'][0][0]
+                atmod_full_output['CH4_mantle'] = atmod_sol['CH4_d']['silicate_melt']['number_moles'][0][0]
+                atmod_full_output['N2_atm'] = atmod_sol['N2_g']['gas']['number_moles'][0][0]
+                atmod_full_output['N2_mantle'] = atmod_sol['N2_d']['silicate_melt']['number_moles'][0][0]
+                atmod_full_output['S2_atm'] = atmod_sol['S2_g']['gas']['number_moles'][0][0]
+                atmod_full_output['S2_mantle'] = atmod_sol['S2_d']['silicate_melt']['number_moles'][0][0]
+                atmod_full_output['H2O4S_atm'] = atmod_sol['H2O4S_g']['gas']['number_moles'][0][0]
+                atmod_full_output['H2O4S_mantle'] = 0.0 # H2O4S has no solubility model / melt reservoir
+                atmod_full_output['SO2_atm'] = atmod_sol['O2S_g']['gas']['number_moles'][0][0]
+                atmod_full_output['He_mantle'] = atmod_sol['He_d']['silicate_melt']['number_moles'][0][0]
+                atmod_full_output['O2_fugacity'] = atmod_sol['O2_g']['gas']['activity'][0][0]
+                atmod_full_output['log10dIW_1_bar'] = atmod_sol['gas']['phase']['log10dIW_1_bar'][0][0]
             if n%n_atmodeller == 0: # run atmodeller every n_atmodeller steps.
                 atmod_results, atmod_full, mantle_iron_dict = AtmodellerCoupler(T, Mp, radius_p, mu, melt_fraction_override, mantle_iron_dict,
                                                   y1+y3, y2, y4, y5, y6, y7, N_H_int+N_D_int, N_He_int, N_O_int, N_C_int, N_N_int, N_S_int, interior_atmosphere)
@@ -612,27 +632,27 @@ dynamic_phi = False):
                 T_surf_analytic = atmod_results['T_surface']
                 T_surf_atmod = atmod_results['T_surface_atmod']
                 if save_molecules == True:
-                    H2_a[n] = atmod_full['H2_g']['atmosphere_moles'][0]
-                    H2O_a[n] = atmod_full['H2O_g']['atmosphere_moles'][0]
-                    O2_a[n] = atmod_full['O2_g']['atmosphere_moles'][0]
-                    CO2_a[n] = atmod_full['CO2_g']['atmosphere_moles'][0]
-                    CO_a[n] = atmod_full['CO_g']['atmosphere_moles'][0]
-                    CH4_a[n] = atmod_full['CH4_g']['atmosphere_moles'][0]
-                    N2_a[n] = atmod_full['N2_g']['atmosphere_moles'][0]
-                    S2_a[n] = atmod_full['S2_g']['atmosphere_moles'][0]
-                    H2O4S_a[n] = atmod_full['H2O4S_g']['atmosphere_moles'][0]
-                    SO2_a[n] = atmod_full['O2S_g']['atmosphere_moles'][0]
-                    H2_a_int[n] = atmod_full['H2_g']['dissolved_moles'][0]
-                    H2O_a_int[n] = atmod_full['H2O_g']['dissolved_moles'][0]
-                    O2_a_int[n] = atmod_full['O2_g']['dissolved_moles'][0]
-                    CO2_a_int[n] = atmod_full['CO2_g']['dissolved_moles'][0]
-                    CO_a_int[n] = atmod_full['CO_g']['dissolved_moles'][0]
-                    CH4_a_int[n] = atmod_full['CH4_g']['dissolved_moles'][0]
-                    N2_a_int[n] = atmod_full['N2_g']['dissolved_moles'][0]
-                    S2_a_int[n] = atmod_full['S2_g']['dissolved_moles'][0]
-                    H2O4S_a_int[n] = atmod_full['H2O4S_g']['dissolved_moles'][0]
-                    SO2_a_int[n] = atmod_full['O2S_g']['dissolved_moles'][0]
-                    fO2_a[n] = atmod_full['O2_g']['fugacity'][0]
+                    H2_a[n] = atmod_full['H2_g']['gas']['number_moles'][0][0]
+                    H2O_a[n] = atmod_full['H2O_g']['gas']['number_moles'][0][0]
+                    O2_a[n] = atmod_full['O2_g']['gas']['number_moles'][0][0]
+                    CO2_a[n] = atmod_full['CO2_g']['gas']['number_moles'][0][0]
+                    CO_a[n] = atmod_full['CO_g']['gas']['number_moles'][0][0]
+                    CH4_a[n] = atmod_full['CH4_g']['gas']['number_moles'][0][0]
+                    N2_a[n] = atmod_full['N2_g']['gas']['number_moles'][0][0]
+                    S2_a[n] = atmod_full['S2_g']['gas']['number_moles'][0][0]
+                    H2O4S_a[n] = atmod_full['H2O4S_g']['gas']['number_moles'][0][0]
+                    SO2_a[n] = atmod_full['O2S_g']['gas']['number_moles'][0][0]
+                    H2_a_int[n] = atmod_full['H2_d']['silicate_melt']['number_moles'][0][0]
+                    H2O_a_int[n] = atmod_full['H2O_d']['silicate_melt']['number_moles'][0][0]
+                    O2_a_int[n] = 0.0 # O2 has no solubility model / melt reservoir
+                    CO2_a_int[n] = atmod_full['CO2_d']['silicate_melt']['number_moles'][0][0]
+                    CO_a_int[n] = atmod_full['CO_d']['silicate_melt']['number_moles'][0][0]
+                    CH4_a_int[n] = atmod_full['CH4_d']['silicate_melt']['number_moles'][0][0]
+                    N2_a_int[n] = atmod_full['N2_d']['silicate_melt']['number_moles'][0][0]
+                    S2_a_int[n] = atmod_full['S2_d']['silicate_melt']['number_moles'][0][0]
+                    H2O4S_a_int[n] = 0.0 # H2O4S has no solubility model / melt reservoir
+                    SO2_a_int[n] = 0.0 # SO2 has no solubility model / melt reservoir
+                    fO2_a[n] = atmod_full['O2_g']['gas']['activity'][0][0]
             else:
                 H2_a[n] = H2_a[n-1]
                 H2O_a[n] = H2O_a[n-1]
@@ -670,7 +690,7 @@ dynamic_phi = False):
         y6_loss = Phi_N*A*delta_t
         y7_loss = Phi_S*A*delta_t
         # M_atm -= mass_loss # comes from phi*A*delta_t
-        M_atm -= (y1_loss*mu_H + y2_loss*mu_He + y3_loss*mu_D + y4_loss*mu_O + y5_loss*mu_C + y6_loss*mu_N + y7_loss*mu_S)
+        M_atm -= (y1_loss*const.mu_H + y2_loss*const.mu_He + y3_loss*const.mu_D + y4_loss*const.mu_O + y5_loss*const.mu_C + y6_loss*const.mu_N + y7_loss*const.mu_S)
         f_atm = M_atm/Mp
         y1 -= y1_loss
         y2 -= y2_loss
