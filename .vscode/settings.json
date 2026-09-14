@@ -1,0 +1,37 @@
+{
+    "autoDocstring.docstringFormat": "google-notypes",
+    "python.analysis.diagnosticMode": "workspace",
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll": "explicit",
+            "source.organizeImports": "explicit"
+        },
+        "editor.rulers": [
+            99
+        ],
+    },
+    "notebook.formatOnSave.enabled": true,
+    "notebook.codeActionsOnSave": {
+        "notebook.source.organizeImports": "explicit"
+    },
+    "python.testing.pytestArgs": [
+        "-s",
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "[restructuredtext]": {
+        "editor.formatOnSave": true,
+        "editor.wordWrap": "bounded",
+        "editor.rulers": [
+            79
+        ]
+    },
+    "files.associations": {
+        "*.rst": "restructuredtext"
+    },
+    // https://github.com/microsoft/vscode-python/discussions/23785
+    "python.experiments.optOutFrom": ["pythonTestAdapter"]
+}
