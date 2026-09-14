@@ -1,26 +1,52 @@
-from IsoFATE.isofate.isofunks import Fxuv
-from IsoFATE.isofate.constants import s2yr
 import numpy as np
 
-t=1e6, F0=1e2, t0 = 1e6, t_sat = 5e8, beta = -1.23, step_fn = False, F_final = 0, t_pms = 1e7, pms_factor = 1e2
-time = t*s2yr
-assert 0 < time < t_pms
-F_pms0 = F0*pms_factor
-s = (np.log10(F0) - np.log10(F_pms0)) / (np.log10(t_pms) - np.log10(t0))
-assert Fxuv(t,F0) == F_pms0*(time/t0)**s
+from isofate.constants import s2yr
+from isofate.isofunks import Fxuv
 
-t=1e6, F0=1e2, t0 = 1e6, t_sat = 5e8, beta = -1.23, step_fn = False, F_final = 0, t_pms = 1e7, pms_factor = 1e2
-time = t*s2yr
-assert time < t_sat
-assert Fxuv(t,F0) == F0
+F0 = 1e2       # main-sequence XUV flux [W/m2]
+T0 = 1e6       # start time [yr]
+T_SAT = 5e8    # saturation time [yr]
+BETA = -1.23
+F_FINAL = 10.0
+T_PMS = 1e7    # pre-main-sequence phase duration [yr]
+PMS_FACTOR = 1e2
 
-t=1e6, F0=1e2, t0 = 1e6, t_sat = 0, beta = -1.23, step_fn = False, F_final = 0, t_pms = 1e7, pms_factor = 1e2
-time = t*s2yr
-assert time >= t_sat
-assert step_fn == False
-assert Fxuv(t,F0) == F0*(time/t_sat)**beta
 
-time=1e6, F0=1e2, t0 = 1e6, t_sat = 5e8, beta = -1.23, step_fn = True, F_final = 0, t_pms = 1e7, pms_factor = 1e2
-time = t*s2yr
-assert step_fn == True
-assert Fxuv(t,F0) == F_final
+def _seconds(years):
+    return years / s2yr
+
+
+def test_fxuv_pre_main_sequence_branch():
+    time_yr = 1e6  # within (0, T_PMS)
+    t = _seconds(time_yr)
+    F_pms0 = F0 * PMS_FACTOR
+    s = (np.log10(F0) - np.log10(F_pms0)) / (np.log10(T_PMS) - np.log10(T0))
+    expected = F_pms0 * (time_yr / T0) ** s
+    result = Fxuv(t, F0, t0=T0, t_sat=T_SAT, beta=BETA, step_fn=False,
+                  F_final=F_FINAL, t_pms=T_PMS, pms_factor=PMS_FACTOR)
+    assert np.isclose(result, expected)
+
+
+def test_fxuv_saturated_branch():
+    time_yr = 1e7  # below T_SAT; t_pms=0 disables the pre-main-sequence branch
+    t = _seconds(time_yr)
+    result = Fxuv(t, F0, t0=T0, t_sat=T_SAT, beta=BETA, step_fn=False,
+                  F_final=F_FINAL, t_pms=0, pms_factor=PMS_FACTOR)
+    assert result == F0
+
+
+def test_fxuv_power_law_decay_branch():
+    time_yr = 1e9  # past T_SAT
+    t = _seconds(time_yr)
+    result = Fxuv(t, F0, t0=T0, t_sat=T_SAT, beta=BETA, step_fn=False,
+                  F_final=F_FINAL, t_pms=0, pms_factor=PMS_FACTOR)
+    expected = F0 * (time_yr / T_SAT) ** BETA
+    assert np.isclose(result, expected)
+
+
+def test_fxuv_step_function_branch():
+    time_yr = 1e9  # past T_SAT
+    t = _seconds(time_yr)
+    result = Fxuv(t, F0, t0=T0, t_sat=T_SAT, beta=BETA, step_fn=True,
+                  F_final=F_FINAL, t_pms=0, pms_factor=PMS_FACTOR)
+    assert result == F_FINAL
