@@ -18,7 +18,7 @@ avoid false failures from ordinary atmodeller version bumps while still catching
 import numpy as np
 import pytest
 
-from isofate.atmodeller_coupler import AtmodellerCoupler
+from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller
 from isofate.constants import const
 from isofate.isofate_coupler import isocalc
 
@@ -30,41 +30,8 @@ def _assert_finite(*values):
 
 def test_atmodeller_coupler_single_solve():
     """A single equilibrium solve for a realistic, H2-dominated/reducing composition."""
-    from isofate.isofate_coupler import (
-        ChemicalSpecies,
-        EquilibriumModel,
-        Planet,
-        ReservoirSpecies,
-        solubility_models,
-    )
-
-    gas_species = (
-        ChemicalSpecies.create_gas("H2"),
-        ChemicalSpecies.create_gas("H2O"),
-        ChemicalSpecies.create_gas("O2"),
-        ChemicalSpecies.create_gas("CO"),
-        ChemicalSpecies.create_gas("CO2"),
-        ChemicalSpecies.create_gas("CH4"),
-        ChemicalSpecies.create_gas("He"),
-        ChemicalSpecies.create_gas("N2"),
-        ChemicalSpecies.create_gas("S2"),
-        ChemicalSpecies.create_gas("H2O4S"),
-        ChemicalSpecies.create_gas("SO2"),
-    )
-    melt_species = (
-        ReservoirSpecies.create_dissolved("H2O", solubility=solubility_models["H2O_basalt_dixon95"]),
-        ReservoirSpecies.create_dissolved("H2", solubility=solubility_models["H2_basalt_hirschmann12"]),
-        ReservoirSpecies.create_dissolved("CO", solubility=solubility_models["CO_basalt_yoshioka19"]),
-        ReservoirSpecies.create_dissolved("CO2", solubility=solubility_models["CO2_basalt_dixon95"]),
-        ReservoirSpecies.create_dissolved("CH4", solubility=solubility_models["CH4_basalt_ardia13"]),
-        ReservoirSpecies.create_dissolved("He", solubility=solubility_models["He_basalt_jambon86"]),
-        ReservoirSpecies.create_dissolved("N2", solubility=solubility_models["N2_basalt_libourel03"]),
-        ReservoirSpecies.create_dissolved("S2", solubility=solubility_models["S2_sulfide_basalt_boulliung23"]),
-    )
-
     Mp = 5.6 * const.Me
-    planet = Planet.from_species(gas_species, silicate_melt_species=melt_species, planet_mass=Mp)
-    interior_atmosphere = EquilibriumModel.from_state(planet)
+    interior_atmosphere = build_atmodeller(Mp)
 
     results, sol, mantle_iron_dict = AtmodellerCoupler(
         Teq=900.0, Mp=Mp, Rp=1.5 * 6.371e6, mu=const.mu_H, melt_fraction=1.0, mantle_iron_dict=False,

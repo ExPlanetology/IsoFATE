@@ -1,16 +1,35 @@
-"""
-Collin Cherubim
-June 30, 2025
-Main IsoFATE script for coulped model.
-"""
+# SPDX-FileCopyrightText: 2026 Collin Cherubim <collinc@uchicago.edu>
+# SPDX-FileCopyrightText: 2026 Dan J. Bower <dbower@eaps.ethz.ch>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""Main IsoFATE script for coulped model."""
 
 import numpy as np
 
-from isofate.atmodeller_coupler import *
-from isofate.atmodeller_coupler import build_atmodeller
+from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller
 from isofate.constants import binary_diffusion, const
-from isofate.isofunks import *
-from isofate.orbit_params import *
+from isofate.isofunks import (
+    Phi_1,
+    Phi_2,
+    Phi_C_Z90,
+    Phi_D_Z90,
+    Phi_minor_species,
+    Phi_N_Z90,
+    Phi_O_Z90,
+    Phi_S_Z90,
+    R_atm,
+    R_Bondi,
+    R_core,
+    R_env,
+    R_Hill,
+    V_reduction,
+    get_binary_diffusion_coeff,
+    phi_E,
+    phi_kill,
+    phi_RR,
+    phiE_CP,
+)
 from isofate.species import ATOMIC_MASSES, SYMBOLS
 
 
