@@ -21,6 +21,7 @@ import pytest
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller
 from isofate.constants import const
 from isofate.isofate_coupler import isocalc
+from isofate.system import Planet
 
 
 def _assert_finite(*values):
@@ -91,6 +92,23 @@ def test_isocalc_regression():
     assert final['log10dIW_1_bar'] == pytest.approx(1.732605765559164, rel=1e-2)
     assert final['H2O_atm'] == pytest.approx(551580150905925.06, rel=1e-2)
     assert final['H2O_mantle'] == pytest.approx(8.079300962092979e+20, rel=1e-2)
+
+
+def test_isocalc_accepts_planet():
+    """Passing planet=Planet(mass=Mp, f_atm=f_atm, ...) must exactly reproduce passing Mp/f_atm
+    directly - it only seeds the initial conditions, it must never be read again once the loop's
+    own (time-evolving) Mp/f_atm locals take over."""
+    kwargs = _toy_isocalc_kwargs()
+    Mp = kwargs.pop('Mp')
+    f_atm = kwargs.pop('f_atm')
+
+    sol_direct = isocalc(f_atm, Mp, **kwargs)
+
+    planet = Planet(mass=Mp, period=1e6, f_atm=f_atm)
+    sol_planet = isocalc(None, None, planet=planet, **kwargs)
+
+    for key in ('Matm', 'N_H', 'N_O_int', 'fatm'):
+        assert np.array_equal(sol_direct[key], sol_planet[key]), key
 
 
 @pytest.mark.parametrize("mantle_iron_type,expected_N_O_int", [

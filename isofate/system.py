@@ -13,8 +13,8 @@ blocks with a single `Star(...)`/`Planet(...)` instance per system.
 from dataclasses import dataclass
 
 from isofate.constants import const
-from isofate.isofunks import R_core
-from isofate.orbit_params import Luminosity
+from isofate.isofunks import R_Bondi, R_core, R_Hill
+from isofate.orbit_params import EqTemp, Insolation, Luminosity, SemiMajor
 
 
 @dataclass
@@ -85,6 +85,55 @@ class Planet:
         return R_core(self.mass)
 
 
+@dataclass
+class System:
+    """A planet orbiting a star.
+
+    Groups the quantities that genuinely depend on both bodies (or the orbit between them), as
+    opposed to properties of the Star or Planet alone. `mu` (mean atmospheric particle mass) is
+    deliberately never stored here: unlike everything else on this class, it evolves over the
+    course of a simulation (see isocalc), so it must stay something the caller passes in each
+    time rather than a fixed System property.
+
+    Args:
+        star: The host star
+        planet: The orbiting planet
+    """
+
+    star: Star
+    planet: Planet
+
+    @property
+    def semi_major_axis(self) -> float:
+        """Orbital semi-major axis [m]."""
+        return SemiMajor(self.star.mass, self.planet.period)
+
+    @property
+    def insolation(self) -> float:
+        """Incident bolometric flux at the planet [W/m2]."""
+        return Insolation(self.star.luminosity, self.semi_major_axis)
+
+    @property
+    def equilibrium_temperature(self) -> float:
+        """Planetary equilibrium temperature [K], assuming zero albedo."""
+        return EqTemp(self.insolation)
+
+    @property
+    def hill_radius(self) -> float:
+        """Hill radius [m]."""
+        return R_Hill(self.planet.mass, self.star.mass, self.semi_major_axis)
+
+    def bondi_radius(self, mu: float, T: float | None = None) -> float:
+        """Bondi radius [m].
+
+        Args:
+            mu: Mean atmospheric particle mass [kg] - time-evolving, must be supplied by the
+                caller (see the class docstring).
+            T: Temperature [K]. Defaults to `equilibrium_temperature` if not given.
+        """
+        return R_Bondi(self.planet.mass, mu, T if T is not None else self.equilibrium_temperature)
+
+
 # Sun-like star
 # R_star = 1.0*Rs # [m]
 # M_star = 1.0*Ms
@@ -109,8 +158,9 @@ M_star = 0.18 * const.Ms  # [kg]
 T_star = 3096  # [K]
 # Currently coded as a method in the class
 # t_jump = 5.9 - 15.4 * (M_star / const.Ms)
-L = 0.0038 * const.Ls
-LHS1140Star: Star = Star(radius=R_star, mass=M_star, temperature=T_star, luminosity=L)
+# TODO: This was wired in, but presumably should be an override?
+# L = 0.0038 * const.Ls
+LHS1140Star: Star = Star(radius=R_star, mass=M_star, temperature=T_star)  # , luminosity=L)
 
 # # Kepler-138
 # R_star = 0.535*Rs # [m]
@@ -185,10 +235,11 @@ TRAPPIST1Star: Star = Star(radius=0.1192 * const.Rs, mass=0.0898 * const.Ms, tem
 # Mp = 8.63*Me
 # P = 33/s2day
 
-# # # LHS 1140 b
-f_atm = 0.00085
-Mp = 5.6 * const.Me
-P = 24.74 / const.s2day
+# LHS 1140 b
+# f_atm = 0.00085
+# Mp = 5.6 * const.Me
+# P = 24.74 / const.s2day
+LHS1140b: Planet = Planet(mass=5.6 * const.Me, period=24.74 / const.s2day, f_atm=0.00085)
 
 # GJ 3090 b
 # f_atm = 0.03

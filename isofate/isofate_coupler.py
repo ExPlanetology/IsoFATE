@@ -31,6 +31,7 @@ from isofate.isofunks import (
     phiE_CP,
 )
 from isofate.species import ATOMIC_MASSES, SYMBOLS
+from isofate.system import Planet
 
 
 def isocalc(
@@ -73,6 +74,7 @@ def isocalc(
     save_molecules=False,
     mantle_iron_dict=False,
     dynamic_phi=False,
+    planet: Planet | None = None,
 ):
     """
     This is a test
@@ -148,6 +150,15 @@ def isocalc(
     #  - 'Phi_He': He number flux [atoms/s/m2]
     #  - 'Phi_D': D number flux [atoms/s/m2]
     # '''
+
+    # If a Planet is given, it overrides the f_atm/Mp arguments. Only planet.mass and
+    # planet.f_atm are ever read, and only here, once, to seed the *initial* conditions: Mp
+    # never changes over the run, but f_atm is immediately reassigned to a plain float and
+    # becomes this loop's own time-evolving local variable (see M_atm/f_atm below) - it must
+    # never be read from `planet` again after this point.
+    if planet is not None:
+        Mp = planet.mass
+        f_atm = planet.f_atm
 
     ###_____Initialize physical values_____###
 

@@ -17,26 +17,26 @@ from isofate.isofate_coupler import *
 # from isofate_coupler_v3_cannon import *
 from isofate.isofunks import *
 from isofate.orbit_params import *
+from isofate.system import LHS1140b, LHS1140Star, Planet, Star, System
 
 start = TIME.time()
 
-# LHS 1140
-R_star = 0.22 * const.Rs  # [m]
-M_star = 0.18 * const.Ms  # [kg]
-T_star = 3096  # [K]
-t_jump = 5.9 - 15.4 * (M_star / const.Ms)
-L = 0.0038 * const.Ls
+# LHS 1140 / LHS 1140 b
+star: Star = LHS1140Star
+planet: Planet = LHS1140b
+system = System(star=star, planet=planet)
 
-L = Luminosity(R_star, T_star)  # [W]
+# kept as plain names since the rest of this script (and isocalc's positional args) still refer
+# to them directly
+M_star = star.mass
+t_jump = star.t_jump
+f_atm = planet.f_atm
+Mp = planet.mass
+P = planet.period
 
-# # # LHS 1140 b
-f_atm = 0.00085
-Mp = 5.6 * const.Me
-P = 24.74 / const.s2day
-
-a = SemiMajor(M_star, P)  # [m]
-Fp = Insolation(L, a)  # [W/m2]
-T = EqTemp(Fp, A=0)  # planetary eq temp [K]
+a = system.semi_major_axis  # [m]
+Fp = system.insolation  # [W/m2]
+T = system.equilibrium_temperature  # planetary eq temp [K]
 F0 = Fp * 1e-3  # use for M star
 F_final = 0.17  # LHS 1140; 0.170 for GJ 699 MUSCLES; use 0.033 for GJ 1132 MUSCLES
 # F_final = 0.175 # K2-3 c Diamond-Lowe et al. 2022
@@ -132,8 +132,8 @@ print("dynamic_phi =", dynamic_phi)
 
 # run simulation (from isofate.py)
 sol = isocalc(
-    f_atm,
-    Mp,
+    None,
+    None,
     M_star,
     F0,
     Fp,
@@ -142,6 +142,7 @@ sol = isocalc(
     time,
     mechanism,
     rad_evol,
+    planet=planet,
     N_H=N_H,
     N_He=N_He,
     N_D=N_D,
@@ -321,13 +322,13 @@ print("\n")
 # more planetary properties for analytics
 mu = const.mu_solar
 t0 = 1e6 / const.s2yr
-r_core = R_core(Mp)
+r_core = planet.core_radius
 r_env = R_env(Mp, f_atm, Fp, t0)
 r_atm = R_atm(T, Mp, r_core, r_env, mu)
 Rp = r_core + r_env + r_atm
 # Rp = r_core
-R_B = R_Bondi(Mp, mu, T)  # Bondi radius [m]
-R_H = R_Hill(Mp, M_star, d)  # Hill radius [m]
+R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
+R_H = system.hill_radius  # Hill radius [m]
 # Rp = r_core # use this if rad_evol = False for analytics to match isofate
 # Rp = Rp_override
 Rp = np.min([Rp, R_B, R_H])  # [m]
