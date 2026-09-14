@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Main IsoFATE script for coulped model."""
+"""Main IsoFATE script for coupled model."""
 
 import numpy as np
 
