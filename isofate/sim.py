@@ -404,19 +404,19 @@ ax1.plot(t_a*const.s2yr, PhiHe_a*const.mu_He, color = 'grey', label = 'He flux')
 ax1.plot(t_a*const.s2yr, phic_a, '--', color = 'grey', label = 'He critical')
 if ND_a[0] != 0:
     ax1.plot(t_a*const.s2yr, PhiD_a*const.mu_D, color = 'orangered', label = 'D flux')
-    ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_D(T)*x1_a*(const.mu_D - const.mu_H)/H_H, '--', color = 'orangered', label = 'D critical') # D/H critical flux
+    ax1.plot(t_a*const.s2yr, binary_diffusion.H_D(T)*x1_a*(const.mu_D - const.mu_H)/H_H, '--', color = 'orangered', label = 'D critical') # D/H critical flux
 if NO_a[0] != 0:
     ax1.plot(t_a*const.s2yr, PhiO_a*const.mu_O, color = 'green', label = 'O flux')
-    ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_O(T)*x1_a*(const.mu_O - const.mu_H)/H_H, '--', color = 'green', label = 'O critical') # O/H critical flux
+    ax1.plot(t_a*const.s2yr, binary_diffusion.H_O(T)*x1_a*(const.mu_O - const.mu_H)/H_H, '--', color = 'green', label = 'O critical') # O/H critical flux
 if NC_a[0] != 0:
     ax1.plot(t_a*const.s2yr, PhiC_a*const.mu_C, color = 'gold', label = 'C flux')
-    ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_C(T)*x1_a*(const.mu_C - const.mu_H)/H_H, '--', color = 'gold', label = 'C critical') # C/H critical flux
+    ax1.plot(t_a*const.s2yr, binary_diffusion.H_C(T)*x1_a*(const.mu_C - const.mu_H)/H_H, '--', color = 'gold', label = 'C critical') # C/H critical flux
 # if NN_a[0] != 0:
     ax1.plot(t_a*const.s2yr, PhiN_a*const.mu_N, color = 'blue', label = 'N flux')
-    ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_N(T)*x1_a*(const.mu_N - const.mu_H)/H_H, '--', color = 'blue', label = 'N critical') # N/H critical flux
+    ax1.plot(t_a*const.s2yr, binary_diffusion.H_N(T)*x1_a*(const.mu_N - const.mu_H)/H_H, '--', color = 'blue', label = 'N critical') # N/H critical flux
 if NS_a[0] != 0:
     ax1.plot(t_a*const.s2yr, PhiS_a*const.mu_S, color = 'purple', label = 'S flux')
-    ax1.plot(t_a*const.s2yr, binary_diffusion.b_H_S(T)*x1_a*(const.mu_S - const.mu_H)/H_H, '--', color = 'purple', label = 'S critical') # S/H critical flux
+    ax1.plot(t_a*const.s2yr, binary_diffusion.H_S(T)*x1_a*(const.mu_S - const.mu_H)/H_H, '--', color = 'purple', label = 'S critical') # S/H critical flux
 ax1.plot(t_a*const.s2yr, phi_a, ':', color = 'mediumslateblue', label = 'total flux')
 cross = np.where(np.abs(phi_a - phic_a) < 1e-12)
 if len(cross[0]) != 0:

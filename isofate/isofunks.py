@@ -513,17 +513,17 @@ def get_binary_diffusion_coeff(species1, species2, T):
     '''
     # Create function lookup dictionary (only created once when function is called)
     coeff_functions = {
-        ('H', 'D'): binary_diffusion.b_H_D,
-        ('H', 'He'): binary_diffusion.b_H_He,
-        ('H', 'O'): binary_diffusion.b_H_O,
-        ('H', 'C'): binary_diffusion.b_H_C,
-        ('H', 'N'): binary_diffusion.b_H_N,
-        ('H', 'S'): binary_diffusion.b_H_S,
-        ('He', 'D'): binary_diffusion.b_He_D,
-        ('He', 'O'): binary_diffusion.b_He_O,
-        ('He', 'C'): binary_diffusion.b_He_C,
-        ('He', 'N'): binary_diffusion.b_He_N,
-        ('He', 'S'): binary_diffusion.b_He_S
+        ('H', 'D'): binary_diffusion.H_D,
+        ('H', 'He'): binary_diffusion.H_He,
+        ('H', 'O'): binary_diffusion.H_O,
+        ('H', 'C'): binary_diffusion.H_C,
+        ('H', 'N'): binary_diffusion.H_N,
+        ('H', 'S'): binary_diffusion.H_S,
+        ('He', 'D'): binary_diffusion.He_D,
+        ('He', 'O'): binary_diffusion.He_O,
+        ('He', 'C'): binary_diffusion.He_C,
+        ('He', 'N'): binary_diffusion.He_N,
+        ('He', 'S'): binary_diffusion.He_S
     }
 
     # Always sort to ensure consistent lookup (lighter element first by atomic mass)
@@ -534,7 +534,7 @@ def get_binary_diffusion_coeff(species1, species2, T):
         key = (species2, species1)
 
     # Get function and call it with temperature
-    func = coeff_functions.get(key, binary_diffusion.b_H_He)  # default to H-He if pair not found
+    func = coeff_functions.get(key, binary_diffusion.H_He)  # default to H-He if pair not found
     return func(T)
 
 def Phi_minor_species(Phi_1, Phi_2, H_1, H_2, H_minor, N_values, T, minor_species_idx, light_dominant_idx, heavy_dominant_idx):

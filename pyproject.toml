@@ -8,6 +8,7 @@ license = "GPL-3.0-or-later"
 dependencies = [
  "numpy>=1.24",
  "scipy>=1.10.0",
+ "molmass>=2026.1.8",
  "matplotlib>=3.10.0",
  "atmodeller @ git+https://github.com/ExPlanetology/atmodeller.git@djbower/v2preview",
  "optimistix>=0.1.0",
