@@ -13,10 +13,11 @@ blocks with a single `Star(...)`/`Planet(...)` instance per system.
 from dataclasses import dataclass
 
 from isofate.constants import const
+from isofate.isofunks import R_core
 from isofate.orbit_params import Luminosity
 
 
-@dataclass(frozen=True)
+@dataclass
 class Star:
     """A host star.
 
@@ -77,6 +78,11 @@ class Planet:
     def atmosphere_mass(self) -> float:
         """Initial atmospheric mass [kg]."""
         return self.mass * self.f_atm
+
+    @property
+    def core_radius(self) -> float:
+        """Planetary core radius [m] (rocky component; Lopez & Fortney 2014)."""
+        return R_core(self.mass)
 
 
 # Sun-like star
