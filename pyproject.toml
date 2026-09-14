@@ -1,19 +1,30 @@
 [project]
 name = "isofate"
-version = "0.1.2"
-requires-python = ">=3.11"
+version = "0.2.0"
+description = ""
 readme = "README.md"
+requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
+authors = [
+    {name = "Collin Cherubim", email = "collinc@uchicago.edu"},
+    {name = "Dan J Bower", email = "dbower@eaps.ethz.ch"},
+]
 
 dependencies = [
- "numpy>=1.24",
- "scipy>=1.10.0",
- "molmass>=2026.1.8",
- "matplotlib>=3.10.0",
- "atmodeller @ git+https://github.com/ExPlanetology/atmodeller.git@djbower/v2preview",
- "optimistix>=0.1.0",
- "emcee",
- "corner"
+    # JAX pinned for Intel macOS
+    "jax==0.4.38; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    # JAX requirements for all other platforms
+    "jax>0.4.38,!=0.7.0,!=0.7.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    # SciPy and NumPy minimum requirements for jax 0.4.31
+    "numpy>=1.24",
+    "scipy>=1.10.0",
+    "molmass>=2026.1.8",
+    "matplotlib>=3.10.0",
+    "atmodeller @ git+https://github.com/ExPlanetology/atmodeller.git@djbower/v2preview",
+    "optimistix>=0.1.0",
+    "equinox>=0.13.8",
+    "emcee",
+    "corner",
 ]
 
 [project.optional-dependencies]
