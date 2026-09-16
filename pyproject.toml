@@ -25,6 +25,7 @@ dependencies = [
     "equinox>=0.13.8",
     "emcee",
     "corner",
+    "diffrax>=0.7.2",
 ]
 
 [project.optional-dependencies]
