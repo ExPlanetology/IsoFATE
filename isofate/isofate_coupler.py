@@ -838,6 +838,10 @@ def isocalc(
                     N_S_int,
                     interior_atmosphere,
                     initial_guess=atmod_initial_guess,
+                    # Species-level diagnostics (atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
+                    # are only read below when save_molecules is True; otherwise the narrow
+                    # extraction (element number_moles + gas mass only) is all this loop needs.
+                    full_output=save_molecules,
                 )
                 N_H_int = atmod_results["N_H_int"] * (1 - X_DH)
                 N_D_int = atmod_results["N_H_int"] * X_DH

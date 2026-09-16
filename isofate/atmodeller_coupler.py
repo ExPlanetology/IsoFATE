@@ -10,6 +10,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from atmodeller import ChemicalSpecies, EquilibriumModel, Planet, ReservoirSpecies
+from atmodeller.constants import GAS_PHASE_INDEX, SILICATE_MELT_PHASE_INDEX
+from atmodeller.output_base import OutputNamedArraysDict
 from atmodeller.solubility import get_solubility_models
 from jax.typing import ArrayLike
 
@@ -18,6 +20,9 @@ from isofate.isofunks import *
 from isofate.orbit_params import *
 
 solubility_models = get_solubility_models()
+
+_COUPLING_ELEMENTS: tuple[str, ...] = ("H", "He", "O", "C", "N", "S")
+"""Elements AtmodellerCoupler's `results` dict reports; must match its mass_constraints keys."""
 
 
 @eqx.filter_jit
@@ -53,6 +58,70 @@ def _update_solve_extract(
     ).update_constraints(mass_constraints=mass_constraints)
     output = model.solve(base_solution_array)
     sol = output.to_dict(output_format="elements_species", to_numpy=False)
+    return sol, output.solution, output.multi_attempt_solution.success
+
+
+@eqx.filter_jit
+def _update_solve_extract_narrow(
+    interior_atmosphere: EquilibriumModel,
+    planet_mass,
+    mantle_melt_fraction,
+    surface_radius,
+    temperature,
+    mass_constraints: dict,
+    base_solution_array,
+):
+    """Like ``_update_solve_extract``, but skips every diagnostic AtmodellerCoupler never reads.
+
+    ``to_dict("elements_species")`` computes, for *every* species in *every* phase: activity (a
+    real-gas EOS volume root-find for non-ideal species), mass/mole fractions, partial pressure,
+    phase volume, log10dIW, and metallicity. AtmodellerCoupler's ``results`` dict - the thing the
+    isocalc per-timestep loop actually consumes - only ever reads element ``number_moles`` (gas +
+    silicate_melt) for the six mass-constrained elements, the gas phase's total mass, and O2_g's
+    number_moles (for the iron-buffer branches). All of those need only ``log_number_moles`` and
+    the (static) formula matrix - no EOS, no activity. Building only these keeps the traced graph
+    much smaller without changing any value AtmodellerCoupler actually uses from this path.
+
+    Not a substitute for ``_update_solve_extract`` when species-level diagnostics are wanted
+    (``save_molecules=True``, or the end-of-run full snapshot) - those still need the full
+    ``to_dict`` output.
+    """
+    model = interior_atmosphere.update_state(
+        planet_mass=planet_mass,
+        mantle_melt_fraction=mantle_melt_fraction,
+        surface_radius=surface_radius,
+        temperature=temperature,
+    ).update_constraints(mass_constraints=mass_constraints)
+    output = model.solve(base_solution_array)
+
+    out_dict = OutputNamedArraysDict(output.parameters, output.multi_attempt_solution)
+    gas_output = out_dict.get_phase_output_from_index(GAS_PHASE_INDEX)
+    melt_output = out_dict.get_phase_output_from_index(SILICATE_MELT_PHASE_INDEX)
+
+    sol: dict = {}
+    for element in _COUPLING_ELEMENTS:
+        gas_idx = gas_output.phase.species.get_element_index(element)
+        melt_idx = melt_output.phase.species.get_element_index(element)
+        if gas_idx == -1 or melt_idx == -1:
+            raise ValueError(
+                f"Element {element!r} missing from the gas or silicate_melt phase species; the "
+                "narrow extraction assumes both phases carry all six coupling elements."
+            )
+        sol[element] = {
+            "gas": {"number_moles": gas_output.element_number_moles[..., gas_idx : gas_idx + 1]},
+            "silicate_melt": {
+                "number_moles": melt_output.element_number_moles[..., melt_idx : melt_idx + 1]
+            },
+        }
+
+    o2_index: int = gas_output.phase.species_names.index("O2_g")
+    sol["O2_g"] = {
+        "gas": {
+            "number_moles": gas_output.species_number_moles[..., o2_index : o2_index + 1]
+        }
+    }
+    sol["gas"] = {"phase": {"mass": gas_output.phase_mass}}
+
     return sol, output.solution, output.multi_attempt_solution.success
 
 
@@ -162,7 +231,16 @@ def AtmodellerCoupler(
     N_S_int,
     interior_atmosphere,
     initial_guess=None,
+    full_output: bool = True,
 ):
+    """
+    Args:
+        full_output: When ``False``, uses the narrow extraction path (element number_moles,
+            gas mass, O2_g number_moles only) instead of the full ``elements_species`` output.
+            The periodic per-timestep calls in ``isocalc`` never need more than that unless
+            ``save_molecules=True``; the end-of-run full snapshot always needs the full path.
+            Defaults to ``True`` to preserve existing behavior for other callers.
+    """
 
     results = {}
     gamma = 7 / 5
@@ -231,7 +309,9 @@ def AtmodellerCoupler(
     surface_temperature_j = jnp.asarray(surface_temperature)
     mass_constraints_j = {key: jnp.asarray(value) for key, value in mass_constraints.items()}
 
-    sol_jax, solution, success = _update_solve_extract(
+    extract_fn = _update_solve_extract if full_output else _update_solve_extract_narrow
+
+    sol_jax, solution, success = extract_fn(
         interior_atmosphere,
         planet_mass_j,
         mantle_melt_fraction_j,
@@ -241,7 +321,7 @@ def AtmodellerCoupler(
         base_solution_array,
     )
     if not np.all(np.asarray(success)):
-        sol_jax, solution, success = _update_solve_extract(
+        sol_jax, solution, success = extract_fn(
             interior_atmosphere,
             planet_mass_j,
             mantle_melt_fraction_j,
