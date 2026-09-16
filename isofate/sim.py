@@ -19,8 +19,6 @@ from isofate.isofunks import *
 from isofate.orbit_params import *
 from isofate.system import LHS1140b, LHS1140Star, Planet, Star, System
 
-start = TIME.time()
-
 # LHS 1140 / LHS 1140 b
 star: Star = LHS1140Star
 planet: Planet = LHS1140b
@@ -57,7 +55,9 @@ eps = 0.15
 rad_evol = True
 Rp_override = False
 n_steps = int(1e5)
-n_atmodeller = int(1e4)
+# Collin starts with 1e3
+# For 1e4 the run-time is reasonable.
+n_atmodeller = int(1e2)  # <-- FIXME: set much smaller Atmodeller runs slow (1e2)
 thermal = True
 M_atm = Mp * f_atm  # initial atmospheric mass [kg]
 melt_fraction_override = False
@@ -131,6 +131,7 @@ print("mantle_iron_dict", mantle_iron_dict)
 print("dynamic_phi =", dynamic_phi)
 
 # run simulation (from isofate.py)
+isocalc_start = TIME.time()
 sol = isocalc(
     system,
     F0,
@@ -167,6 +168,7 @@ sol = isocalc(
     mantle_iron_dict=mantle_iron_dict,
     dynamic_phi=dynamic_phi,
 )
+print(f"isocalc runtime: {TIME.time() - isocalc_start:.2f} s")
 
 # path = '/Users/collin/Documents/Harvard/Research/atm_escape/IsoFATE/monte_carlo/atmodeller/corrected_Psi/transient_D_world_full_isofate'
 # outfile = open(path, 'wb')
@@ -568,9 +570,6 @@ ax9.plot(t_a * const.s2yr, fenv_a * 100, color="gold")
 ax9.set_xscale("log")
 
 plt.tight_layout()
-
-
-print("done (", round((TIME.time() - start) / 60, 2), "mins )")
 
 # path = '/Users/collin/Documents/Harvard/Research/atm_escape/IsoFATE/case_studies/LHS1140b_eps80_f0018_Fi1_tjump_Ffinal170_XUV+RR_atmod1e2_ntime1e5_t5e9_tpms0'
 # path = '/Users/collin/Documents/Harvard/Research/atm_escape/IsoFATE/case_studies/N2world_dynamic_phi_fatm0398_XUV+RR_atmod1e2_ntime1e5_t5e9_tpms0'
