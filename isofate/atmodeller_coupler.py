@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 
 from isofate.constants import const
 from isofate.isofunks import *
+from isofate.isojax import make_atmosphere_descent_jax
 from isofate.orbit_params import *
 
 solubility_models = get_solubility_models()
