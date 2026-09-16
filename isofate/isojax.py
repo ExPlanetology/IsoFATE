@@ -10,14 +10,22 @@ cannot be traced under `jax.jit`), as they're ported over. See `make_atmosphere_
 docstring for the first example and the reasoning behind it.
 """
 
+from typing import Literal
+
 import diffrax
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
 from isofate.constants import const
 from isofate.isofunks import R_core
 
 
-def _atmosphere_descent_vector_field(r, y, args):
+def _atmosphere_descent_vector_field(
+    r: ArrayLike,
+    y: tuple[ArrayLike, ArrayLike],
+    args: tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike, ArrayLike],
+) -> tuple[Array, Array]:
     """RHS of the atmosphere-descent ODE system; see `make_atmosphere_descent_jax`'s docstring
     for the derivation of this from `make_atmosphere_descent`'s original discrete update."""
     p, _matm = y
@@ -33,7 +41,14 @@ def _atmosphere_descent_vector_field(r, y, args):
     return dp_dr, dmatm_dr
 
 
-def make_atmosphere_descent_jax(Tem, mu, rplanet, Mc, gamma, output_mode):
+def make_atmosphere_descent_jax(
+    Tem: ArrayLike,
+    mu: ArrayLike,
+    rplanet: ArrayLike,
+    Mc: ArrayLike,
+    gamma: ArrayLike,
+    output_mode: Literal[1, 2],
+) -> Array | tuple[Array, Array]:
     """JAX/diffrax-jittable equivalent of `isofunks.make_atmosphere_descent`.
 
     `make_atmosphere_descent`'s three per-step array updates reduce to a 2-state ODE in `r`:
