@@ -197,6 +197,10 @@ def isocalc(
 
     # build atmodeller model for interior-atmosphere coupling
     interior_atmosphere = build_atmodeller(Mp)
+    # Warm-starts each AtmodellerCoupler call from the previous call's converged solution instead
+    # of solving cold every time - consecutive calls are a tiny physical perturbation apart, so
+    # this drastically cuts the number of Newton iterations needed. None on the first call.
+    atmod_initial_guess = None
 
     atmod_full_output = {}  # dictionary to store atmodeller full output
 
@@ -420,53 +424,50 @@ def isocalc(
             radius_env = R_env(Mp, f_atm, Fp, t_a[n], thermal)
             radius_atm = R_atm(T, Mp, radius_core, radius_env, mu)
             radius_p = radius_core + radius_atm + radius_env
-            radius_p = np.min(
-                [R_B, R_H, radius_p]
-            )  # limits Rp to the min of Bondi/Hill/Lopez+Fortney radius
+            # limits Rp to the min of Bondi/Hill/Lopez+Fortney radius; plain min() avoids numpy's
+            # array-construction/dispatch overhead on a 3-scalar comparison run every timestep
+            radius_p = min(R_B, R_H, radius_p)
 
-        K = np.max(
-            [V_reduction(Mp, Mstar, d, radius_p), 0.01]
-        )  # grav potential reduction factor due to stellar tidal forces
+        # grav potential reduction factor due to stellar tidal forces
+        K = max(V_reduction(Mp, Mstar, d, radius_p), 0.01)
         Vpot = K * const.G * Mp / radius_p
         A = 4 * np.pi * radius_p**2
 
         # sets mass flux [kg/m2/s]
         if mechanism == "XUV":
             if RR == True:
-                phi = np.min(
-                    [
-                        phi_RR(
-                            radius_p,
-                            Mp,
-                            T,
-                            t_a[n],
-                            F0,
-                            t0 * const.s2yr,
-                            t_sat,
-                            beta,
-                            step_fn,
-                            F_final,
-                            t_pms,
-                            pms_factor,
-                        ),
-                        phi_E(
-                            t_a[n],
-                            eps,
-                            Vpot,
-                            d,
-                            F0,
-                            t0 * const.s2yr,
-                            t_sat,
-                            beta,
-                            activity,
-                            flux_model,
-                            stellar_type,
-                            step_fn,
-                            F_final,
-                            t_pms,
-                            pms_factor,
-                        ),
-                    ]
+                phi = min(
+                    phi_RR(
+                        radius_p,
+                        Mp,
+                        T,
+                        t_a[n],
+                        F0,
+                        t0 * const.s2yr,
+                        t_sat,
+                        beta,
+                        step_fn,
+                        F_final,
+                        t_pms,
+                        pms_factor,
+                    ),
+                    phi_E(
+                        t_a[n],
+                        eps,
+                        Vpot,
+                        d,
+                        F0,
+                        t0 * const.s2yr,
+                        t_sat,
+                        beta,
+                        activity,
+                        flux_model,
+                        stellar_type,
+                        step_fn,
+                        F_final,
+                        t_pms,
+                        pms_factor,
+                    ),
                 )
             else:
                 phi = phi_E(
@@ -492,40 +493,38 @@ def isocalc(
             phi = phi_kill(Mp * f_atm, radius_p, t - t_a[n])
         elif mechanism == "XUV+CPML":
             if RR == True:
-                phi_XUV = np.min(
-                    [
-                        phi_RR(
-                            radius_p,
-                            Mp,
-                            T,
-                            t_a[n],
-                            F0,
-                            t0 * const.s2yr,
-                            t_sat,
-                            beta,
-                            step_fn,
-                            F_final,
-                            t_pms,
-                            pms_factor,
-                        ),
-                        phi_E(
-                            t_a[n],
-                            eps,
-                            Vpot,
-                            d,
-                            F0,
-                            t0 * const.s2yr,
-                            t_sat,
-                            beta,
-                            activity,
-                            flux_model,
-                            stellar_type,
-                            step_fn,
-                            F_final,
-                            t_pms,
-                            pms_factor,
-                        ),
-                    ]
+                phi_XUV = min(
+                    phi_RR(
+                        radius_p,
+                        Mp,
+                        T,
+                        t_a[n],
+                        F0,
+                        t0 * const.s2yr,
+                        t_sat,
+                        beta,
+                        step_fn,
+                        F_final,
+                        t_pms,
+                        pms_factor,
+                    ),
+                    phi_E(
+                        t_a[n],
+                        eps,
+                        Vpot,
+                        d,
+                        F0,
+                        t0 * const.s2yr,
+                        t_sat,
+                        beta,
+                        activity,
+                        flux_model,
+                        stellar_type,
+                        step_fn,
+                        F_final,
+                        t_pms,
+                        pms_factor,
+                    ),
                 )
             else:
                 phi_XUV = phi_E(
@@ -773,6 +772,7 @@ def isocalc(
                     N_N_int,
                     N_S_int,
                     interior_atmosphere,
+                    initial_guess=atmod_initial_guess,
                 )[1]
                 atmod_full_output["H2O_atm"] = atmod_sol["H2O_g"]["gas"]["number_moles"][0][0]
                 atmod_full_output["H2O_mantle"] = atmod_sol["H2O_d"]["silicate_melt"][
@@ -817,7 +817,7 @@ def isocalc(
                     0
                 ][0]
             if n % n_atmodeller == 0:  # run atmodeller every n_atmodeller steps.
-                atmod_results, atmod_full, mantle_iron_dict = AtmodellerCoupler(
+                atmod_results, atmod_full, mantle_iron_dict, atmod_initial_guess = AtmodellerCoupler(
                     T,
                     Mp,
                     radius_p,
@@ -837,6 +837,7 @@ def isocalc(
                     N_N_int,
                     N_S_int,
                     interior_atmosphere,
+                    initial_guess=atmod_initial_guess,
                 )
                 N_H_int = atmod_results["N_H_int"] * (1 - X_DH)
                 N_D_int = atmod_results["N_H_int"] * X_DH
