@@ -572,26 +572,30 @@ def Phi_S_Z90(Phi_H, Phi_He, H_H, H_N, H_He, N_H, N_He, N_D, N_O, N_C, N_N, N_S,
     return max(0, f_S * num / denom)
 
 
+# Function lookup for get_binary_diffusion_coeff, built once at import time rather than on every
+# call: with dynamic_phi=True, get_binary_diffusion_coeff runs ~16 times per timestep (via
+# Phi_minor_species), so rebuilding this dict per call meant ~1.6e6 redundant dict constructions
+# over a full n_steps=1e5 run.
+_BINARY_DIFFUSION_COEFF_FUNCS = {
+    ("H", "D"): binary_diffusion.H_D,
+    ("H", "He"): binary_diffusion.H_He,
+    ("H", "O"): binary_diffusion.H_O,
+    ("H", "C"): binary_diffusion.H_C,
+    ("H", "N"): binary_diffusion.H_N,
+    ("H", "S"): binary_diffusion.H_S,
+    ("He", "D"): binary_diffusion.He_D,
+    ("He", "O"): binary_diffusion.He_O,
+    ("He", "C"): binary_diffusion.He_C,
+    ("He", "N"): binary_diffusion.He_N,
+    ("He", "S"): binary_diffusion.He_S,
+}
+
+
 def get_binary_diffusion_coeff(species1, species2, T):
     """
     Get binary diffusion coefficient between two species at temperature T
     Always returns b_light_heavy regardless of input order
     """
-    # Create function lookup dictionary (only created once when function is called)
-    coeff_functions = {
-        ("H", "D"): binary_diffusion.H_D,
-        ("H", "He"): binary_diffusion.H_He,
-        ("H", "O"): binary_diffusion.H_O,
-        ("H", "C"): binary_diffusion.H_C,
-        ("H", "N"): binary_diffusion.H_N,
-        ("H", "S"): binary_diffusion.H_S,
-        ("He", "D"): binary_diffusion.He_D,
-        ("He", "O"): binary_diffusion.He_O,
-        ("He", "C"): binary_diffusion.He_C,
-        ("He", "N"): binary_diffusion.He_N,
-        ("He", "S"): binary_diffusion.He_S,
-    }
-
     # Always sort to ensure consistent lookup (lighter element first by atomic mass)
     if MASS_BY_SYMBOL.get(species1, 0) <= MASS_BY_SYMBOL.get(species2, 0):
         key = (species1, species2)
@@ -599,7 +603,9 @@ def get_binary_diffusion_coeff(species1, species2, T):
         key = (species2, species1)
 
     # Get function and call it with temperature
-    func = coeff_functions.get(key, binary_diffusion.H_He)  # default to H-He if pair not found
+    func = _BINARY_DIFFUSION_COEFF_FUNCS.get(
+        key, binary_diffusion.H_He
+    )  # default to H-He if pair not found
     return func(T)
 
 
