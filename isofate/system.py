@@ -3,24 +3,18 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Star and Planet parameter objects for defining simulation scenarios.
+"""Star and Planet parameter objects for defining simulation scenarios."""
 
-sim.py currently hand-types one active (R_star, M_star, T_star) / (Mp, P, f_atm) block plus many
-commented-out alternatives for other systems. These dataclasses are meant to replace each of those
-blocks with a single `Star(...)`/`Planet(...)` instance per system.
-"""
-
-from dataclasses import dataclass
-
+import equinox as eqx
 import numpy as np
+from jax.typing import ArrayLike
 
 from isofate.constants import const
-from isofate.isofunks import R_Bondi, R_core, R_Hill
+from isofate.isofunks import R_Bondi, R_Hill
 from isofate.orbit_params import EqTemp, Insolation, Luminosity, SemiMajor
 
 
-@dataclass
-class Star:
+class Star(eqx.Module):
     """A host star.
 
     Args:
@@ -31,13 +25,17 @@ class Star:
             temperature)
     """
 
-    radius: float
-    mass: float
-    temperature: float
-    _luminosity: float | None = None
+    radius: ArrayLike
+    mass: ArrayLike
+    temperature: ArrayLike
+    _luminosity: ArrayLike | None = None
 
     def __init__(
-        self, radius: float, mass: float, temperature: float, luminosity: float | None = None
+        self,
+        radius: ArrayLike,
+        mass: ArrayLike,
+        temperature: ArrayLike,
+        luminosity: ArrayLike | None = None,
     ):
         self.radius = radius
         self.mass = mass
@@ -45,7 +43,7 @@ class Star:
         self._luminosity = luminosity
 
     @property
-    def luminosity(self) -> float:
+    def luminosity(self) -> ArrayLike:
         """Stellar luminosity [W], via the Stefan-Boltzmann law."""
         if self._luminosity is not None:
             return self._luminosity
@@ -53,7 +51,7 @@ class Star:
             return Luminosity(self.radius, self.temperature)
 
     @property
-    def t_jump(self) -> float:
+    def t_jump(self) -> ArrayLike:
         """XUV saturation-time scaling factor [Gyr] for M dwarfs (t_sat = t_jump*1e9 [yr]).
 
         Only meaningful for M dwarfs; carried over as-is from the fit used in sim.py.
@@ -61,16 +59,15 @@ class Star:
         # TODO: Maybe remove if only relevant for LHS 1140?
         return 5.9 - 15.4 * (self.mass / const.Ms)
 
-    def period_for_semi_major_axis(self, a: float) -> float:
+    def period_for_semi_major_axis(self, a: ArrayLike) -> ArrayLike:
         """Orbital period [s] a planet at semi-major axis `a` [m] would need, around this star.
         The inverse of `System.semi_major_axis` - a "what-if" helper for picking a
         `Planet.period` at construction time, before any Planet/System exists yet."""
         return (a**3 * 4 * np.pi**2 / const.G / self.mass) ** 0.5
 
 
-@dataclass(frozen=True)
-class Planet:
-    """A planet orbiting a Star.
+class Planet(eqx.Module):
+    """A planet.
 
     Args:
         mass: Planet mass [kg]
@@ -78,23 +75,25 @@ class Planet:
         f_atm: Atmospheric mass fraction [ndim]
     """
 
-    mass: float
-    period: float
-    f_atm: float
+    mass: ArrayLike
+    period: ArrayLike
+    f_atm: ArrayLike
 
     @property
-    def atmosphere_mass(self) -> float:
+    def atmosphere_mass(self) -> ArrayLike:
         """Initial atmospheric mass [kg]."""
         return self.mass * self.f_atm
 
     @property
-    def core_radius(self) -> float:
-        """Planetary core radius [m] (rocky component; Lopez & Fortney 2014)."""
-        return R_core(self.mass)
+    def core_radius(self) -> ArrayLike:
+        """Planetary core radius [m] (rocky component; Lopez & Fortney 2014).
+
+        NOTE: const.Re is missing from the paper (typo).
+        """
+        return const.Re * (self.mass / const.Me) ** 0.25
 
 
-@dataclass
-class System:
+class System(eqx.Module):
     """A planet orbiting a star.
 
     Groups the quantities that genuinely depend on both bodies (or the orbit between them), as
@@ -112,26 +111,26 @@ class System:
     planet: Planet
 
     @property
-    def semi_major_axis(self) -> float:
+    def semi_major_axis(self) -> ArrayLike:
         """Orbital semi-major axis [m]."""
         return SemiMajor(self.star.mass, self.planet.period)
 
     @property
-    def insolation(self) -> float:
+    def insolation(self) -> ArrayLike:
         """Incident bolometric flux at the planet [W/m2]."""
         return Insolation(self.star.luminosity, self.semi_major_axis)
 
     @property
-    def equilibrium_temperature(self) -> float:
+    def equilibrium_temperature(self) -> ArrayLike:
         """Planetary equilibrium temperature [K], assuming zero albedo."""
         return EqTemp(self.insolation)
 
     @property
-    def hill_radius(self) -> float:
+    def hill_radius(self) -> ArrayLike:
         """Hill radius [m]."""
         return R_Hill(self.planet.mass, self.star.mass, self.semi_major_axis)
 
-    def bondi_radius(self, mu: float, T: float | None = None) -> float:
+    def bondi_radius(self, mu: ArrayLike, T: ArrayLike | None = None) -> ArrayLike:
         """Bondi radius [m].
 
         Args:
