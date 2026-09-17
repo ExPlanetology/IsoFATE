@@ -1,5 +1,5 @@
 from isofate.constants import const
-from isofate.interfaces import ATOMIC_MASSES, ELEMENTS, MASS_BY_SYMBOL, SYMBOLS
+from isofate.species import ATOMIC_MASSES, ELEMENTS, MASS_BY_SYMBOL, SYMBOLS
 
 EXPECTED_ORDER = ("H", "He", "D", "O", "C", "N", "S")
 

@@ -17,7 +17,8 @@ from isofate.isofate_coupler import *
 # from isofate_coupler_v3_cannon import *
 from isofate.isofunks import *
 from isofate.orbit_params import *
-from isofate.system import LHS1140b, LHS1140Star, Planet, Star, System
+from isofate.presets import LHS1140b, LHS1140Star
+from isofate.system import Planet, Star, System
 
 # LHS 1140 / LHS 1140 b
 star: Star = LHS1140Star

@@ -10,7 +10,6 @@ from jaxtyping import ArrayLike
 
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller
 from isofate.constants import binary_diffusion, const
-from isofate.interfaces import ATOMIC_MASSES, SYMBOLS
 from isofate.isofunks import (
     Phi_1,
     Phi_2,
@@ -30,6 +29,7 @@ from isofate.isofunks import (
     phiE_CP,
 )
 from isofate.options import IsocalcOptions
+from isofate.species import ATOMIC_MASSES, SYMBOLS
 from isofate.system import Planet, Star, System
 
 
