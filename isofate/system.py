@@ -5,7 +5,8 @@
 
 """Star and Planet parameter objects for defining simulation scenarios."""
 
-import equinox as eqx
+from dataclasses import dataclass
+
 import numpy as np
 from jax.typing import ArrayLike
 
@@ -14,7 +15,8 @@ from isofate.isofunks import R_Bondi, R_Hill
 from isofate.orbit_params import EqTemp, Insolation, Luminosity, SemiMajor
 
 
-class Star(eqx.Module):
+@dataclass
+class Star:
     """A host star.
 
     Args:
@@ -66,7 +68,8 @@ class Star(eqx.Module):
         return (a**3 * 4 * np.pi**2 / const.G / self.mass) ** 0.5
 
 
-class Planet(eqx.Module):
+@dataclass
+class Planet:
     """A planet.
 
     Args:
@@ -94,7 +97,8 @@ class Planet(eqx.Module):
         return const.Re * (self.mass / const.Me) ** 0.25
 
 
-class System(eqx.Module):
+@dataclass
+class System:
     """A planet orbiting a star.
 
     Groups the quantities that genuinely depend on both bodies (or the orbit between them), as
