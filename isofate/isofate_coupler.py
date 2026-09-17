@@ -5,6 +5,7 @@
 
 """Main IsoFATE script for coupled model."""
 
+import equinox as eqx
 import numpy as np
 from jaxtyping import ArrayLike
 
@@ -32,12 +33,82 @@ from isofate.species import ATOMIC_MASSES, SYMBOLS
 from isofate.system import Planet, Star, System
 
 
+class IsocalcOptions(eqx.Module):
+    """Mode switches and tuning constants for `isocalc`, fixed for the whole run.
+
+    These are numerical/modeling choices, as opposed to `isocalc`'s other arguments (`system`,
+    `F0`, `time`, and the initial `N_x` abundances), which describe the actual physical
+    initial-value problem being solved and so stay direct `isocalc` arguments.
+
+    Args:
+        mechanism: One of 'XUV', 'XUV+RR', 'CPML', 'XUV+CPML', 'fix phi subcritical',
+            'fix phi supercritical', 'phi kill'.
+        rad_evol: Set to False to fix the planet radius at the rocky radius.
+        melt_fraction_override: Fixed mantle melt fraction; if False, it is instead calculated
+            from Mp and T_surface.
+        mu: Average atmospheric particle mass [kg]; default is H/He solar composition. Only the
+            initial value - `isocalc` recomputes it every step from the evolving abundances.
+        eps: Heat transfer efficiency [ndim].
+        activity: For the `Fxuv_hazmat` flux model (semi-empirical MUSCLES survey data): 'low'
+            (lower quartile), 'medium' (median), or 'high' (upper quartile).
+        flux_model: 'power law' for the analytic power law, 'phoenix' for `Fxuv_hazmat`,
+            'Johnstone' for `Fxuv_Johnstone`.
+        stellar_type: 'M1', 'K5', or 'G5'; only used when `flux_model == 'Johnstone'`.
+        Rp_override: Scalar planet radius [m] to manually fix a constant radius (radius will not
+            evolve); False to disable.
+        t_sat: XUV power-law saturation time [yr]; 5e8 matches semi-empirical MUSCLES data.
+        step_fn: Toggles a step-function XUV flux evolution (drops to `F_final` at `t_pms`).
+        F_final: Final relative XUV flux level (of F0) once `step_fn` engages.
+        t_pms: Pre-main-sequence phase duration [yr].
+        pms_factor: XUV enhancement factor applied during the pre-main-sequence phase.
+        n_steps: Number of timesteps; convergence occurs at 1e6.
+        t0: Simulation start time [yr].
+        rho_rcb: Gas density at the RCB in the CPML phi equation [kg/m3].
+        RR: Toggles the radiation-recombination effect (Ly-alpha cooling; Murray-Clay et al 2009).
+        thermal: Toggles planet radius contraction in the Lopez/Fortney equations (False removes
+            the age term).
+        beta: Exponent in the Fxuv power-law function; determines the rate of XUV decrease.
+            -1.23 is consistent with MUSCLES data.
+        n_atmodeller: Interval of timesteps between each Atmodeller call.
+        save_molecules: Save molecular abundances at every timestep (True) or only the final
+            abundances (False).
+        mantle_iron_dict: Allows Fe in the mantle to react with O2. `['type']="dynamic"` reacts
+            only molten mantle Fe; `['type']="static"` reacts all mantle Fe; also specify
+            `['Fe_mass_fraction']`. False disables this.
+        dynamic_phi: Toggle dynamic phi calculation based on the most abundant species (True) or
+            static phi calculation (False).
+    """
+
+    mechanism: str = "XUV"
+    rad_evol: bool = True
+    melt_fraction_override: ArrayLike | bool = False
+    mu: ArrayLike = const.mu_solar
+    eps: ArrayLike = 0.15
+    activity: str = "medium"
+    flux_model: str = "power law"
+    stellar_type: str = "M1"
+    Rp_override: ArrayLike | bool = False
+    t_sat: ArrayLike = 5e8
+    step_fn: bool = False
+    F_final: ArrayLike = 0
+    t_pms: ArrayLike = 0
+    pms_factor: ArrayLike = 1e2
+    n_steps: int = int(1e5)
+    t0: ArrayLike = 1e6
+    rho_rcb: ArrayLike = 1.0
+    RR: bool = True
+    thermal: bool = True
+    beta: ArrayLike = -1.23
+    n_atmodeller: int = int(1e2)
+    save_molecules: bool = False
+    mantle_iron_dict: dict | bool = False
+    dynamic_phi: bool = False
+
+
 def isocalc(
     system: System,
     F0,
     time=5e9,
-    mechanism="XUV",
-    rad_evol=True,
     N_H=0,
     N_He=0,
     N_D=0,
@@ -45,28 +116,7 @@ def isocalc(
     N_C=0,
     N_N=0,
     N_S=0,
-    melt_fraction_override=False,
-    mu=const.mu_solar,
-    eps=0.15,
-    activity="medium",
-    flux_model="power law",
-    stellar_type="M1",
-    Rp_override=False,
-    t_sat=5e8,
-    step_fn=False,
-    F_final=0,
-    t_pms=0,
-    pms_factor=1e2,
-    n_steps=int(1e5),
-    t0=1e6,
-    rho_rcb=1.0,
-    RR=True,
-    thermal=True,
-    beta=-1.23,
-    n_atmodeller=int(1e2),
-    save_molecules=False,
-    mantle_iron_dict=False,
-    dynamic_phi=False,
+    options: IsocalcOptions = IsocalcOptions(),
 ):
     """
     This is a test
@@ -98,30 +148,12 @@ def isocalc(
     #  - T: planet equilibrium temperature [K]
     #  - d: orbtial distance [m]
     #  - time: total simulation time; scalar [yr]
-    #  - mechanism: 'XUV', 'XUV+RR', 'CPML', 'XUV+CPML', 'fix phi subcritical',
-    #  'fix phi supercritical', 'phi kill'
-    #  - rad_evol: set to False to fix planet radius at core radius [Bool]
     #  - N_x: initial abundance for species x [atoms]
-    #  - melt_fraction_override: set a fixed mantle melt fraction. If False, melt fraction is calculated based on Mp and T_surface [False or float]
-    #  - mu: average atmospheric particle mass, default to H/He solar comp [kg]
-    #  - eps: heat transfer efficiency [ndim]
-    #  - activity: for Fxuv_hazmat function (uses semi-empirical data from MUSCLES survey);
-    #  'low' (lower quartile), 'medium' (median), 'high' (upper quartile)
-    #  - flux_model: 'power law' for analytic power law, 'phoenix' for Fxuv_hazmat, 'Johnstone' for Fxuv_Johnstone
-    #  - stellar_type: 'M1', 'K5', or 'G5' must be specified for flux_model == Fxuv_Johnstone
-    #  - Rp_override: enter scalar planet radius value to manually set constant radius, note radius will not evolve [m]
-    #  - t_sat: saturation time for Fxuv power law; 5e8 matches semi-empirical MUSCLES data [yr]
-    #  - n_steps: number of timesteps. Convergence occurs at 1e6.
-    #  - t0: simulation start time [yr]
-    #  - rho_rcb: gas density at the RCB in CPML phi equatin [kg/m3]
-    #  - RR: toggles radiation-recombination effect (Ly alpha cooling; Murray-Clay et al 2009)  [Bool]
-    #  - thermal: toggles planet radius contraction in Lopez/Fortney equations (False removes age term) [Bool]
-    #  - beta: exponential in Fxuv function; determines rate of XUV decrease. -1.23 consistent with MUSCLES data
-    #  - n_atmodeller: interval of timesteps between each Atmodeller call
-    #  - save_molecules: save molecular abundances at each time step [True] or only final abundances [False]
-    #  - mantle_iron_dict: allow Fe in mantle to react with O2.['type']="dynamic" to allow only molten mantle Fe to react;
-    #  ['type']="static" to allow all mantle Fe to react; specify ['Fe_mass_fraction']
-    #  - dynamic_phi: toggle dynamic phi calculation based on most abundant species [True] or static phi calculation [False]
+    #  - options: mode switches and tuning constants, fixed for the whole run - see
+    #  IsocalcOptions for the full list (mechanism, rad_evol, melt_fraction_override, mu, eps,
+    #  activity, flux_model, stellar_type, Rp_override, t_sat, step_fn, F_final, t_pms,
+    #  pms_factor, n_steps, t0, rho_rcb, RR, thermal, beta, n_atmodeller, save_molecules,
+    #  mantle_iron_dict, dynamic_phi)
 
     # Output: Dictionary of 2-D arrays [len(f_atm) x n_steps] with keys,
     #  - 'time': simulation time array [s]
@@ -142,6 +174,35 @@ def isocalc(
     #  - 'Phi_He': He number flux [atoms/s/m2]
     #  - 'Phi_D': D number flux [atoms/s/m2]
     # '''
+
+    # Unpacked once into plain local variables so the rest of this (very long) function can keep
+    # referring to them by their old bare names; `mu` and `mantle_iron_dict` are then immediately
+    # treated as this loop's own time-evolving local state, same as f_atm below - never read back
+    # from `options` again after this point.
+    mechanism = options.mechanism
+    rad_evol = options.rad_evol
+    melt_fraction_override = options.melt_fraction_override
+    mu = options.mu
+    eps = options.eps
+    activity = options.activity
+    flux_model = options.flux_model
+    stellar_type = options.stellar_type
+    Rp_override = options.Rp_override
+    t_sat = options.t_sat
+    step_fn = options.step_fn
+    F_final = options.F_final
+    t_pms = options.t_pms
+    pms_factor = options.pms_factor
+    n_steps = options.n_steps
+    t0 = options.t0
+    rho_rcb = options.rho_rcb
+    RR = options.RR
+    thermal = options.thermal
+    beta = options.beta
+    n_atmodeller = options.n_atmodeller
+    save_molecules = options.save_molecules
+    mantle_iron_dict = options.mantle_iron_dict
+    dynamic_phi = options.dynamic_phi
 
     # Mstar, d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere
     # below), so they're read from `system` once, here. F0 is deliberately NOT derived from

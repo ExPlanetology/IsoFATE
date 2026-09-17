@@ -132,19 +132,9 @@ print("dynamic_phi =", dynamic_phi)
 
 # run simulation (from isofate.py)
 isocalc_start = TIME.time()
-sol = isocalc(
-    system,
-    F0,
-    time,
-    mechanism,
-    rad_evol,
-    N_H=N_H,
-    N_He=N_He,
-    N_D=N_D,
-    N_O=N_O,
-    N_C=N_C,
-    N_N=N_N,
-    N_S=N_S,
+options = IsocalcOptions(
+    mechanism=mechanism,
+    rad_evol=rad_evol,
     melt_fraction_override=melt_fraction_override,
     mu=mu_avg,
     eps=eps,
@@ -167,6 +157,19 @@ sol = isocalc(
     save_molecules=save_molecules,
     mantle_iron_dict=mantle_iron_dict,
     dynamic_phi=dynamic_phi,
+)
+sol = isocalc(
+    system,
+    F0,
+    time,
+    N_H=N_H,
+    N_He=N_He,
+    N_D=N_D,
+    N_O=N_O,
+    N_C=N_C,
+    N_N=N_N,
+    N_S=N_S,
+    options=options,
 )
 print(f"isocalc runtime: {TIME.time() - isocalc_start:.2f} s")
 

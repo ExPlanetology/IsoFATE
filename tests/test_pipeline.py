@@ -30,7 +30,7 @@ import pytest
 
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller
 from isofate.constants import const
-from isofate.isofate_coupler import isocalc
+from isofate.isofate_coupler import IsocalcOptions, isocalc
 from isofate.system import Planet, Star, System
 
 
@@ -87,14 +87,15 @@ def _toy_system():
     return System(star=star, planet=planet)
 
 
-def _toy_isocalc_kwargs(**overrides):
-    kwargs = dict(
+def _toy_isocalc_kwargs(**option_overrides):
+    """`option_overrides` are forwarded to `IsocalcOptions`; n_steps/n_atmodeller are kept small
+    so this stays a fast, non-escape-dominated test scenario."""
+    return dict(
         system=_toy_system(), F0=500.0,
-        time=1e6, n_steps=20, n_atmodeller=5,
+        time=1e6,
         N_H=1e45, N_D=1e41, N_He=1e44, N_O=1.5e45, N_C=1e44, N_N=1e43, N_S=1e43,
+        options=IsocalcOptions(n_steps=20, n_atmodeller=5, **option_overrides),
     )
-    kwargs.update(overrides)
-    return kwargs
 
 
 def test_isocalc_regression():
