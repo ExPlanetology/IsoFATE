@@ -242,15 +242,15 @@ def AtmodellerCoupler(
     N_N_int,
     N_S_int,
     interior_atmosphere,
-    radius_core,
+    radius_rocky,
     initial_guess=None,
     full_output: bool = True,
 ):
     """
     Args:
-        radius_core: Planet core radius [m] (``Planet.core_radius``), the single source of truth
-            for this quantity - passed in rather than recomputed here so callers only ever
-            compute it once.
+        radius_rocky: Planet rocky-component radius [m] (``Planet.rocky_radius``), the single
+            source of truth for this quantity - passed in rather than recomputed here so callers
+            only ever compute it once.
         full_output: When ``False``, uses the narrow extraction path (element number_moles,
             gas mass, O2_g number_moles only) instead of the full ``elements_species`` output.
             The periodic per-timestep calls in ``isocalc`` never need more than that unless
@@ -263,7 +263,7 @@ def AtmodellerCoupler(
     # Converted back to plain Python floats immediately: everything downstream in this function
     # (and the isocalc loop calling it) is plain Python/NumPy, not JAX. Matm is discarded here -
     # AtmodellerCoupler computes M_atm from the equilibrium solve's own output instead.
-    _, T_surface_j, P_surface_j = _make_atmosphere_descent_jit(Teq, mu, Rp, Mp, gamma, radius_core)
+    _, T_surface_j, P_surface_j = _make_atmosphere_descent_jit(Teq, mu, Rp, Mp, gamma, radius_rocky)
     T_surface, P_surface = float(T_surface_j), float(P_surface_j)
     surface_temperature: float = np.min([6000, T_surface])  # K
     if melt_fraction != False:
@@ -271,7 +271,7 @@ def AtmodellerCoupler(
     elif melt_fraction == False:
         mantle_melt_fraction: float = MeltFraction(Mp, np.clip(T_surface, 10, 16000))
     planet_mass: float = Mp
-    surface_radius: float = radius_core
+    surface_radius: float = radius_rocky
 
     # element masses
     mass_H: float = (N_H_atm + N_H_int) * const.mu_H

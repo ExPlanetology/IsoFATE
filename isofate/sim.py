@@ -318,7 +318,7 @@ print("\n")
 # more planetary properties for analytics
 mu = const.mu_solar
 t0 = 1e6 / const.s2yr
-r_core = planet.core_radius
+r_core = planet.rocky_radius
 r_env = R_env(Mp, f_atm, Fp, t0)
 r_atm = R_atm(T, Mp, r_core, r_env, mu)
 Rp = r_core + r_env + r_atm

@@ -261,7 +261,7 @@ def phiE_CP(Teq, Mp, rho_rcb, eps, Vpot, area, mu, R_env):
         - mu: average particle mass [kg]
     Output: mass flux [kg/m2/s]
     """
-    R_c = R_core(Mp)
+    R_c = R_rocky(Mp)
     V_pot = const.G * Mp / R_c
     gamma = 7 / 5  # adiabatic index for H2
     R_B = (gamma - 1) * const.G * Mp * mu / (gamma * const.kb * Teq)  # Bondi radius
@@ -680,16 +680,16 @@ def Phi_minor_species(
 
 #####_____ Lopez & Fortney 2014 thermal evolution equations _____#####
 
-# planetary core radius
+# planetary rocky-component radius
 
 
-def R_core(Mp):
+def R_rocky(Mp):
     """
-    Calculates planetary core radius (rocky component)
-    Adapted from Lopez & Fortney 2014
+    Calculates the radius of the planet's rocky (condensed-matter) component, excluding any
+    gaseous envelope. Adapted from Lopez & Fortney 2014.
 
     Input: planetary mass [kg]
-    Output: planetary core radius [m]
+    Output: rocky-component radius [m]
     """
     return const.Re * (Mp / const.Me) ** 0.25  # Re not in paper, typo
 
@@ -697,7 +697,7 @@ def R_core(Mp):
 # planetary atmosphere radius
 
 
-def R_atm(Teq, Mp, R_core, R_env, mu):
+def R_atm(Teq, Mp, R_rocky, R_env, mu):
     """
     Calculates radius of radiative atmosphere above RCB (stratosphere)
     Adapted from Lopez & Fortney 2014
@@ -705,13 +705,13 @@ def R_atm(Teq, Mp, R_core, R_env, mu):
     Inputs:
         - Teq: planet equilibrium temperature [K]
         - Mp: planet mass [kg]
-        - Rc: core radius [m]
+        - R_rocky: rocky-component radius [m]
         - Renv: envelope radius [m]
         - mu: mean molecular mass [kg/particle]
 
     Outputs: radiative atmosphere radius [m]
     """
-    g = const.G * Mp / ((R_core + R_env) ** 2)  # field strength at base of atm
+    g = const.G * Mp / ((R_rocky + R_env) ** 2)  # field strength at base of atm
     H = const.kb * Teq / (g * mu)  # scale height
     return 9 * H
 
@@ -723,7 +723,7 @@ def R_env(Mp, f_env, Fp, age, thermal=True):
     """
     Calculates radius of lower convective envelope (troposphere)
     Adapted from Lopez & Fortney 2014
-    R_env = R_p - R_core - R_atm
+    R_env = R_p - R_rocky - R_atm
 
     Inputs:
       - Mp: planet mass [kg]
@@ -748,14 +748,14 @@ def R_env(Mp, f_env, Fp, age, thermal=True):
 # atmospheric mass fraction
 
 
-def f_env(R_core, R_env, Rp, Mp, Teq, mu, Fp, t, thermal=True):
+def f_env(R_rocky, R_env, Rp, Mp, Teq, mu, Fp, t, thermal=True):
     """
     Calculates planetary atmospheric mass fraction
-    by rearrangement of R_core, R_atm, and R_env equations
+    by rearrangement of R_rocky, R_atm, and R_env equations
     Adapted from Lopez & Fortney 2014
 
     Inputs:
-      - R_core: planet core radius [m]
+      - R_rocky: planet rocky-component radius [m]
       - R_env: planet envelope radius (convective part) [m]
       - Rp: total planet radius [m]
       - Mp: planet mass [kg]
@@ -772,7 +772,7 @@ def f_env(R_core, R_env, Rp, Mp, Teq, mu, Fp, t, thermal=True):
         return np.real(
             0.05
             * (
-                (Rp - const.Re * (Mp / const.Me) ** 0.25 - R_atm(Teq, Mp, R_core, R_env, mu))
+                (Rp - const.Re * (Mp / const.Me) ** 0.25 - R_atm(Teq, Mp, R_rocky, R_env, mu))
                 * (1 / (2.06 * const.Re))
                 * (Mp / const.Me) ** (0.21)
                 * (Fp / const.Fe) ** (-0.044)
@@ -784,7 +784,7 @@ def f_env(R_core, R_env, Rp, Mp, Teq, mu, Fp, t, thermal=True):
         return np.real(
             0.05
             * (
-                (Rp - const.Re * (Mp / const.Me) ** 0.25 - R_atm(Teq, Mp, R_core, R_env, mu))
+                (Rp - const.Re * (Mp / const.Me) ** 0.25 - R_atm(Teq, Mp, R_rocky, R_env, mu))
                 * (1 / (2.06 * const.Re))
                 * (Mp / const.Me) ** (0.21)
                 * (Fp / const.Fe) ** (-0.044)
@@ -816,7 +816,7 @@ def R_grid(Mp, f_atm, Teq, mu, k, n_tot=int(1e4)):
     )  # pressure grid for radius calculation
     R = const.R_gas / mu / const.avogadro  # specific gas constant
     Rp_grid = np.zeros(n_tot)
-    Rp = R_core(Mp)
+    Rp = R_rocky(Mp)
     Rp_grid[0] = Rp
     T_a = np.zeros(n_tot)
     T_a[0] = T_s
@@ -846,7 +846,7 @@ def R_rcb(Mp, fatm, mu, Tsurf, Rgas=const.kb / const.mu_H2, cp=14514, Prcb=1e4):
         - Prcb: atmospheric pressure at RCB [Pa] (estimated at 0.1 bar, Robinson & Catling 2012)
     Output: planetary radius at Prcb [m]
     """
-    Rc = R_core(Mp)  # core radius [m]
+    Rc = R_rocky(Mp)  # rocky-component radius [m]
     Ps = P_surf(Mp, fatm)  # surface pressure [Pa]
     k = Rgas / cp  # for dry adiabat
     rcb = Rc + (const.G * Mp * mu / const.kb) * (k * Ps**k / Tsurf) / (Prcb**k - Ps**k)
@@ -1053,7 +1053,7 @@ def Rp_prim(Mp, f_atm, Fp, t0, T, mu, M_star, d):
      - d: orbital distance [m]
     Output: planet radius [m]
     """
-    r_core = R_core(Mp)
+    r_core = R_rocky(Mp)
     r_env = R_env(Mp, f_atm, Fp, t0)
     r_atm = R_atm(T, Mp, r_core, r_env, mu)
     R_LF = r_core + r_env + r_atm
@@ -1195,7 +1195,7 @@ def P_surf(Mp, f_atm):
     Output: surface pressure [Pa]
     """
     M_atm = Mp * f_atm
-    Rcore = R_core(Mp)
+    Rcore = R_rocky(Mp)
     grav = const.G * Mp / Rcore**2
     area = 4 * np.pi * Rcore**2
     P = grav * M_atm / area
@@ -1215,7 +1215,7 @@ def T_surf(Teq, Mp, fatm, R=const.kb / const.mu_H2, cp=14514, Peq=1e4):
     Output: surface temperature [K]
     """
     k = R / cp
-    Rc = R_core(Mp)
+    Rc = R_rocky(Mp)
     Ts = (Teq / Peq**k) * (const.G * Mp**2 * fatm / (4 * np.pi * Rc**4)) ** k
     return Ts
 

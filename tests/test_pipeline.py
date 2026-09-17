@@ -43,13 +43,13 @@ def test_atmodeller_coupler_single_solve():
     """A single equilibrium solve for a realistic, H2-dominated/reducing composition."""
     Mp = 5.6 * const.Me
     interior_atmosphere = build_atmodeller(Mp)
-    radius_core = Planet(mass=Mp, period=1.0, f_atm=0.0).core_radius
+    radius_rocky = Planet(mass=Mp, period=1.0, f_atm=0.0).rocky_radius
 
     results, sol, mantle_iron_dict, _initial_guess = AtmodellerCoupler(
         Teq=900.0, Mp=Mp, Rp=1.5 * 6.371e6, mu=const.mu_H, melt_fraction=1.0, mantle_iron_dict=False,
         N_H_atm=5e46, N_He_atm=1e44, N_O_atm=1e43, N_C_atm=1e43, N_N_atm=1e42, N_S_atm=1e42,
         N_H_int=0.0, N_He_int=0.0, N_O_int=0.0, N_C_int=0.0, N_N_int=0.0, N_S_int=0.0,
-        interior_atmosphere=interior_atmosphere, radius_core=radius_core,
+        interior_atmosphere=interior_atmosphere, radius_rocky=radius_rocky,
     )
 
     _assert_finite(*results.values())

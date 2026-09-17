@@ -85,8 +85,9 @@ class Planet(eqx.Module):
         return self.mass * self.f_atm
 
     @property
-    def core_radius(self) -> ArrayLike:
-        """Planetary core radius [m] (rocky component; Lopez & Fortney 2014).
+    def rocky_radius(self) -> ArrayLike:
+        """Radius of the planet's rocky (condensed-matter) component [m], excluding any gaseous
+        envelope (Lopez & Fortney 2014). Named to avoid confusion with a metallic core radius.
 
         NOTE: const.Re is missing from the paper (typo).
         """

@@ -21,11 +21,12 @@ def _atmosphere_descent_vector_field(
     """RHS of the atmosphere-descent ODE system.
 
     Integrated downward in `r` (diffrax's independent/"time" variable here) from the planetary
-    radius `rplanet` to the core radius `rc`, hydrostatically building up the atmospheric column
-    on a dry adiabat.
+    radius `rplanet` to the rocky-component radius `r_rocky`, hydrostatically building up the
+    atmospheric column on a dry adiabat.
 
     Args:
-        r: Radial coordinate (m) - the integration variable, decreasing from `rplanet` to `rc`.
+        r: Radial coordinate (m) - the integration variable, decreasing from `rplanet` to
+            `r_rocky`.
         y: `(p, matm)` - pressure at `r` (Pa) and the atmospheric mass (kg) accumulated so far,
             integrated from the top of the atmosphere down to `r`.
         args: `(Tem, mu, Mc, K, pem)` - emission temperature (K), mean molecular mass (kg),
@@ -66,7 +67,7 @@ def make_atmosphere_descent_jax(
     rplanet: ArrayLike,
     Mc: ArrayLike,
     gamma: ArrayLike,
-    rc: ArrayLike,
+    r_rocky: ArrayLike,
 ) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
     """JAX/diffrax-jittable atmosphere-descent integration: returns `M_atm`, `T_surf`, `P_surf`.
 
@@ -87,7 +88,7 @@ def make_atmosphere_descent_jax(
         rplanet: Planetary radius (m)
         Mc: Planet core mass (kg)
         gamma: Adiabatic index (dimensionless)
-        rc: Planet core radius (m) - the integration's lower bound in `r`.
+        r_rocky: Planet rocky-component radius (m) - the integration's lower bound in `r`.
 
     Returns:
         `(M_atm, T_surf, P_surf)`
@@ -103,7 +104,7 @@ def make_atmosphere_descent_jax(
         term,
         diffrax.Tsit5(),
         t0=rplanet,  # pyright: ignore[reportArgumentType]
-        t1=rc,  # pyright: ignore[reportArgumentType]
+        t1=r_rocky,  # pyright: ignore[reportArgumentType]
         dt0=None,  # let the PIDController choose an initial step adaptively
         y0=(pem, matm0),
         args=(Tem, mu, Mc, K, pem),

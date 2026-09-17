@@ -163,7 +163,7 @@ def isocalc(
     ###_____Initialize physical values_____###
 
     b = binary_diffusion.H_He(T)
-    radius_core = planet.core_radius  # [m]
+    radius_rocky = planet.rocky_radius  # [m]
     R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
     R_H = system.hill_radius  # Hill radius [m]
 
@@ -292,11 +292,11 @@ def isocalc(
             Matm_a[n:] = 0  # M_atm #Matm_a[n-1]
             fatm_a[n:] = 0  # f_atm #fatm_a[n-1]
             Renv_a[n:] = 0  # radius_env #Renv_a[n-1]
-            Rp_a[n:] = radius_core
+            Rp_a[n:] = radius_rocky
             K = np.max(
-                [V_reduction(Mp, Mstar, d, radius_core), 0.01]
+                [V_reduction(Mp, Mstar, d, radius_rocky), 0.01]
             )  # grav potential reduction factor due to stellar tidal forces
-            Vpot_a[n:] = K * const.G * Mp / radius_core
+            Vpot_a[n:] = K * const.G * Mp / radius_rocky
             phi_a[n:] = 0
             Mloss_a[n:] = 0
 
@@ -413,15 +413,15 @@ def isocalc(
         if rad_evol == False:
             radius_env = 0
             radius_atm = 0
-            radius_p = radius_core
+            radius_p = radius_rocky
             if Rp_override != False:
-                radius_core = Rp_override
+                radius_rocky = Rp_override
                 radius_env = 0
                 radius_atm = 0
         else:
             radius_env = R_env(Mp, f_atm, Fp, t_a[n], thermal)
-            radius_atm = R_atm(T, Mp, radius_core, radius_env, mu)
-            radius_p = radius_core + radius_atm + radius_env
+            radius_atm = R_atm(T, Mp, radius_rocky, radius_env, mu)
+            radius_p = radius_rocky + radius_atm + radius_env
             # limits Rp to the min of Bondi/Hill/Lopez+Fortney radius; plain min() avoids numpy's
             # array-construction/dispatch overhead on a 3-scalar comparison run every timestep
             radius_p = min(R_B, R_H, radius_p)
@@ -770,7 +770,7 @@ def isocalc(
                     N_N_int,
                     N_S_int,
                     interior_atmosphere,
-                    radius_core=radius_core,
+                    radius_rocky=radius_rocky,
                     initial_guess=atmod_initial_guess,
                 )[1]
                 atmod_full_output["H2O_atm"] = atmod_sol["H2O_g"]["gas"]["number_moles"][0][0]
@@ -837,7 +837,7 @@ def isocalc(
                         N_N_int,
                         N_S_int,
                         interior_atmosphere,
-                        radius_core=radius_core,
+                        radius_rocky=radius_rocky,
                         initial_guess=atmod_initial_guess,
                         # Species-level diagnostics (atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
                         # are only read below when save_molecules is True; otherwise the narrow

@@ -78,7 +78,7 @@ def isoplot(sol,n_atmodeller,Mp,f_atm,Fp,T,M_star,d):
     # more planetary properties for analytics
     mu = const.mu_solar
     t0 = 1e6/const.s2yr
-    r_core = R_core(Mp)
+    r_core = R_rocky(Mp)
     r_env = R_env(Mp, f_atm, Fp, t0)
     r_atm = R_atm(T, Mp, r_core, r_env, mu)
     Rp = r_core + r_env + r_atm
