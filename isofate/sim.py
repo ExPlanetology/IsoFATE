@@ -8,7 +8,8 @@ import time as TIME
 
 import matplotlib.pyplot as plt
 
-from isofate.constants import binary_diffusion, const
+from isofate.constants import const
+from isofate.species import DEFAULT_SPECIES
 
 # from debug_isofate_coupler_v2 import *
 from isofate.isofate_coupler import *
@@ -365,7 +366,7 @@ if ND_a[0] != 0:
     ax1.plot(t_a * const.s2yr, PhiD_a * const.mu_D, color="orangered", label="D flux")
     ax1.plot(
         t_a * const.s2yr,
-        binary_diffusion.H_D(T) * x1_a * (const.mu_D - const.mu_H) / H_H,
+        DEFAULT_SPECIES.binary_diffusion.get("H", "D", T) * x1_a * (const.mu_D - const.mu_H) / H_H,
         "--",
         color="orangered",
         label="D critical",
@@ -374,7 +375,7 @@ if NO_a[0] != 0:
     ax1.plot(t_a * const.s2yr, PhiO_a * const.mu_O, color="green", label="O flux")
     ax1.plot(
         t_a * const.s2yr,
-        binary_diffusion.H_O(T) * x1_a * (const.mu_O - const.mu_H) / H_H,
+        DEFAULT_SPECIES.binary_diffusion.get("H", "O", T) * x1_a * (const.mu_O - const.mu_H) / H_H,
         "--",
         color="green",
         label="O critical",
@@ -383,7 +384,7 @@ if NC_a[0] != 0:
     ax1.plot(t_a * const.s2yr, PhiC_a * const.mu_C, color="gold", label="C flux")
     ax1.plot(
         t_a * const.s2yr,
-        binary_diffusion.H_C(T) * x1_a * (const.mu_C - const.mu_H) / H_H,
+        DEFAULT_SPECIES.binary_diffusion.get("H", "C", T) * x1_a * (const.mu_C - const.mu_H) / H_H,
         "--",
         color="gold",
         label="C critical",
@@ -392,7 +393,7 @@ if NC_a[0] != 0:
     ax1.plot(t_a * const.s2yr, PhiN_a * const.mu_N, color="blue", label="N flux")
     ax1.plot(
         t_a * const.s2yr,
-        binary_diffusion.H_N(T) * x1_a * (const.mu_N - const.mu_H) / H_H,
+        DEFAULT_SPECIES.binary_diffusion.get("H", "N", T) * x1_a * (const.mu_N - const.mu_H) / H_H,
         "--",
         color="blue",
         label="N critical",
@@ -401,7 +402,7 @@ if NS_a[0] != 0:
     ax1.plot(t_a * const.s2yr, PhiS_a * const.mu_S, color="purple", label="S flux")
     ax1.plot(
         t_a * const.s2yr,
-        binary_diffusion.H_S(T) * x1_a * (const.mu_S - const.mu_H) / H_H,
+        DEFAULT_SPECIES.binary_diffusion.get("H", "S", T) * x1_a * (const.mu_S - const.mu_H) / H_H,
         "--",
         color="purple",
         label="S critical",

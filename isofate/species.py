@@ -3,61 +3,138 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Canonical registry of the elements tracked by IsoFATE's escape/interior model.
+"""Canonical registry of the species tracked by IsoFATE's escape/interior model.
 
-Several places in isocalc()/isofunks.py need the same 7 species, in the same order, either as a
-list of atomic masses or as a list of symbols for name-based lookups (e.g. get_binary_diffusion_coeff).
-Previously each of those sites hand-typed its own copy of the list; this module is the single
-source of truth they should all import from instead.
+Single source of truth for the 7 tracked species (H, He, D, O, C, N, S), their atomic masses,
+and their binary diffusion coefficients, used throughout isocalc()/isofunks.py instead of each
+site hand-typing its own copy.
 """
 
-import equinox as eqx
-import numpy as np
-from atmodeller.jax_utils import NpFloat
-from atmodeller.sci_utils import constants, unit_conversion
-from molmass import Formula
+from dataclasses import dataclass, field
+from typing import ClassVar
 
-from isofate.constants import binary_diffusion
+import numpy as np
+from atmodeller.jax_utils import NpBool, NpFloat
+from atmodeller.sci_utils import constants, unit_conversion
+from jax.typing import ArrayLike
+from molmass import Formula
 
 SYMBOLS: tuple[str, ...] = ("H", "He", "D", "O", "C", "N", "S")
 
-# Built once at import time rather than on every get_binary_diffusion_coeff call: with
-# dynamic_phi=True, get_binary_diffusion_coeff runs ~16 times per timestep (via
-# Phi_minor_species), so rebuilding this dict per call meant ~1.6e6 redundant dict constructions
-# over a full n_steps=1e5 run.
-_BINARY_DIFFUSION_COEFF_FUNCS = {
-    ("H", "D"): binary_diffusion.H_D,
-    ("H", "He"): binary_diffusion.H_He,
-    ("H", "O"): binary_diffusion.H_O,
-    ("H", "C"): binary_diffusion.H_C,
-    ("H", "N"): binary_diffusion.H_N,
-    ("H", "S"): binary_diffusion.H_S,
-    ("He", "D"): binary_diffusion.He_D,
-    ("He", "O"): binary_diffusion.He_O,
-    ("He", "C"): binary_diffusion.He_C,
-    ("He", "N"): binary_diffusion.He_N,
-    ("He", "S"): binary_diffusion.He_S,
-}
+
+@dataclass
+class BinaryDiffusionCoefficients:
+    """Temperature-dependent binary diffusion coefficients, each of the form
+    b = prefactor * T**exponent [molecules/m/s].
+
+    Stored as symmetric matrices indexed by `symbols` order (b(i, j) == b(j, i), so no
+    light/heavy sorting is needed to look one up). Only species pairs listed in `COEFFICIENTS`
+    are filled in; undefined pairs fall back to `default_pair`.
+
+    Subclass and override `COEFFICIENTS` (and `default_pair` if needed) to swap in a different
+    literature source or species set without touching the lookup logic itself.
+
+    Args:
+        symbols: Element/isotope symbols, in the order the coefficient matrices are indexed by
+            (default: `SYMBOLS`).
+        default_pair: Species pair to fall back to for pairs not in `COEFFICIENTS`.
+    """
+
+    # (species1, species2, prefactor, exponent, source)
+    COEFFICIENTS: ClassVar[tuple[tuple[str, str, float, float, str], ...]] = (
+        ("H", "D", 7.183e19, 0.728, "Genda & Ikoma 2008, D in H (not measured directly)"),
+        ("H", "He", 1.04e20, 0.732, "Mason & Marrero 1970 (and Hu, Seager, Yung 2015), H in He"),
+        ("He", "D", 5.087e19, 0.728, "Approximated from H-D (Genda/Ikoma 2008 Appendix C)"),
+        ("H", "O", 4.8e19, 0.75, "Wordsworth et al 2018"),
+        ("He", "O", 2.61e19, 0.75, "Approximated from H-O (Genda/Ikoma 2008 Appendix C)"),
+        ("H", "C", 4.85e19, 0.75, "Approximated from H-O (Genda/Ikoma 2008 Appendix C)"),
+        ("He", "C", 2.64e19, 0.75, "Approximated from He-O (Genda/Ikoma 2008 Appendix C)"),
+        ("H", "N", 4.85e19, 0.75, "Approximated from H-O (Genda/Ikoma 2008 Appendix C)"),
+        ("He", "N", 2.65e19, 0.75, "Approximated from He-O (Genda/Ikoma 2008 Appendix C)"),
+        ("H", "S", 4.73e19, 0.75, "Approximated from H-O (Genda/Ikoma 2008 Appendix C)"),
+        ("He", "S", 2.48e19, 0.75, "Approximated from He-O (Genda/Ikoma 2008 Appendix C)"),
+    )
+
+    symbols: tuple[str, ...] = SYMBOLS
+    default_pair: tuple[str, str] = ("H", "He")
+    _symbol_index: dict[str, int] = field(init=False, repr=False)
+    _prefactor: NpFloat = field(init=False, repr=False)
+    _exponent: NpFloat = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self.symbols = tuple(self.symbols)
+        self._symbol_index = {symbol: i for i, symbol in enumerate(self.symbols)}
+        n: int = len(self.symbols)
+
+        self._prefactor = np.full((n, n), np.nan)
+        self._exponent = np.full((n, n), np.nan)
+        for species1, species2, prefactor, exponent, _source in self.COEFFICIENTS:
+            i, j = self._symbol_index[species1], self._symbol_index[species2]
+            self._prefactor[i, j] = self._prefactor[j, i] = prefactor
+            self._exponent[i, j] = self._exponent[j, i] = exponent
+
+        # Backfill undefined pairs with the default pair's coefficient (already set above, since
+        # default_pair must appear in COEFFICIENTS, and symmetric regardless of its order) so
+        # get() needs no fallback branch.
+        i, j = self._symbol_index[self.default_pair[0]], self._symbol_index[self.default_pair[1]]
+        default_prefactor, default_exponent = self._prefactor[i, j], self._exponent[i, j]
+        undefined: NpBool = np.isnan(self._prefactor)
+        self._prefactor[undefined] = default_prefactor
+        self._exponent[undefined] = default_exponent
+
+    def get(self, species1: str, species2: str, temperature: ArrayLike) -> float:
+        """Binary diffusion coefficient between two species at temperature T [K].
+
+        Symmetric in species order (b(species1, species2) == b(species2, species1)); pairs not
+        in `COEFFICIENTS` default to `default_pair`.
+
+        Args:
+            species1: Symbol of the first species.
+            species2: Symbol of the second species.
+            temperature: Temperature [K] at which to evaluate the coefficient.
+
+        Returns:
+            Binary diffusion coefficient [molecules/m/s] between the two species at the given
+            temperature.
+        """
+        i, j = self._symbol_index[species1], self._symbol_index[species2]
+        return self._prefactor[i, j] * temperature ** self._exponent[i, j]
 
 
-class IsoFATESpecies(eqx.Module):
+DEFAULT_BINARY_DIFFUSION: BinaryDiffusionCoefficients = BinaryDiffusionCoefficients()
+
+
+@dataclass
+class IsoFATESpecies:
     """IsoFATE species container.
 
     Atomic masses [kg/atom] are computed once at construction from `molmass` (IUPAC standard
     atomic weights) rather than hand-typed constants, so they stay correct for any symbol without
     maintaining a lookup table by hand.
 
+    A plain dataclass rather than an `eqx.Module`: nothing here is ever passed through
+    `jax.jit`/`vmap`/`grad`, so there's no need to pay `eqx.Module`'s per-access method-wrapping
+    cost (it wraps every bound method access in a fresh `BoundMethod` pytree so methods survive
+    those transforms). `binary_diffusion.get` is called ~16 times per timestep via
+    `Phi_minor_species` and doesn't need that.
+
     Args:
         species: Element/isotope symbols, in the canonical tracked order (default: the 7 species
             IsoFATE tracks - H, He, D, O, C, N, S; see `SYMBOLS` above).
+        binary_diffusion: Binary diffusion coefficient lookup to use; swap in a differently
+            configured or subclassed `BinaryDiffusionCoefficients` to use a different literature
+            source.
     """
 
-    species: tuple[str, ...] = eqx.field(converter=tuple, default=SYMBOLS)
-    atomic_masses: NpFloat = eqx.field(init=False)
-    mass_by_symbol: dict[str, float] = eqx.field(init=False)
+    species: tuple[str, ...] = SYMBOLS
+    binary_diffusion: BinaryDiffusionCoefficients = field(
+        default_factory=lambda: DEFAULT_BINARY_DIFFUSION
+    )
+    atomic_masses: NpFloat = field(init=False)
+    mass_by_symbol: dict[str, float] = field(init=False)
 
-    def __init__(self, species: tuple[str, ...] = SYMBOLS):
-        self.species = tuple(species)
+    def __post_init__(self):
+        self.species = tuple(self.species)
         self.atomic_masses = np.array(
             [
                 Formula(symbol).mass * unit_conversion.g_to_kg / constants.Avogadro
@@ -68,27 +145,3 @@ class IsoFATESpecies(eqx.Module):
 
 
 DEFAULT_SPECIES = IsoFATESpecies()
-
-
-def get_binary_diffusion_coeff(
-    species1: str, species2: str, T, species: IsoFATESpecies = DEFAULT_SPECIES
-):
-    """Binary diffusion coefficient between two species at temperature T [K].
-
-    Always returns b_light_heavy regardless of input order.
-
-    A plain function rather than an `IsoFATESpecies` method: `eqx.Module` wraps every bound
-    method access in a fresh `BoundMethod` pytree (so methods survive `jax.jit`/`vmap`), which
-    costs ~10us per attribute lookup - fine occasionally, but this runs ~16 times per timestep
-    (via Phi_minor_species) and added ~20s to a full n_steps=1e5 isocalc run.
-    """
-    mass_by_symbol = species.mass_by_symbol
-    # Always sort to ensure consistent lookup (lighter element first by atomic mass)
-    if mass_by_symbol.get(species1, 0) <= mass_by_symbol.get(species2, 0):
-        key = (species1, species2)
-    else:
-        key = (species2, species1)
-
-    # Default to H-He if pair not found
-    func = _BINARY_DIFFUSION_COEFF_FUNCS.get(key, binary_diffusion.H_He)
-    return func(T)

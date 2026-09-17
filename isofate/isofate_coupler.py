@@ -9,7 +9,7 @@ import numpy as np
 from jaxtyping import ArrayLike
 
 from isofate.atmodeller_coupler import AtmodellerCoupler, aggregate_D_into_H, build_atmodeller
-from isofate.constants import binary_diffusion, const
+from isofate.constants import const
 from isofate.isofunks import (
     Phi_1,
     Phi_2,
@@ -28,7 +28,7 @@ from isofate.isofunks import (
     phiE_CP,
 )
 from isofate.options import IsocalcOptions
-from isofate.species import DEFAULT_SPECIES, SYMBOLS, get_binary_diffusion_coeff
+from isofate.species import DEFAULT_SPECIES, SYMBOLS
 from isofate.system import Planet, Star, System
 from isofate.utils import gravitational_acceleration
 
@@ -129,7 +129,7 @@ def isocalc(
 
     ###_____Initialize physical values_____###
 
-    b = binary_diffusion.H_He(T)
+    b = DEFAULT_SPECIES.binary_diffusion.get("H", "He", T)
     radius_rocky = planet.rocky_radius  # [m]
     R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
     R_H = system.hill_radius  # Hill radius [m]
@@ -460,7 +460,7 @@ def isocalc(
             light_name = species_names[light_dominant_idx]  # species 1
             heavy_name = species_names[heavy_dominant_idx]  # species 2
 
-            b = get_binary_diffusion_coeff(light_name, heavy_name, T)
+            b = DEFAULT_SPECIES.binary_diffusion.get(light_name, heavy_name, T)
 
             # Calculate escape fluxes for the two dominant species
             Phi_1_calc, phi_c = Phi_1(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU, output=1)
