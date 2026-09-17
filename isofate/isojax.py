@@ -10,8 +10,6 @@ cannot be traced under `jax.jit`), as they're ported over. See `make_atmosphere_
 docstring for the first example and the reasoning behind it.
 """
 
-from typing import Literal
-
 import diffrax
 import jax.numpy as jnp
 from jax import Array
@@ -27,11 +25,25 @@ def _atmosphere_descent_vector_field(
     args: tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike, ArrayLike],
 ) -> tuple[Array, Array]:
     """RHS of the atmosphere-descent ODE system; see `make_atmosphere_descent_jax`'s docstring
-    for the derivation of this from `make_atmosphere_descent`'s original discrete update."""
+    for the derivation of this from the original discrete update it replaces (formerly
+    `isofunks.make_atmosphere_descent`, removed as dead code once this JAX port replaced its one
+    live call site).
+    """
     p, _matm = y
     Tem, mu, Mc, K, pem = args
 
     T = Tem * (p / pem) ** K  # dry adiabat: T is algebraic in p, not itself integrated
+
+    # Below is intentionally kept (but was always commented out) in the original code, to
+    # presumably test a deep isothermal layer.  It will not work as is (not JAX compliant), but is
+    # left here for reference.
+    #
+    # include a deep isothermal layer?
+    # if p[i-1]>100*1e5:
+    #    T[i-1]=T[i]
+    # else:
+    #    T[i-1]=T[i]/(p[i]/p[i-1])**K
+
     rho = p * mu / (const.kb * T)
     g = const.G * Mc / r**2
 
@@ -47,20 +59,22 @@ def make_atmosphere_descent_jax(
     rplanet: ArrayLike,
     Mc: ArrayLike,
     gamma: ArrayLike,
-    output_mode: Literal[1, 2],
-) -> Array | tuple[Array, Array]:
-    """JAX/diffrax-jittable equivalent of `isofunks.make_atmosphere_descent`.
+) -> tuple[Array, Array, Array]:
+    """JAX/diffrax-jittable atmosphere-descent integration: returns `Matm`, `Tsurf`, `Psurf`.
 
-    `make_atmosphere_descent`'s three per-step array updates reduce to a 2-state ODE in `r`:
-    `T` is not actually integrated - it's read off the dry adiabat algebraically from `p`
+    The original NumPy implementation's three per-step array updates reduce to a 2-state ODE in
+    `r`: `T` is not actually integrated - it's read off the dry adiabat algebraically from `p`
     (`T = Tem*(p/pem)**K`), and `rho` is a pure function of `p` too, so the only genuine ODE
     states are `p(r)` and the accumulated `Matm(r)`. This integrates that system with
     `diffrax.Euler()` at the same fixed step size and step count (249 steps over a 250-point
-    grid) as the original NumPy loop, so it should reproduce it to near machine precision -
-    see the validation script (not part of this module) comparing the two directly.
+    grid) as the original NumPy loop, so it reproduces it to near machine precision (verified
+    directly against the original before it was removed: ~1e-12 to 1e-14 relative agreement).
 
-    Unlike the original, `output_mode=0` (the full radial `T`/`p` profile) is not implemented,
-    since nothing in the codebase actually calls it that way.
+    All three outputs are always computed and returned together - the original's `output_mode`
+    switch (`1` for `Matm` only, `2` for `(Tsurf, psurf)`, `0` for the full radial profile, never
+    used anywhere) added no real savings here, since `Tsurf`/`Psurf` are cheap algebraic
+    byproducts of the same integration. Callers that only need a subset should just discard the
+    rest (e.g. `_, Tsurf, Psurf = make_atmosphere_descent_jax(...)`).
 
     Args:
         Tem: Emission temperature (K)
@@ -68,11 +82,9 @@ def make_atmosphere_descent_jax(
         rplanet: Planetary radius (m)
         Mc: Planet core mass (kg)
         gamma: Adiabatic index (dimensionless)
-        output_mode: ``1`` for `Matm` only, ``2`` for `(Tsurf, psurf)`. Must be a static
-            (non-traced) Python value, exactly as in the original.
 
     Returns:
-        See `output_mode` above.
+        `(Matm, Tsurf, Psurf)`
     """
     nr = 250
     rc = R_core(Mc)
@@ -97,13 +109,6 @@ def make_atmosphere_descent_jax(
     )
     p_final = sol.ys[0][-1]
     matm_final = sol.ys[1][-1]
+    Tsurf = Tem * (p_final / pem) ** K
 
-    if output_mode == 1:
-        return matm_final
-    elif output_mode == 2:
-        Tsurf = Tem * (p_final / pem) ** K
-        return Tsurf, p_final
-    else:
-        raise NotImplementedError(
-            "output_mode=0 (full radial profile) is not implemented in the jax version"
-        )
+    return matm_final, Tsurf, p_final

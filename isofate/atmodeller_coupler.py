@@ -26,16 +26,17 @@ _COUPLING_ELEMENTS: tuple[str, ...] = ("H", "He", "O", "C", "N", "S")
 """Elements AtmodellerCoupler's `results` dict reports; must match its mass_constraints keys."""
 
 # Module-level so the compiled trace is cached and reused across AtmodellerCoupler calls, same
-# reasoning as _update_solve_extract below. make_atmosphere_descent_jax (isofunks.py) integrates
-# the same ODE as make_atmosphere_descent with diffrax instead of a plain-Python/NumPy loop;
-# validated to agree with the original to ~1e-9 relative (see verify_atmosphere_descent_jax.py).
+# reasoning as _update_solve_extract below. make_atmosphere_descent_jax (isojax.py) integrates
+# the same ODE as the original (now-removed) isofunks.make_atmosphere_descent with diffrax
+# instead of a plain-Python/NumPy loop; validated to agree with the original to ~1e-12 to 1e-14
+# relative before that original was deleted as dead code.
 #
-# eqx.filter_jit was tried here instead (it infers output_mode is static on its own, avoiding
-# static_argnums) but measured slower: its default filter treats a plain Python float as static
-# too, so it only avoids retracing every call if the other args are pre-cast to jnp arrays at the
-# call site - and that cast plus eqx.filter_jit's own partition/combine overhead together cost
-# more (~0.07 ms/call) than plain jax.jit accepting raw Python floats directly (~0.02 ms/call).
-_make_atmosphere_descent_jit = jax.jit(make_atmosphere_descent_jax, static_argnums=(5,))
+# eqx.filter_jit was tried here instead but measured slower: its default filter treats a plain
+# Python float as static, so it only avoids retracing every call if every arg is pre-cast to a
+# jnp array at the call site - and that cast plus eqx.filter_jit's own partition/combine overhead
+# together cost more (~0.07 ms/call) than plain jax.jit accepting raw Python floats directly
+# (~0.02 ms/call).
+_make_atmosphere_descent_jit = jax.jit(make_atmosphere_descent_jax)
 
 
 @eqx.filter_jit
@@ -256,8 +257,9 @@ def AtmodellerCoupler(
     results = {}
     gamma = 7 / 5
     # Converted back to plain Python floats immediately: everything downstream in this function
-    # (and the isocalc loop calling it) is plain Python/NumPy, not JAX.
-    T_surface_j, P_surface_j = _make_atmosphere_descent_jit(Teq, mu, Rp, Mp, gamma, 2)
+    # (and the isocalc loop calling it) is plain Python/NumPy, not JAX. Matm is discarded here -
+    # AtmodellerCoupler computes M_atm from the equilibrium solve's own output instead.
+    _, T_surface_j, P_surface_j = _make_atmosphere_descent_jit(Teq, mu, Rp, Mp, gamma)
     T_surface, P_surface = float(T_surface_j), float(P_surface_j)
     surface_temperature: float = np.min([6000, T_surface])  # K
     if melt_fraction != False:
