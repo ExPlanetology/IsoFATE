@@ -12,8 +12,9 @@ from scipy.interpolate import RegularGridInterpolator as RGI
 
 # import imports
 from isofate.constants import binary_diffusion, const
-from isofate.orbit_params import *
 from isofate.interfaces import MASS_BY_SYMBOL, SYMBOLS
+from isofate.options import IsocalcOptions
+from isofate.orbit_params import *
 
 _MELT_FRACTION_INTERPOLATOR = None
 
@@ -201,46 +202,41 @@ def Fxuv_hazmat(t, d, activity):
 # energy-limited total mass flux
 
 
-def phi_E(
-    t,
-    eps,
-    Vpot,
-    d,
-    F0,
-    t0=1e6,
-    t_sat=5e8,
-    beta=-1.23,
-    activity="medium",
-    flux_model="power law",
-    stellar_type="M1",
-    step_fn=False,
-    F_final=0,
-    t_pms=0,
-    pms_factor=1e2,
-):
+def phi_E(t, Vpot, d, F0, options: IsocalcOptions = IsocalcOptions()):
     """
     Calculates energy-limited mass flux for XUV-friven hydrodynamic escape
     Adapted from Wordsworth et al. 2018
 
     Inputs:
         - t: system age [s]
-        - eps: efficiency factor [ndim]
         - Vpot: planetary grav. potential [J/kg]
         - d: orbital distance [m]
         - F0: initial incident XUV flux [W/m2]
-        - t_sat: Fxuv saturation time [yr]
-        - beta: Fxuv exponential term (determines how quickly Fxuv decays)
-        - activity: 'low', 'medium', or 'high'
-        - flux model: 'power law' or 'phoenix'
+        - options: IsocalcOptions - supplies eps, t0, t_sat, beta, activity, flux_model,
+          stellar_type, step_fn, F_final, t_pms, pms_factor
 
     Output: mass flux [kg/m2/s]
     """
-    if flux_model == "power law":
-        return eps * Fxuv(t, F0, t0, t_sat, beta, step_fn, F_final, t_pms, pms_factor) / (4 * Vpot)
-    elif flux_model == "phoenix":
-        return eps * Fxuv_hazmat(t, d, activity) / (4 * Vpot)
-    elif flux_model == "Johnstone":
-        return eps * Fxuv_Johnstone(t, d, stellar_type)
+    if options.flux_model == "power law":
+        return (
+            options.eps
+            * Fxuv(
+                t,
+                F0,
+                options.t0,
+                options.t_sat,
+                options.beta,
+                options.step_fn,
+                options.F_final,
+                options.t_pms,
+                options.pms_factor,
+            )
+            / (4 * Vpot)
+        )
+    elif options.flux_model == "phoenix":
+        return options.eps * Fxuv_hazmat(t, d, options.activity) / (4 * Vpot)
+    elif options.flux_model == "Johnstone":
+        return options.eps * Fxuv_Johnstone(t, d, options.stellar_type)
 
 
 # core-powered mass loss mass flux
@@ -979,20 +975,7 @@ def V_reduction(Mp, Ms, a, Rp):
     return K
 
 
-def phi_RR(
-    Rp,
-    Mp,
-    Teq,
-    t,
-    F0,
-    t0=1e6,
-    t_sat=5e8,
-    beta=-1.23,
-    step_fn=False,
-    F_final=0,
-    t_pms=2e8,
-    pms_factor=1e2,
-):
+def phi_RR(Rp, Mp, Teq, t, F0, options: IsocalcOptions = IsocalcOptions()):
     """
     Radiation recombination-limited escape rate used in Lopez & Rice 2018 and others
     Prescription from Murray-Clay et al 2009, and used in Wordsworth et al 2018
@@ -1002,10 +985,20 @@ def phi_RR(
      - Teq: planetary equilibrium temperature [K]
      - t: system age (time) [s]
      - F0: initial planetary incident XUV flux [W/m2]
-     - t_sat: XUV saturation time [yr]
+     - options: IsocalcOptions - supplies t0, t_sat, beta, step_fn, F_final, t_pms, pms_factor
     Output: mass flux [kg/m2/s]
     """
-    F = Fxuv(t, F0, t0, t_sat, beta, step_fn, F_final, t_pms, pms_factor)
+    F = Fxuv(
+        t,
+        F0,
+        options.t0,
+        options.t_sat,
+        options.beta,
+        options.step_fn,
+        options.F_final,
+        options.t_pms,
+        options.pms_factor,
+    )
     g = const.G * Mp / Rp**2  # grav field strength at base of flow [m/s2]
     T = 1e4  # temp is thermostatted at 1e4 K by radiation [K]
     nu_0 = 4.835e15  # EUV ionizing radiation frequency (~60 nm/ 20 eV) [Hz]

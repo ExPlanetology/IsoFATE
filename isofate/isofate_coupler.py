@@ -5,12 +5,12 @@
 
 """Main IsoFATE script for coupled model."""
 
-import equinox as eqx
 import numpy as np
 from jaxtyping import ArrayLike
 
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller
 from isofate.constants import binary_diffusion, const
+from isofate.interfaces import ATOMIC_MASSES, SYMBOLS
 from isofate.isofunks import (
     Phi_1,
     Phi_2,
@@ -29,80 +29,8 @@ from isofate.isofunks import (
     phi_RR,
     phiE_CP,
 )
-from isofate.interfaces import ATOMIC_MASSES, SYMBOLS
+from isofate.options import IsocalcOptions
 from isofate.system import Planet, Star, System
-
-
-class IsocalcOptions(eqx.Module):
-    """Mode switches and tuning constants for `isocalc`, fixed for the whole run.
-
-    These are numerical/modeling choices, as opposed to `isocalc`'s other arguments (`system`,
-    `F0`, `time`, and the initial `N_x` abundances), which describe the actual physical
-    initial-value problem being solved and so stay direct `isocalc` arguments.
-
-    Args:
-        mechanism: One of 'XUV', 'XUV+RR', 'CPML', 'XUV+CPML', 'fix phi subcritical',
-            'fix phi supercritical', 'phi kill'.
-        rad_evol: Set to False to fix the planet radius at the rocky radius.
-        melt_fraction_override: Fixed mantle melt fraction; if False, it is instead calculated
-            from Mp and T_surface.
-        mu: Average atmospheric particle mass [kg]; default is H/He solar composition. Only the
-            initial value - `isocalc` recomputes it every step from the evolving abundances.
-        eps: Heat transfer efficiency [ndim].
-        activity: For the `Fxuv_hazmat` flux model (semi-empirical MUSCLES survey data): 'low'
-            (lower quartile), 'medium' (median), or 'high' (upper quartile).
-        flux_model: 'power law' for the analytic power law, 'phoenix' for `Fxuv_hazmat`,
-            'Johnstone' for `Fxuv_Johnstone`.
-        stellar_type: 'M1', 'K5', or 'G5'; only used when `flux_model == 'Johnstone'`.
-        Rp_override: Scalar planet radius [m] to manually fix a constant radius (radius will not
-            evolve); False to disable.
-        t_sat: XUV power-law saturation time [yr]; 5e8 matches semi-empirical MUSCLES data.
-        step_fn: Toggles a step-function XUV flux evolution (drops to `F_final` at `t_pms`).
-        F_final: Final relative XUV flux level (of F0) once `step_fn` engages.
-        t_pms: Pre-main-sequence phase duration [yr].
-        pms_factor: XUV enhancement factor applied during the pre-main-sequence phase.
-        n_steps: Number of timesteps; convergence occurs at 1e6.
-        t0: Simulation start time [yr].
-        rho_rcb: Gas density at the RCB in the CPML phi equation [kg/m3].
-        RR: Toggles the radiation-recombination effect (Ly-alpha cooling; Murray-Clay et al 2009).
-        thermal: Toggles planet radius contraction in the Lopez/Fortney equations (False removes
-            the age term).
-        beta: Exponent in the Fxuv power-law function; determines the rate of XUV decrease.
-            -1.23 is consistent with MUSCLES data.
-        n_atmodeller: Interval of timesteps between each Atmodeller call.
-        save_molecules: Save molecular abundances at every timestep (True) or only the final
-            abundances (False).
-        mantle_iron_dict: Allows Fe in the mantle to react with O2. `['type']="dynamic"` reacts
-            only molten mantle Fe; `['type']="static"` reacts all mantle Fe; also specify
-            `['Fe_mass_fraction']`. False disables this.
-        dynamic_phi: Toggle dynamic phi calculation based on the most abundant species (True) or
-            static phi calculation (False).
-    """
-
-    mechanism: str = "XUV"
-    rad_evol: bool = True
-    melt_fraction_override: ArrayLike | bool = False
-    mu: ArrayLike = const.mu_solar
-    eps: ArrayLike = 0.15
-    activity: str = "medium"
-    flux_model: str = "power law"
-    stellar_type: str = "M1"
-    Rp_override: ArrayLike | bool = False
-    t_sat: ArrayLike = 5e8
-    step_fn: bool = False
-    F_final: ArrayLike = 0
-    t_pms: ArrayLike = 0
-    pms_factor: ArrayLike = 1e2
-    n_steps: int = int(1e5)
-    t0: ArrayLike = 1e6
-    rho_rcb: ArrayLike = 1.0
-    RR: bool = True
-    thermal: bool = True
-    beta: ArrayLike = -1.23
-    n_atmodeller: int = int(1e2)
-    save_molecules: bool = False
-    mantle_iron_dict: dict | bool = False
-    dynamic_phi: bool = False
 
 
 def isocalc(
@@ -175,34 +103,12 @@ def isocalc(
     #  - 'Phi_D': D number flux [atoms/s/m2]
     # '''
 
-    # Unpacked once into plain local variables so the rest of this (very long) function can keep
-    # referring to them by their old bare names; `mu` and `mantle_iron_dict` are then immediately
-    # treated as this loop's own time-evolving local state, same as f_atm below - never read back
-    # from `options` again after this point.
-    mechanism = options.mechanism
-    rad_evol = options.rad_evol
-    melt_fraction_override = options.melt_fraction_override
+    # Every other IsocalcOptions field is read-only for the whole run and referenced directly as
+    # `options.<field>` below. `mu` and `mantle_iron_dict` are the two exceptions: both become
+    # this loop's own time-evolving local state (like f_atm below) - `options.mu`/
+    # `options.mantle_iron_dict` supply only their *initial* values and are never read again.
     mu = options.mu
-    eps = options.eps
-    activity = options.activity
-    flux_model = options.flux_model
-    stellar_type = options.stellar_type
-    Rp_override = options.Rp_override
-    t_sat = options.t_sat
-    step_fn = options.step_fn
-    F_final = options.F_final
-    t_pms = options.t_pms
-    pms_factor = options.pms_factor
-    n_steps = options.n_steps
-    t0 = options.t0
-    rho_rcb = options.rho_rcb
-    RR = options.RR
-    thermal = options.thermal
-    beta = options.beta
-    n_atmodeller = options.n_atmodeller
-    save_molecules = options.save_molecules
     mantle_iron_dict = options.mantle_iron_dict
-    dynamic_phi = options.dynamic_phi
 
     # Mstar, d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere
     # below), so they're read from `system` once, here. F0 is deliberately NOT derived from
@@ -230,9 +136,9 @@ def isocalc(
 
     ###_____Initialize timesteps_____###
 
-    n_tot = n_steps  # timesteps
-    t0 = t0 / const.s2yr  # simulation start time [s]
-    t = time / const.s2yr - t0  # total simulation time [s]
+    n_tot = options.n_steps  # timesteps
+    t0_seconds = options.t0 / const.s2yr  # simulation start time [s]
+    t = time / const.s2yr - t0_seconds  # total simulation time [s]
     delta_t = t / n_tot  # timestep [s]
 
     ###_____Set initial values____###
@@ -248,7 +154,7 @@ def isocalc(
     N_C_int = 0
     N_N_int = 0
     N_S_int = 0
-    if n_atmodeller == 0:
+    if options.n_atmodeller == 0:
         T_surf_analytic = 0
         T_surf_atmod = 0
     if N_H != 0 and N_D != 0:  # needed to allow D and H to outgas from mantle
@@ -283,7 +189,7 @@ def isocalc(
     y7 = 1 * N_S  # S number [atoms]
     ###_____Initialize arrays_____###
 
-    t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t0  # time array [s]
+    t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t0_seconds  # time array [s]
     phi_a = np.zeros(n_tot)  # mass flux array [kg/s/m2]
     phic_a = np.zeros(n_tot)  # critical mass flux array [kg/s/m2]
     Rp_a = np.zeros(n_tot)  # total radius, diagnostic [m]
@@ -411,7 +317,7 @@ def isocalc(
             Phi_S_a[n:] = 0
 
             # atmodeller full ouput for monte carlo runs
-            if n_atmodeller != 0:
+            if options.n_atmodeller != 0:
                 # atmod_full_output = {}
                 atmod_full_output["H2O_atm"] = np.nan
                 atmod_full_output["H2O_mantle"] = np.nan
@@ -434,7 +340,7 @@ def isocalc(
                 atmod_full_output["H2O4S_mantle"] = np.nan
                 atmod_full_output["SO2_atm"] = np.nan
                 atmod_full_output["O2_fugacity"] = np.nan
-                if save_molecules == True:
+                if options.save_molecules == True:
                     H2_a[n:] = 0
                     H2O_a[n:] = 0
                     O2_a[n:] = 0
@@ -471,16 +377,16 @@ def isocalc(
             + y7 * const.mu_S
         ) / N_tot
 
-        if rad_evol == False:
+        if options.rad_evol == False:
             radius_env = 0
             radius_atm = 0
             radius_p = radius_rocky
-            if Rp_override != False:
-                radius_rocky = Rp_override
+            if options.Rp_override != False:
+                radius_rocky = options.Rp_override
                 radius_env = 0
                 radius_atm = 0
         else:
-            radius_env = R_env(Mp, f_atm, Fp, t_a[n], thermal)
+            radius_env = R_env(Mp, f_atm, Fp, t_a[n], options.thermal)
             radius_atm = R_atm(T, Mp, radius_rocky, radius_env, mu)
             radius_p = radius_rocky + radius_atm + radius_env
             # limits Rp to the min of Bondi/Hill/Lopez+Fortney radius; plain min() avoids numpy's
@@ -493,117 +399,27 @@ def isocalc(
         A = 4 * np.pi * radius_p**2
 
         # sets mass flux [kg/m2/s]
-        if mechanism == "XUV":
-            if RR == True:
+        if options.mechanism == "XUV":
+            if options.RR == True:
                 phi = min(
-                    phi_RR(
-                        radius_p,
-                        Mp,
-                        T,
-                        t_a[n],
-                        F0,
-                        t0 * const.s2yr,
-                        t_sat,
-                        beta,
-                        step_fn,
-                        F_final,
-                        t_pms,
-                        pms_factor,
-                    ),
-                    phi_E(
-                        t_a[n],
-                        eps,
-                        Vpot,
-                        d,
-                        F0,
-                        t0 * const.s2yr,
-                        t_sat,
-                        beta,
-                        activity,
-                        flux_model,
-                        stellar_type,
-                        step_fn,
-                        F_final,
-                        t_pms,
-                        pms_factor,
-                    ),
+                    phi_RR(radius_p, Mp, T, t_a[n], F0, options),
+                    phi_E(t_a[n], Vpot, d, F0, options),
                 )
             else:
-                phi = phi_E(
-                    t_a[n],
-                    eps,
-                    Vpot,
-                    d,
-                    F0,
-                    t0 * const.s2yr,
-                    t_sat,
-                    beta,
-                    activity,
-                    flux_model,
-                    stellar_type,
-                    step_fn,
-                    F_final,
-                    t_pms,
-                    pms_factor,
-                )
-        elif mechanism == "CPML":
-            phi = phiE_CP(T, Mp, rho_rcb, eps, Vpot, A, mu, radius_env)
-        elif mechanism == "phi kill":
+                phi = phi_E(t_a[n], Vpot, d, F0, options)
+        elif options.mechanism == "CPML":
+            phi = phiE_CP(T, Mp, options.rho_rcb, options.eps, Vpot, A, mu, radius_env)
+        elif options.mechanism == "phi kill":
             phi = phi_kill(Mp * f_atm, radius_p, t - t_a[n])
-        elif mechanism == "XUV+CPML":
-            if RR == True:
+        elif options.mechanism == "XUV+CPML":
+            if options.RR == True:
                 phi_XUV = min(
-                    phi_RR(
-                        radius_p,
-                        Mp,
-                        T,
-                        t_a[n],
-                        F0,
-                        t0 * const.s2yr,
-                        t_sat,
-                        beta,
-                        step_fn,
-                        F_final,
-                        t_pms,
-                        pms_factor,
-                    ),
-                    phi_E(
-                        t_a[n],
-                        eps,
-                        Vpot,
-                        d,
-                        F0,
-                        t0 * const.s2yr,
-                        t_sat,
-                        beta,
-                        activity,
-                        flux_model,
-                        stellar_type,
-                        step_fn,
-                        F_final,
-                        t_pms,
-                        pms_factor,
-                    ),
+                    phi_RR(radius_p, Mp, T, t_a[n], F0, options),
+                    phi_E(t_a[n], Vpot, d, F0, options),
                 )
             else:
-                phi_XUV = phi_E(
-                    t_a[n],
-                    eps,
-                    Vpot,
-                    d,
-                    F0,
-                    t0 * const.s2yr,
-                    t_sat,
-                    beta,
-                    activity,
-                    flux_model,
-                    stellar_type,
-                    step_fn,
-                    F_final,
-                    t_pms,
-                    pms_factor,
-                )
-            phi = phi_XUV + phiE_CP(T, Mp, rho_rcb, eps, Vpot, A, mu, radius_env)
+                phi_XUV = phi_E(t_a[n], Vpot, d, F0, options)
+            phi = phi_XUV + phiE_CP(T, Mp, options.rho_rcb, options.eps, Vpot, A, mu, radius_env)
 
         mass_loss = phi * A * delta_t
         g = const.G * Mp / radius_p**2
@@ -623,7 +439,7 @@ def isocalc(
         x6 = y6 / N_tot
         x7 = y7 / N_tot
 
-        if dynamic_phi == False:
+        if options.dynamic_phi == False:
             if y1 + y2 == 0:
                 X1 = 0
                 X2 = 0
@@ -653,7 +469,7 @@ def isocalc(
                 Phi_H, Phi_He, H_H, H_S, H_He, y1, y2, y3, y4, y5, y6, y7, T
             )  # S number flux [atoms/s/m2]
 
-        elif dynamic_phi == True:
+        elif options.dynamic_phi == True:
             N_values = [y1, y2, y3, y4, y5, y6, y7]  # [H, He, D, O, C, N, S]
             abundances_with_idx = [(i, N_values[i]) for i in range(7)]
             abundances_with_idx.sort(key=lambda x: x[1], reverse=True)
@@ -808,15 +624,15 @@ def isocalc(
         Phi_S_a[n] = Phi_S
 
         ##### run atmodeller ######
-        if n_atmodeller != 0:  # save final molecular abundances on last time step
-            if n == n_steps - 1:
+        if options.n_atmodeller != 0:  # save final molecular abundances on last time step
+            if n == options.n_steps - 1:
                 # atmod_full_output = {}
                 atmod_sol = AtmodellerCoupler(
                     T,
                     Mp,
                     radius_p,
                     mu,
-                    melt_fraction_override,
+                    options.melt_fraction_override,
                     mantle_iron_dict,
                     y1 + y3,
                     y2,
@@ -876,14 +692,14 @@ def isocalc(
                 atmod_full_output["log10dIW_1_bar"] = atmod_sol["gas"]["phase"]["log10dIW_1_bar"][
                     0
                 ][0]
-            if n % n_atmodeller == 0:  # run atmodeller every n_atmodeller steps.
+            if n % options.n_atmodeller == 0:  # run atmodeller every n_atmodeller steps.
                 atmod_results, atmod_full, mantle_iron_dict, atmod_initial_guess = (
                     AtmodellerCoupler(
                         T,
                         Mp,
                         radius_p,
                         mu,
-                        melt_fraction_override,
+                        options.melt_fraction_override,
                         mantle_iron_dict,
                         y1 + y3,
                         y2,
@@ -903,7 +719,7 @@ def isocalc(
                         # Species-level diagnostics (atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
                         # are only read below when save_molecules is True; otherwise the narrow
                         # extraction (element number_moles + gas mass only) is all this loop needs.
-                        full_output=save_molecules,
+                        full_output=options.save_molecules,
                     )
                 )
                 N_H_int = atmod_results["N_H_int"] * (1 - X_DH)
@@ -929,7 +745,7 @@ def isocalc(
                 M_atm = atmod_results["M_atm"]
                 T_surf_analytic = atmod_results["T_surface"]
                 T_surf_atmod = atmod_results["T_surface_atmod"]
-                if save_molecules == True:
+                if options.save_molecules == True:
                     H2_a[n] = atmod_full["H2_g"]["gas"]["number_moles"][0][0]
                     H2O_a[n] = atmod_full["H2O_g"]["gas"]["number_moles"][0][0]
                     O2_a[n] = atmod_full["O2_g"]["gas"]["number_moles"][0][0]
@@ -1057,7 +873,7 @@ def isocalc(
         "T_surf_analytic": T_surf_analytic_a,
         "T_surf_atmod": T_surf_atmod_a,
     }
-    if save_molecules == True:
+    if options.save_molecules == True:
         solutions["n_H2_a"] = H2_a
         solutions["n_H2O_a"] = H2O_a
         solutions["n_O2_a"] = O2_a
@@ -1079,7 +895,7 @@ def isocalc(
         solutions["n_H2O4S_a_int"] = H2O4S_a_int
         solutions["n_SO2_a_int"] = SO2_a_int
         solutions["fO2_a"] = fO2_a
-    if n_atmodeller != 0:
+    if options.n_atmodeller != 0:
         solutions["atmodeller_final"] = atmod_full_output
 
     return solutions
