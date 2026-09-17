@@ -22,22 +22,22 @@ from isofate.isofunks import (
     R_atm,
     R_env,
     V_reduction,
-    get_binary_diffusion_coeff,
     phi_E,
     phi_kill,
     phi_RR,
     phiE_CP,
 )
 from isofate.options import IsocalcOptions
-from isofate.species import ATOMIC_MASSES, SYMBOLS
+from isofate.species import DEFAULT_SPECIES, SYMBOLS, get_binary_diffusion_coeff
 from isofate.system import Planet, Star, System
+from isofate.utils import gravitational_acceleration
 
 
 def isocalc(
     system: System,
     F0,
     time=5e9,
-    N_X: ArrayLike = (0, 0, 0, 0, 0, 0, 0),
+    isofate_species_abund: ArrayLike = (0, 0, 0, 0, 0, 0, 0),
     options: IsocalcOptions = IsocalcOptions(),
 ):
     """
@@ -70,7 +70,7 @@ def isocalc(
     #  - T: planet equilibrium temperature [K]
     #  - d: orbtial distance [m]
     #  - time: total simulation time; scalar [yr]
-    #  - N_X: initial abundance [atoms] for each tracked species, ordered as in
+    #  - isofate_species_abund: initial abundance [atoms] for each tracked species, ordered as in
     #  isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
     #  - options: mode switches and tuning constants, fixed for the whole run - see
     #  IsocalcOptions for the full list (mechanism, rad_evol, melt_fraction_override, mu, eps,
@@ -105,9 +105,10 @@ def isocalc(
     mu = options.mu
     mantle_iron_dict = options.mantle_iron_dict
 
-    # N_X is ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S) - the same order
-    # used throughout this function for y, atomic_masses, and species_names below.
-    N_H, N_He, N_D, N_O, N_C, N_N, N_S = N_X
+    # isofate_species_abund is ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N,
+    # S) - the same order used throughout this function for y, atomic_masses, and species_names
+    # below.
+    N_H, N_He, N_D, N_O, N_C, N_N, N_S = isofate_species_abund
 
     # Mstar, d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere
     # below), so they're read from `system` once, here. F0 is deliberately NOT derived from
@@ -142,12 +143,13 @@ def isocalc(
 
     ###_____Set initial values____###
 
-    atomic_masses = ATOMIC_MASSES
+    atomic_masses = DEFAULT_SPECIES.atomic_masses
     species_names = SYMBOLS
 
     ### atmodeller interior
-    # Ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S), same as N_X above.
-    N_X_int = np.zeros(7)
+    # Ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S), same as
+    # isofate_species_abund above.
+    isofate_species_abund_int = np.zeros(7)
     if options.n_atmodeller == 0:
         T_surf_analytic = 0
         T_surf_atmod = 0
@@ -175,11 +177,12 @@ def isocalc(
     M_atm0 = Mp * f_atm  # initial atmospheric mass [kg]
     M_atm = M_atm0
     # Atmospheric number of atoms per species [atoms], ordered per
-    # isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S), same as N_X above.
-    y = np.array(N_X, dtype=float)
+    # isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S), same as isofate_species_abund above.
+    y = np.array(isofate_species_abund, dtype=float)
     ###_____Initialize arrays_____###
 
     t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t0_seconds  # time array [s]
+    
     phi_a = np.zeros(n_tot)  # mass flux array [kg/s/m2]
     phic_a = np.zeros(n_tot)  # critical mass flux array [kg/s/m2]
     Rp_a = np.zeros(n_tot)  # total radius, diagnostic [m]
@@ -190,7 +193,8 @@ def isocalc(
     Mloss_a = np.zeros(n_tot)  # mass lost per timestep [kg]
 
     # Atmospheric/mantle number-of-atoms history, ordered per isofate.species.SYMBOLS (H, He, D,
-    # O, C, N, S) - same order as y/N_X_int - one column per species, one row per timestep.
+    # O, C, N, S) - same order as y/isofate_species_abund_int - one column per species, one row per
+    # timestep.
     y_a = np.zeros((n_tot, 7))  # atmospheric number array [atoms]
     y_a_int = np.zeros((n_tot, 7))  # mantle number array [atoms]
     H2_a = np.zeros(n_tot)  # atmospheric H2 number array [molecules]
@@ -370,7 +374,7 @@ def isocalc(
             phi = phi_XUV + phiE_CP(T, Mp, options.rho_rcb, options.eps, Vpot, A, mu, radius_env)
 
         mass_loss = phi * A * delta_t
-        g = const.G * Mp / radius_p**2
+        g = gravitational_acceleration(Mp, radius_p)
         H_H = const.R_gas * T / (const.M_H * g)  # H scale height [m]
         H_He = const.R_gas * T / (const.M_He * g)  # He scale height [m]
         H_D = const.R_gas * T / (const.M_D * g)  # D scale height [m]
@@ -537,7 +541,7 @@ def isocalc(
         Mloss_a[n] = mass_loss
 
         y_a[n] = y
-        y_a_int[n] = N_X_int
+        y_a_int[n] = isofate_species_abund_int
         x_a[n] = x
         Phi_H_a[n] = Phi_H
         Phi_He_a[n] = Phi_He
@@ -559,7 +563,7 @@ def isocalc(
                     options.melt_fraction_override,
                     mantle_iron_dict,
                     *aggregate_D_into_H(y),
-                    *aggregate_D_into_H(N_X_int),
+                    *aggregate_D_into_H(isofate_species_abund_int),
                     interior_atmosphere,
                     radius_rocky=radius_rocky,
                     initial_guess=atmod_initial_guess,
@@ -616,7 +620,7 @@ def isocalc(
                         options.melt_fraction_override,
                         mantle_iron_dict,
                         *aggregate_D_into_H(y),
-                        *aggregate_D_into_H(N_X_int),
+                        *aggregate_D_into_H(isofate_species_abund_int),
                         interior_atmosphere,
                         radius_rocky=radius_rocky,
                         initial_guess=atmod_initial_guess,
@@ -626,13 +630,13 @@ def isocalc(
                         full_output=options.save_molecules,
                     )
                 )
-                N_X_int[0] = atmod_results["N_H_int"] * (1 - X_DH)
-                N_X_int[2] = atmod_results["N_H_int"] * X_DH
-                N_X_int[1] = atmod_results["N_He_int"]
-                N_X_int[3] = atmod_results["N_O_int"]
-                N_X_int[4] = atmod_results["N_C_int"]
-                N_X_int[5] = atmod_results["N_N_int"]
-                N_X_int[6] = atmod_results["N_S_int"]
+                isofate_species_abund_int[0] = atmod_results["N_H_int"] * (1 - X_DH)
+                isofate_species_abund_int[2] = atmod_results["N_H_int"] * X_DH
+                isofate_species_abund_int[1] = atmod_results["N_He_int"]
+                isofate_species_abund_int[3] = atmod_results["N_O_int"]
+                isofate_species_abund_int[4] = atmod_results["N_C_int"]
+                isofate_species_abund_int[5] = atmod_results["N_N_int"]
+                isofate_species_abund_int[6] = atmod_results["N_S_int"]
                 if atmod_results["N_H_atm"] == 0:
                     y[0] = 0
                     y[2] = 0
@@ -697,9 +701,9 @@ def isocalc(
         T_surf_atmod_a[n] = T_surf_atmod
 
         # needed to allow D and H to outgas from mantle
-        if y[0] + y[2] + N_X_int[0] + N_X_int[2] != 0:
-            X_DH = (y[2] + N_X_int[2]) / (
-                y[0] + y[2] + N_X_int[0] + N_X_int[2]
+        if y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2] != 0:
+            X_DH = (y[2] + isofate_species_abund_int[2]) / (
+                y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2]
             )  # assumes D/H is in equilibrium between interior and atmosphere
 
         # advance to next step

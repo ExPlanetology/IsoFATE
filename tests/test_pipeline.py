@@ -93,8 +93,8 @@ def _toy_isocalc_kwargs(**option_overrides):
     return dict(
         system=_toy_system(), F0=500.0,
         time=1e6,
-        # N_X ordered per isofate.species.ELEMENTS/SYMBOLS: (H, He, D, O, C, N, S)
-        N_X=(1e45, 1e44, 1e41, 1.5e45, 1e44, 1e43, 1e43),
+        # isofate_species_abund ordered per isofate.species.SYMBOLS: (H, He, D, O, C, N, S)
+        isofate_species_abund=(1e45, 1e44, 1e41, 1.5e45, 1e44, 1e43, 1e43),
         options=IsocalcOptions(n_steps=20, n_atmodeller=5, **option_overrides),
     )
 

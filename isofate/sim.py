@@ -163,7 +163,8 @@ sol = isocalc(
     system,
     F0,
     time,
-    N_X=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),  # ordered per isofate.species.ELEMENTS/SYMBOLS
+    # ordered per isofate.species.SYMBOLS
+    isofate_species_abund=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),
     options=options,
 )
 print(f"isocalc runtime: {TIME.time() - isocalc_start:.2f} s")
