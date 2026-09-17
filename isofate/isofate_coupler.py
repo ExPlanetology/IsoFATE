@@ -6,6 +6,7 @@
 """Main IsoFATE script for coupled model."""
 
 import numpy as np
+from jaxtyping import ArrayLike
 
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller
 from isofate.constants import binary_diffusion, const
@@ -19,10 +20,7 @@ from isofate.isofunks import (
     Phi_O_Z90,
     Phi_S_Z90,
     R_atm,
-    R_Bondi,
-    R_core,
     R_env,
-    R_Hill,
     V_reduction,
     get_binary_diffusion_coeff,
     phi_E,
@@ -31,7 +29,7 @@ from isofate.isofunks import (
     phiE_CP,
 )
 from isofate.species import ATOMIC_MASSES, SYMBOLS
-from isofate.system import System
+from isofate.system import Planet, Star, System
 
 
 def isocalc(
@@ -149,11 +147,11 @@ def isocalc(
     # below), so they're read from `system` once, here. F0 is deliberately NOT derived from
     # System: it's a modeling choice (e.g. F0 = Fp*1e-3 "for M stars"), not a strict derived
     # quantity, so the caller must still supply it directly.
-    planet = system.planet
-    Mstar = system.star.mass
-    d = system.semi_major_axis
-    T = system.equilibrium_temperature
-    Fp = system.insolation
+    planet: Planet = system.planet
+    Mstar: Star = system.star.mass
+    d: ArrayLike = system.semi_major_axis
+    T: ArrayLike = system.equilibrium_temperature
+    Fp: ArrayLike = system.insolation
 
     # Only planet.mass and planet.f_atm are ever read, and only here, once, to seed the
     # *initial* conditions: Mp never changes over the run, but f_atm is immediately reassigned
@@ -165,9 +163,9 @@ def isocalc(
     ###_____Initialize physical values_____###
 
     b = binary_diffusion.H_He(T)
-    radius_core = R_core(Mp)  # [m]
-    R_B = R_Bondi(Mp, mu, T)  # Bondi radius [m]
-    R_H = R_Hill(Mp, Mstar, d)  # Hill radius [m]
+    radius_core = planet.core_radius  # [m]
+    R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
+    R_H = system.hill_radius  # Hill radius [m]
 
     ###_____Initialize timesteps_____###
 
@@ -772,6 +770,7 @@ def isocalc(
                     N_N_int,
                     N_S_int,
                     interior_atmosphere,
+                    radius_core=radius_core,
                     initial_guess=atmod_initial_guess,
                 )[1]
                 atmod_full_output["H2O_atm"] = atmod_sol["H2O_g"]["gas"]["number_moles"][0][0]
@@ -817,31 +816,34 @@ def isocalc(
                     0
                 ][0]
             if n % n_atmodeller == 0:  # run atmodeller every n_atmodeller steps.
-                atmod_results, atmod_full, mantle_iron_dict, atmod_initial_guess = AtmodellerCoupler(
-                    T,
-                    Mp,
-                    radius_p,
-                    mu,
-                    melt_fraction_override,
-                    mantle_iron_dict,
-                    y1 + y3,
-                    y2,
-                    y4,
-                    y5,
-                    y6,
-                    y7,
-                    N_H_int + N_D_int,
-                    N_He_int,
-                    N_O_int,
-                    N_C_int,
-                    N_N_int,
-                    N_S_int,
-                    interior_atmosphere,
-                    initial_guess=atmod_initial_guess,
-                    # Species-level diagnostics (atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
-                    # are only read below when save_molecules is True; otherwise the narrow
-                    # extraction (element number_moles + gas mass only) is all this loop needs.
-                    full_output=save_molecules,
+                atmod_results, atmod_full, mantle_iron_dict, atmod_initial_guess = (
+                    AtmodellerCoupler(
+                        T,
+                        Mp,
+                        radius_p,
+                        mu,
+                        melt_fraction_override,
+                        mantle_iron_dict,
+                        y1 + y3,
+                        y2,
+                        y4,
+                        y5,
+                        y6,
+                        y7,
+                        N_H_int + N_D_int,
+                        N_He_int,
+                        N_O_int,
+                        N_C_int,
+                        N_N_int,
+                        N_S_int,
+                        interior_atmosphere,
+                        radius_core=radius_core,
+                        initial_guess=atmod_initial_guess,
+                        # Species-level diagnostics (atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
+                        # are only read below when save_molecules is True; otherwise the narrow
+                        # extraction (element number_moles + gas mass only) is all this loop needs.
+                        full_output=save_molecules,
+                    )
                 )
                 N_H_int = atmod_results["N_H_int"] * (1 - X_DH)
                 N_D_int = atmod_results["N_H_int"] * X_DH

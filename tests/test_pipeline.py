@@ -17,6 +17,13 @@ checks are used for those.
 Tolerances here are deliberately loose (rtol=1e-2) relative to the ~1e-4 cross-check agreement, to
 avoid false failures from ordinary atmodeller version bumps while still catching real regressions
 (wrong species/element mapping, broken unit conversions, wrong dict keys, crashes).
+
+Values were re-pinned after `isojax.make_atmosphere_descent_jax` switched from a fixed-step
+`Euler()` integrator (249 steps) to adaptive `Tsit5()`: the fixed-step scheme had real truncation
+error (~1e-3 to ~3e-2 relative, benchmarked against a tight-tolerance reference), so this was an
+accuracy fix, not a neutral refactor - trace-abundance and near-zero quantities (`N_S_atm`,
+`log10dIW_1_bar`) shifted by more than rtol=1e-2/abs=1e-2 against the old pins even though the
+underlying physics is now more accurate, not different.
 """
 import numpy as np
 import pytest
@@ -36,34 +43,36 @@ def test_atmodeller_coupler_single_solve():
     """A single equilibrium solve for a realistic, H2-dominated/reducing composition."""
     Mp = 5.6 * const.Me
     interior_atmosphere = build_atmodeller(Mp)
+    radius_core = Planet(mass=Mp, period=1.0, f_atm=0.0).core_radius
 
     results, sol, mantle_iron_dict, _initial_guess = AtmodellerCoupler(
         Teq=900.0, Mp=Mp, Rp=1.5 * 6.371e6, mu=const.mu_H, melt_fraction=1.0, mantle_iron_dict=False,
         N_H_atm=5e46, N_He_atm=1e44, N_O_atm=1e43, N_C_atm=1e43, N_N_atm=1e42, N_S_atm=1e42,
         N_H_int=0.0, N_He_int=0.0, N_O_int=0.0, N_C_int=0.0, N_N_int=0.0, N_S_int=0.0,
-        interior_atmosphere=interior_atmosphere,
+        interior_atmosphere=interior_atmosphere, radius_core=radius_core,
     )
 
     _assert_finite(*results.values())
     assert mantle_iron_dict is False
 
-    # Cross-checked by hand against ../IsoFATE_main (atmodeller 0.9.1) to ~3e-5 relative
+    # Cross-checked by hand against ../IsoFATE_main (atmodeller 0.9.1) to ~3e-5 relative; re-pinned
+    # for the Tsit5/adaptive-step make_atmosphere_descent_jax (see module docstring)
     expected = {
-        'N_H_atm': 1.8414296100483874e+44,
+        'N_H_atm': 1.841429610047864e+44,
         'N_H_int': 4.981878379760501e+46,
-        'N_He_atm': 6.976600095847358e+43,
-        'N_He_int': 3.0233949074030287e+43,
-        'N_O_atm': 1.420365335653906e+35,
-        'N_O_int': 9.999746723550029e+42,
-        'N_C_atm': 9.852869272804816e+42,
-        'N_C_int': 1.4734720011859115e+41,
-        'N_N_atm': 8.276480200829949e+19,
+        'N_He_atm': 6.976600095850282e+43,
+        'N_He_int': 3.023394907400085e+43,
+        'N_O_atm': 1.4204294868939488e+35,
+        'N_O_int': 9.999746723543633e+42,
+        'N_C_atm': 9.8528692727472e+42,
+        'N_C_int': 1.4734720017612394e+41,
+        'N_N_atm': 8.230705125763134e+19,
         'N_N_int': 1.000021204133477e+42,
-        'N_S_atm': 469002.46607402986,
+        'N_S_atm': 475639.7427271265,
         'N_S_int': 1.0000062373693309e+42,
-        'M_atm': 9.6843412253191e+17,
-        'T_surface': 689.3859493619807,
-        'T_surface_atmod': 689.3859493619807,
+        'M_atm': 9.684341225310362e+17,
+        'T_surface': 689.6894914051486,
+        'T_surface_atmod': 689.6894914051486,
     }
     for key, value in expected.items():
         assert results[key] == pytest.approx(value, rel=1e-2), key
@@ -94,21 +103,21 @@ def test_isocalc_regression():
 
     _assert_finite(sol['Matm'], sol['N_H'], sol['N_O_int'], sol['N_C_int'])
 
-    assert sol['Matm'][-1] == pytest.approx(2.883283328826164e+19, rel=1e-2)
-    assert sol['N_H'][-1] == pytest.approx(4.324375408000459e+38, rel=1e-2)
-    assert sol['N_O_int'][-1] == pytest.approx(4.89707843982286e+44, rel=1e-2)
-    assert sol['N_C_int'][-1] == pytest.approx(2.052401665343788e+43, rel=1e-2)
+    assert sol['Matm'][-1] == pytest.approx(2.8852458471813018e+19, rel=1e-2)
+    assert sol['N_H'][-1] == pytest.approx(4.316098051849231e+38, rel=1e-2)
+    assert sol['N_O_int'][-1] == pytest.approx(4.888599902382618e+44, rel=1e-2)
+    assert sol['N_C_int'][-1] == pytest.approx(2.0517344351712084e+43, rel=1e-2)
 
     final = sol['atmodeller_final']
-    assert final['O2_fugacity'] == pytest.approx(4.409428671983565, rel=1e-2)
-    assert final['log10dIW_1_bar'] == pytest.approx(0.03379258263388761, abs=1e-2)
-    assert final['H2O_atm'] == pytest.approx(184845395611210.97, rel=1e-2)
-    assert final['H2O_mantle'] == pytest.approx(7.681862036973651e+20, rel=1e-2)
+    assert final['O2_fugacity'] == pytest.approx(4.415226249622124, rel=1e-2)
+    assert final['log10dIW_1_bar'] == pytest.approx(0.004890098041127358, abs=1e-2)
+    assert final['H2O_atm'] == pytest.approx(181146406710961.88, rel=1e-2)
+    assert final['H2O_mantle'] == pytest.approx(7.670751470352576e+20, rel=1e-2)
 
 
 @pytest.mark.parametrize("mantle_iron_type,expected_N_O_int", [
-    ("dynamic", 1.4096757259007388e+45),
-    ("static", 1.4096757259007388e+45),
+    ("dynamic", 1.41002544208791e+45),
+    ("static", 1.41002544208791e+45),
 ])
 def test_isocalc_mantle_iron_dict(mantle_iron_type, expected_N_O_int):
     """Regression-only pin (no reference to check against): ../IsoFATE_main crashes on this path
