@@ -29,7 +29,7 @@ from isofate.isofunks import (
     phi_RR,
     phiE_CP,
 )
-from isofate.species import ATOMIC_MASSES, SYMBOLS
+from isofate.interfaces import ATOMIC_MASSES, SYMBOLS
 from isofate.system import Planet, Star, System
 
 

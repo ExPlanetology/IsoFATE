@@ -13,7 +13,7 @@ from scipy.interpolate import RegularGridInterpolator as RGI
 # import imports
 from isofate.constants import binary_diffusion, const
 from isofate.orbit_params import *
-from isofate.species import MASS_BY_SYMBOL, SYMBOLS
+from isofate.interfaces import MASS_BY_SYMBOL, SYMBOLS
 
 _MELT_FRACTION_INTERPOLATOR = None
 
