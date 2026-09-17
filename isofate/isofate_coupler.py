@@ -8,7 +8,7 @@
 import numpy as np
 from jaxtyping import ArrayLike
 
-from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller
+from isofate.atmodeller_coupler import AtmodellerCoupler, aggregate_D_into_H, build_atmodeller
 from isofate.constants import binary_diffusion, const
 from isofate.isofunks import (
     Phi_1,
@@ -37,13 +37,7 @@ def isocalc(
     system: System,
     F0,
     time=5e9,
-    N_H=0,
-    N_He=0,
-    N_D=0,
-    N_O=0,
-    N_C=0,
-    N_N=0,
-    N_S=0,
+    N_X: ArrayLike = (0, 0, 0, 0, 0, 0, 0),
     options: IsocalcOptions = IsocalcOptions(),
 ):
     """
@@ -76,7 +70,8 @@ def isocalc(
     #  - T: planet equilibrium temperature [K]
     #  - d: orbtial distance [m]
     #  - time: total simulation time; scalar [yr]
-    #  - N_x: initial abundance for species x [atoms]
+    #  - N_X: initial abundance [atoms] for each tracked species, ordered as in
+    #  isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
     #  - options: mode switches and tuning constants, fixed for the whole run - see
     #  IsocalcOptions for the full list (mechanism, rad_evol, melt_fraction_override, mu, eps,
     #  activity, flux_model, stellar_type, Rp_override, t_sat, step_fn, F_final, t_pms,
@@ -109,6 +104,10 @@ def isocalc(
     # `options.mantle_iron_dict` supply only their *initial* values and are never read again.
     mu = options.mu
     mantle_iron_dict = options.mantle_iron_dict
+
+    # N_X is ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S) - the same order
+    # used throughout this function for y, atomic_masses, and species_names below.
+    N_H, N_He, N_D, N_O, N_C, N_N, N_S = N_X
 
     # Mstar, d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere
     # below), so they're read from `system` once, here. F0 is deliberately NOT derived from
@@ -147,13 +146,8 @@ def isocalc(
     species_names = SYMBOLS
 
     ### atmodeller interior
-    N_H_int = 0
-    N_He_int = 0
-    N_D_int = 0
-    N_O_int = 0
-    N_C_int = 0
-    N_N_int = 0
-    N_S_int = 0
+    # Ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S), same as N_X above.
+    N_X_int = np.zeros(7)
     if options.n_atmodeller == 0:
         T_surf_analytic = 0
         T_surf_atmod = 0
@@ -180,13 +174,9 @@ def isocalc(
     ### atmosphere
     M_atm0 = Mp * f_atm  # initial atmospheric mass [kg]
     M_atm = M_atm0
-    y1 = 1 * N_H  # H number [atoms]
-    y2 = 1 * N_He  # He number [atoms]
-    y3 = 1 * N_D  # D number [atoms]
-    y4 = 1 * N_O  # O number [atoms]
-    y5 = 1 * N_C  # O number [atoms]
-    y6 = 1 * N_N  # N number [atoms]
-    y7 = 1 * N_S  # S number [atoms]
+    # Atmospheric number of atoms per species [atoms], ordered per
+    # isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S), same as N_X above.
+    y = np.array(N_X, dtype=float)
     ###_____Initialize arrays_____###
 
     t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t0_seconds  # time array [s]
@@ -199,20 +189,10 @@ def isocalc(
     Vpot_a = np.zeros(n_tot)  # grav potential, diagnostic [J/kg]
     Mloss_a = np.zeros(n_tot)  # mass lost per timestep [kg]
 
-    y1_a = np.zeros(n_tot)  # H number array [atoms]
-    y2_a = np.zeros(n_tot)  # He number array [atoms]
-    y3_a = np.zeros(n_tot)  # D number array [atoms]
-    y4_a = np.zeros(n_tot)  # O number array [atoms]
-    y5_a = np.zeros(n_tot)  # C number array [atoms]
-    y6_a = np.zeros(n_tot)  # N number array [atoms]
-    y7_a = np.zeros(n_tot)  # S number array [atoms]
-    y1_a_int = np.zeros(n_tot)  # mantle H number array [atoms]
-    y2_a_int = np.zeros(n_tot)  # mantle He number array [atoms]
-    y3_a_int = np.zeros(n_tot)  # mantle D number array [atoms]
-    y4_a_int = np.zeros(n_tot)  # mantle O number array [atoms]
-    y5_a_int = np.zeros(n_tot)  # mantle C number array [atoms]
-    y6_a_int = np.zeros(n_tot)  # mantle N number array [atoms]
-    y7_a_int = np.zeros(n_tot)  # mantle S number array [atoms]
+    # Atmospheric/mantle number-of-atoms history, ordered per isofate.species.SYMBOLS (H, He, D,
+    # O, C, N, S) - same order as y/N_X_int - one column per species, one row per timestep.
+    y_a = np.zeros((n_tot, 7))  # atmospheric number array [atoms]
+    y_a_int = np.zeros((n_tot, 7))  # mantle number array [atoms]
     H2_a = np.zeros(n_tot)  # atmospheric H2 number array [molecules]
     H2O_a = np.zeros(n_tot)  # atmospheric H2O number array [molecules]
     O2_a = np.zeros(n_tot)  # atmospheric O2 number array [molecules]
@@ -234,13 +214,9 @@ def isocalc(
     S2_a_int = np.zeros(n_tot)  # mantle S2 number array [molecules]
     H2O4S_a_int = np.zeros(n_tot)  # mantle H2O4S gas number array [molecules]
     SO2_a_int = np.zeros(n_tot)  # mantle SO2 number array [molecules]
-    x1_a = np.zeros(n_tot)  # H molar concentration array [ndim]
-    x2_a = np.zeros(n_tot)  # He molar concentration array [ndim]
-    x3_a = np.zeros(n_tot)  # D molar concentration array [ndim]
-    x4_a = np.zeros(n_tot)  # O molar concentration array [ndim]
-    x5_a = np.zeros(n_tot)  # C molar concentration array [ndim]
-    x6_a = np.zeros(n_tot)  # N molar concentration array [ndim]
-    x7_a = np.zeros(n_tot)  # S molar concentration array [ndim]
+    # Molar concentration history [ndim], ordered per isofate.species.SYMBOLS (H, He, D, O, C, N,
+    # S) - same order as y/x - one column per species, one row per timestep.
+    x_a = np.zeros((n_tot, 7))
     Phi_H_a = np.zeros(n_tot)  # H number flux array [atoms/s/m2]
     Phi_He_a = np.zeros(n_tot)  # He number flux array [atoms/s/m2]
     Phi_D_a = np.zeros(n_tot)  # D number flux array [atoms/s/m2]
@@ -255,7 +231,7 @@ def isocalc(
 
     for n in range(n_tot):
         ### Stop simulation when entire atmosphere is lost
-        if M_atm <= 0 or y1 + y2 + y3 + y4 + y5 + y6 + y7 <= 0:
+        if M_atm <= 0 or np.sum(y) <= 0:
             Matm_a[n:] = 0  # M_atm #Matm_a[n-1]
             fatm_a[n:] = 0  # f_atm #fatm_a[n-1]
             Renv_a[n:] = 0  # radius_env #Renv_a[n-1]
@@ -267,20 +243,8 @@ def isocalc(
             phi_a[n:] = 0
             Mloss_a[n:] = 0
 
-            y1_a[n:] = 0  # y1 #y1_a[n-1]
-            y2_a[n:] = 0  # y2 #y2_a[n-1]
-            y3_a[n:] = 0  # y3 #y3_a[n-1]
-            y4_a[n:] = 0  # y4 #y4_a[n-1]
-            y5_a[n:] = 0  # y5 #y5_a[n-1]
-            y6_a[n:] = 0  # y6 #y6_a[n-1]
-            y7_a[n:] = 0  # y7 #y7_a[n-1]
-            y1_a_int[n:] = 0  # y1_int #y1_a_int[n-1]
-            y2_a_int[n:] = 0  # y2_int #y2_a_int[n-1]
-            y3_a_int[n:] = 0  # y3_int #y3_a_int[n-1]
-            y4_a_int[n:] = 0  # y4_int #y4_a_int[n-1]
-            y5_a_int[n:] = 0  # y5_int #y5_a_int[n-1]
-            y6_a_int[n:] = 0  # y6_int #y6_a_int[n-1]
-            y7_a_int[n:] = 0  # y7_int #y7_a_int[n-1]
+            y_a[n:] = 0
+            y_a_int[n:] = 0
             H2_a[n:] = 0  # H2_a[n-1]
             H2O_a[n:] = 0  # H2O_a[n-1]
             O2_a[n:] = 0  # O2_a[n-1]
@@ -299,15 +263,7 @@ def isocalc(
             S2_a_int[n:] = 0  # S2_a_int[n-1]
             H2O4S_a_int[n:] = 0  # H2O4S_a_int[n-1]
             SO2_a_int[n:] = 0  # SO2_a_int[n-1]
-            x1_a[n:] = x1_a[
-                n - 1
-            ]  # x1_a[max(np.nonzero(x1_a)[0])] # get last non-zero value in array
-            x2_a[n:] = x2_a[n - 1]  # x2_a[max(np.nonzero(x2_a)[0])]
-            x3_a[n:] = x3_a[n - 1]  # x3_a[max(np.nonzero(x3_a)[0])]
-            x4_a[n:] = x4_a[n - 1]  # x4_a[max(np.nonzero(x4_a)[0])]
-            x5_a[n:] = x5_a[n - 1]  # x5_a[max(np.nonzero(x5_a)[0])]
-            x6_a[n:] = x6_a[n - 1]  # x6_a[max(np.nonzero(x6_a)[0])]
-            x7_a[n:] = x7_a[n - 1]  # x7_a[max(np.nonzero(x7_a)[0])]
+            x_a[n:] = x_a[n - 1]  # carry the last molar concentration forward
             Phi_H_a[n:] = 0
             Phi_He_a[n:] = 0
             Phi_D_a[n:] = 0
@@ -366,16 +322,8 @@ def isocalc(
             break
 
         # time-variable average atomic mass
-        N_tot = y1 + y2 + y3 + y4 + y5 + y6 + y7
-        mu = (
-            y1 * const.mu_H
-            + y2 * const.mu_He
-            + y3 * const.mu_D
-            + y4 * const.mu_O
-            + y5 * const.mu_C
-            + y6 * const.mu_N
-            + y7 * const.mu_S
-        ) / N_tot
+        N_tot = np.sum(y)
+        mu = np.dot(y, atomic_masses) / N_tot
 
         if options.rad_evol == False:
             radius_env = 0
@@ -431,21 +379,15 @@ def isocalc(
         H_N = const.R_gas * T / (const.M_N * g)  # N scale height [m]
         H_S = const.R_gas * T / (const.M_S * g)  # S scale height [m]
 
-        x1 = y1 / N_tot
-        x2 = y2 / N_tot
-        x3 = y3 / N_tot
-        x4 = y4 / N_tot
-        x5 = y5 / N_tot
-        x6 = y6 / N_tot
-        x7 = y7 / N_tot
+        x = y / N_tot  # molar concentration per species [ndim]
 
         if options.dynamic_phi == False:
-            if y1 + y2 == 0:
+            if y[0] + y[1] == 0:
                 X1 = 0
                 X2 = 0
             else:
-                X1 = y1 / (y1 + y2)
-                X2 = y2 / (y1 + y2)
+                X1 = y[0] / (y[0] + y[1])
+                X2 = y[1] / (y[0] + y[1])
             MU = X1 * const.mu_H + X2 * const.mu_He
             Phi_H, phi_c = Phi_1(
                 phi, b, H_H, H_He, const.mu_H, const.mu_He, X1, X2, MU, output=1
@@ -454,25 +396,25 @@ def isocalc(
                 phi, b, H_H, H_He, const.mu_H, const.mu_He, X1, X2, MU
             )  # He number flux [atoms/s/m2]
             Phi_D = Phi_D_Z90(
-                Phi_H, Phi_He, H_H, H_D, H_He, y1, y2, y3, y4, y5, y6, y7, T
+                Phi_H, Phi_He, H_H, H_D, H_He, *y, T
             )  # D number flux [atoms/s/m2]
             Phi_O = Phi_O_Z90(
-                Phi_H, Phi_He, H_H, H_O, H_He, y1, y2, y3, y4, y5, y6, y7, T
+                Phi_H, Phi_He, H_H, H_O, H_He, *y, T
             )  # O number flux [atoms/s/m2]
             Phi_C = Phi_C_Z90(
-                Phi_H, Phi_He, H_H, H_C, H_He, y1, y2, y3, y4, y5, y6, y7, T
+                Phi_H, Phi_He, H_H, H_C, H_He, *y, T
             )  # C number flux [atoms/s/m2]
             Phi_N = Phi_N_Z90(
-                Phi_H, Phi_He, H_H, H_N, H_He, y1, y2, y3, y4, y5, y6, y7, T
+                Phi_H, Phi_He, H_H, H_N, H_He, *y, T
             )  # N number flux [atoms/s/m2]
             Phi_S = Phi_S_Z90(
-                Phi_H, Phi_He, H_H, H_S, H_He, y1, y2, y3, y4, y5, y6, y7, T
+                Phi_H, Phi_He, H_H, H_S, H_He, *y, T
             )  # S number flux [atoms/s/m2]
 
         elif options.dynamic_phi == True:
-            N_values = [y1, y2, y3, y4, y5, y6, y7]  # [H, He, D, O, C, N, S]
+            N_values = y  # ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
             abundances_with_idx = [(i, N_values[i]) for i in range(7)]
-            abundances_with_idx.sort(key=lambda x: x[1], reverse=True)
+            abundances_with_idx.sort(key=lambda item: item[1], reverse=True)
 
             most_abundant_idx = abundances_with_idx[0][0]
             second_most_abundant_idx = abundances_with_idx[1][0]
@@ -594,27 +536,9 @@ def isocalc(
         phic_a[n] = phi_c
         Mloss_a[n] = mass_loss
 
-        y1_a[n] = y1
-        y2_a[n] = y2
-        y3_a[n] = y3
-        y4_a[n] = y4
-        y5_a[n] = y5
-        y6_a[n] = y6
-        y7_a[n] = y7
-        y1_a_int[n] = N_H_int
-        y2_a_int[n] = N_He_int
-        y3_a_int[n] = N_D_int
-        y4_a_int[n] = N_O_int
-        y5_a_int[n] = N_C_int
-        y6_a_int[n] = N_N_int
-        y7_a_int[n] = N_S_int
-        x1_a[n] = x1
-        x2_a[n] = x2
-        x3_a[n] = x3
-        x4_a[n] = x4
-        x5_a[n] = x5
-        x6_a[n] = x6
-        x7_a[n] = x7
+        y_a[n] = y
+        y_a_int[n] = N_X_int
+        x_a[n] = x
         Phi_H_a[n] = Phi_H
         Phi_He_a[n] = Phi_He
         Phi_D_a[n] = Phi_D
@@ -634,18 +558,8 @@ def isocalc(
                     mu,
                     options.melt_fraction_override,
                     mantle_iron_dict,
-                    y1 + y3,
-                    y2,
-                    y4,
-                    y5,
-                    y6,
-                    y7,
-                    N_H_int + N_D_int,
-                    N_He_int,
-                    N_O_int,
-                    N_C_int,
-                    N_N_int,
-                    N_S_int,
+                    *aggregate_D_into_H(y),
+                    *aggregate_D_into_H(N_X_int),
                     interior_atmosphere,
                     radius_rocky=radius_rocky,
                     initial_guess=atmod_initial_guess,
@@ -701,18 +615,8 @@ def isocalc(
                         mu,
                         options.melt_fraction_override,
                         mantle_iron_dict,
-                        y1 + y3,
-                        y2,
-                        y4,
-                        y5,
-                        y6,
-                        y7,
-                        N_H_int + N_D_int,
-                        N_He_int,
-                        N_O_int,
-                        N_C_int,
-                        N_N_int,
-                        N_S_int,
+                        *aggregate_D_into_H(y),
+                        *aggregate_D_into_H(N_X_int),
                         interior_atmosphere,
                         radius_rocky=radius_rocky,
                         initial_guess=atmod_initial_guess,
@@ -722,26 +626,26 @@ def isocalc(
                         full_output=options.save_molecules,
                     )
                 )
-                N_H_int = atmod_results["N_H_int"] * (1 - X_DH)
-                N_D_int = atmod_results["N_H_int"] * X_DH
-                N_He_int = atmod_results["N_He_int"]
-                N_O_int = atmod_results["N_O_int"]
-                N_C_int = atmod_results["N_C_int"]
-                N_N_int = atmod_results["N_N_int"]
-                N_S_int = atmod_results["N_S_int"]
+                N_X_int[0] = atmod_results["N_H_int"] * (1 - X_DH)
+                N_X_int[2] = atmod_results["N_H_int"] * X_DH
+                N_X_int[1] = atmod_results["N_He_int"]
+                N_X_int[3] = atmod_results["N_O_int"]
+                N_X_int[4] = atmod_results["N_C_int"]
+                N_X_int[5] = atmod_results["N_N_int"]
+                N_X_int[6] = atmod_results["N_S_int"]
                 if atmod_results["N_H_atm"] == 0:
-                    y1 = 0
-                    y3 = 0
+                    y[0] = 0
+                    y[2] = 0
                 else:
                     Y3 = X_DH * atmod_results["N_H_atm"]
                     Y1 = (1 - X_DH) * atmod_results["N_H_atm"]
-                    y1 = Y1
-                    y3 = Y3
-                y2 = atmod_results["N_He_atm"]
-                y4 = atmod_results["N_O_atm"]
-                y5 = atmod_results["N_C_atm"]
-                y6 = atmod_results["N_N_atm"]
-                y7 = atmod_results["N_S_atm"]
+                    y[0] = Y1
+                    y[2] = Y3
+                y[1] = atmod_results["N_He_atm"]
+                y[3] = atmod_results["N_O_atm"]
+                y[4] = atmod_results["N_C_atm"]
+                y[5] = atmod_results["N_N_atm"]
+                y[6] = atmod_results["N_S_atm"]
                 M_atm = atmod_results["M_atm"]
                 T_surf_analytic = atmod_results["T_surface"]
                 T_surf_atmod = atmod_results["T_surface_atmod"]
@@ -792,44 +696,20 @@ def isocalc(
         T_surf_analytic_a[n] = T_surf_analytic
         T_surf_atmod_a[n] = T_surf_atmod
 
-        if y1 + y3 + N_H_int + N_D_int != 0:  # needed to allow D and H to outgas from mantle
-            X_DH = (y3 + N_D_int) / (
-                y1 + y3 + N_H_int + N_D_int
+        # needed to allow D and H to outgas from mantle
+        if y[0] + y[2] + N_X_int[0] + N_X_int[2] != 0:
+            X_DH = (y[2] + N_X_int[2]) / (
+                y[0] + y[2] + N_X_int[0] + N_X_int[2]
             )  # assumes D/H is in equilibrium between interior and atmosphere
 
         # advance to next step
-        y1_loss = Phi_H * A * delta_t
-        y2_loss = Phi_He * A * delta_t
-        y3_loss = Phi_D * A * delta_t
-        y4_loss = Phi_O * A * delta_t
-        y5_loss = Phi_C * A * delta_t
-        y6_loss = Phi_N * A * delta_t
-        y7_loss = Phi_S * A * delta_t
+        Phi = np.array([Phi_H, Phi_He, Phi_D, Phi_O, Phi_C, Phi_N, Phi_S])
+        y_loss = Phi * A * delta_t
         # M_atm -= mass_loss # comes from phi*A*delta_t
-        M_atm -= (
-            y1_loss * const.mu_H
-            + y2_loss * const.mu_He
-            + y3_loss * const.mu_D
-            + y4_loss * const.mu_O
-            + y5_loss * const.mu_C
-            + y6_loss * const.mu_N
-            + y7_loss * const.mu_S
-        )
+        M_atm -= np.dot(y_loss, atomic_masses)
         f_atm = M_atm / Mp
-        y1 -= y1_loss
-        y2 -= y2_loss
-        y3 -= y3_loss
-        y4 -= y4_loss
-        y5 -= y5_loss
-        y6 -= y6_loss
-        y7 -= y7_loss
-        y1 = max(y1, 0)
-        y2 = max(y2, 0)
-        y3 = max(y3, 0)
-        y4 = max(y4, 0)
-        y5 = max(y5, 0)
-        y6 = max(y6, 0)
-        y7 = max(y7, 0)
+        y -= y_loss
+        y = np.maximum(y, 0)
 
     # save results
     solutions = {
@@ -842,27 +722,29 @@ def isocalc(
         "Mloss": Mloss_a,
         "phi": phi_a,
         "phic": phic_a,
-        "N_H": y1_a,
-        "N_He": y2_a,
-        "N_D": y3_a,
-        "N_O": y4_a,
-        "N_C": y5_a,
-        "N_N": y6_a,
-        "N_S": y7_a,
-        "N_H_int": y1_a_int,
-        "N_He_int": y2_a_int,
-        "N_D_int": y3_a_int,
-        "N_O_int": y4_a_int,
-        "N_C_int": y5_a_int,
-        "N_N_int": y6_a_int,
-        "N_S_int": y7_a_int,
-        "x1": x1_a,
-        "x2": x2_a,
-        "x3": x3_a,
-        "x4": x4_a,
-        "x5": x5_a,
-        "x6": x6_a,
-        "x7": x7_a,
+        # y_a/y_a_int columns are ordered per isofate.species.SYMBOLS (H, He, D, O, C, N, S);
+        # .copy() keeps each output array independent, matching the pre-array-refactor behavior.
+        "N_H": y_a[:, 0].copy(),
+        "N_He": y_a[:, 1].copy(),
+        "N_D": y_a[:, 2].copy(),
+        "N_O": y_a[:, 3].copy(),
+        "N_C": y_a[:, 4].copy(),
+        "N_N": y_a[:, 5].copy(),
+        "N_S": y_a[:, 6].copy(),
+        "N_H_int": y_a_int[:, 0].copy(),
+        "N_He_int": y_a_int[:, 1].copy(),
+        "N_D_int": y_a_int[:, 2].copy(),
+        "N_O_int": y_a_int[:, 3].copy(),
+        "N_C_int": y_a_int[:, 4].copy(),
+        "N_N_int": y_a_int[:, 5].copy(),
+        "N_S_int": y_a_int[:, 6].copy(),
+        "x1": x_a[:, 0].copy(),
+        "x2": x_a[:, 1].copy(),
+        "x3": x_a[:, 2].copy(),
+        "x4": x_a[:, 3].copy(),
+        "x5": x_a[:, 4].copy(),
+        "x6": x_a[:, 5].copy(),
+        "x7": x_a[:, 6].copy(),
         "Phi_H": Phi_H_a,
         "Phi_He": Phi_He_a,
         "Phi_D": Phi_D_a,

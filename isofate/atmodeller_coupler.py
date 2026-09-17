@@ -19,11 +19,43 @@ from isofate.constants import const
 from isofate.isofunks import *
 from isofate.isojax import make_atmosphere_descent_jax
 from isofate.orbit_params import *
+from isofate.species import SYMBOLS
 
 solubility_models = get_solubility_models()
 
 _COUPLING_ELEMENTS: tuple[str, ...] = ("H", "He", "O", "C", "N", "S")
 """Elements AtmodellerCoupler's `results` dict reports; must match its mass_constraints keys."""
+
+# Precomputed once: which isofate.species.SYMBOLS index feeds each _COUPLING_ELEMENTS slot, and
+# where "D" and "H" themselves sit in each ordering - used by aggregate_D_into_H below.
+_COUPLING_ELEMENT_INDICES: tuple[int, ...] = tuple(
+    SYMBOLS.index(element) for element in _COUPLING_ELEMENTS
+)
+_D_INDEX: int = SYMBOLS.index("D")
+_H_POSITION: int = _COUPLING_ELEMENTS.index("H")
+
+
+def aggregate_D_into_H(values: ArrayLike) -> np.ndarray:
+    """Maps an isocalc per-species array (ordered per isofate.species.SYMBOLS: H, He, D, O, C,
+    N, S) onto the layout AtmodellerCoupler expects (`_COUPLING_ELEMENTS`: H, He, O, C, N, S).
+
+    Atmodeller has no separate D reservoir, so D's abundance is folded into H's - this is the one
+    place isocalc's per-species arrays (`y`, `N_X_int`) and AtmodellerCoupler's per-element
+    arguments disagree on how many species there are.
+
+    Args:
+        values: length-7 array/sequence ordered per isofate.species.SYMBOLS
+
+    Returns:
+        length-6 array ordered per `_COUPLING_ELEMENTS`, meant to be unpacked directly into
+        AtmodellerCoupler's N_<element>_atm/N_<element>_int positional arguments, e.g.
+        ``AtmodellerCoupler(..., *aggregate_D_into_H(y), *aggregate_D_into_H(N_X_int), ...)``.
+    """
+    values = np.asarray(values, dtype=float)
+    coupled = values[list(_COUPLING_ELEMENT_INDICES)]
+    coupled[_H_POSITION] += values[_D_INDEX]
+    return coupled
+
 
 # Module-level so the compiled trace is cached and reused across AtmodellerCoupler calls, same
 # reasoning as _update_solve_extract below. make_atmosphere_descent_jax (isojax.py) integrates
@@ -37,6 +69,7 @@ _COUPLING_ELEMENTS: tuple[str, ...] = ("H", "He", "O", "C", "N", "S")
 # together cost more (~0.07 ms/call) than plain jax.jit accepting raw Python floats directly
 # (~0.02 ms/call).
 _make_atmosphere_descent_jit = jax.jit(make_atmosphere_descent_jax)
+
 
 
 @eqx.filter_jit
