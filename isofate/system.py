@@ -72,6 +72,8 @@ class Star:
 class Planet:
     """A planet.
 
+    NOTE: A potential refactor is to use the atmodeller Planet class more directly.
+
     Args:
         mass: Planet mass [kg]
         period: Orbital period [s]
