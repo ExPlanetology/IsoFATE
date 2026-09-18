@@ -12,7 +12,6 @@ from scipy.interpolate import RegularGridInterpolator as RGI
 
 # import imports
 from isofate.constants import const
-from isofate.options import IsocalcOptions
 from isofate.orbit_params import *
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
 
@@ -20,39 +19,8 @@ _MELT_FRACTION_INTERPOLATOR = None
 
 
 # incident XUV flux
-
-
-def Fxuv(t, F0, t0=1e6, t_sat=5e8, beta=-1.23, step_fn=False, F_final=0, t_pms=0, pms_factor=1e2):
-    """
-    Calculates incident XUV flux
-    Adapted from Ribas et al 2005
-    Consistent with empirical data from MUSCLES spectra for early M dwarfs
-
-    Inputs:
-        - t: time/age [s]
-        - F0: initial main sequence incident XUV flux [W/m2]
-        - t0: start time [yr]
-        - t_sat: saturation time [yr]; change this for different stellar types (M1:500Myr, G:50Myr)
-        - beta: exponential term [ndim]
-        - step_fn: True for step function from F0 to F_final [Bool]
-        - F_final: if step_fn == True, set the final XUV flux [W/m2]
-        - t_pms: pre-main sequence phase duration (power law decay) [yr]
-        - pms_factor: Fxuv_pms_0/Fxuv_sat; ~1e2 for mid-to-late M stars (Ramirez & Kaltenegger 2014) [ndim]
-
-    Output: incident XUV flux [W/m2]
-    """
-    time = t * const.s2yr
-    if 0 < time < t_pms:
-        F_pms0 = F0 * pms_factor
-        s = (np.log10(F0) - np.log10(F_pms0)) / (np.log10(t_pms) - np.log10(t0))
-        return F_pms0 * (time / t0) ** s
-    elif time < t_sat:
-        return F0
-    else:
-        if step_fn == False:
-            return F0 * (time / t_sat) ** beta
-        elif step_fn == True:
-            return F_final
+# NOTE: Fxuv (the base power-law XUV flux model) moved to isofate.escape, alongside phi_E/phi_RR
+# which are its only callers.
 
 
 def Fxuv_a(t, F0, t_sat=5e8, beta=-1.23):
@@ -77,34 +45,6 @@ def Fxuv_a(t, F0, t_sat=5e8, beta=-1.23):
             output[i] = F0 * (t[i] * const.s2yr / t_sat) ** beta
 
     return output
-
-
-def Fxuv_Johnstone(t, d, stellar_type):
-    """
-    Calculates incident XUV flux
-    Adapted from Johnstone et al 2021 semi-empirical XUV tracks
-    Raw files available here: https://zenodo.org/records/4266670#.X6rMuq4o9H5
-
-    Inputs:
-       - t: time/age [s]
-       - d: orbital distance [m]
-       - stellar_type: 'M1', 'K5', 'G5' [str]
-    Output: incident XUV flux [W/m2]
-    """
-
-    if stellar_type == "M1":
-        path = "/Users/collin/Documents/Harvard/Research/atm_escape/RotationXUVTracks/TrackGrid_MstarPercentile/0p5Msun_50percentile_basic.dat"
-    elif stellar_type == "K5":
-        path = "/Users/collin/Documents/Harvard/Research/atm_escape/RotationXUVTracks/TrackGrid_MstarPercentile/0p7Msun_50percentile_basic.dat"
-    elif stellar_type == "G5":
-        path = "/Users/collin/Documents/Harvard/Research/atm_escape/RotationXUVTracks/TrackGrid_MstarPercentile/1p0Msun_50percentile_basic.dat"
-
-    data = np.loadtxt(path, unpack=True)
-    age = data[0] * 1e6 / const.s2yr  # [s]
-    L_EUV = (data[4] + data[5] + data[6]) * const.erg2joule  # [W]
-    F_EUV = L_EUV / (4 * np.pi * d**2)  # [W/m2]
-
-    return np.interp(t, age, F_EUV)
 
 
 def Fxuv_SF(t):
@@ -137,141 +77,7 @@ def Fxuv_Ribas(t):
     return L  # [W]
 
 
-# semi-empirical incident XUV flux based on MUSCLES spectrum
-
-
-def Fxuv_hazmat(t, d, activity):
-    """
-    Semi-empirical XUV flux estimates based on HAZMAT and MUSCLES
-    programs. Consistent with Fxuv power law approximation.
-
-    Inputs: t (time, s); d (orbital distance, m); activity ('high', 'medium', 'low')
-    Outputs: incident planetary XUV flux [W/m2]
-    """
-    flux_10myr_uq = 45400  # [W/m2]
-    flux_10myr_med = 41681
-    flux_10myr_lq = 30355
-    flux_45myr_uq = 36661
-    flux_45myr_med = 3661
-    flux_45myr_lq = 30288
-    flux_120myr_uq = 47629
-    flux_120myr_med = 21601
-    flux_120myr_lq = 21601
-    flux_650myr_uq = 48673
-    flux_650myr_med = 20213
-    flux_650myr_lq = 4144
-    flux_5000myr_uq = 3964
-    flux_5000myr_med = 1146
-    flux_5000myr_lq = 1100
-
-    if activity == "high":
-        if t * const.s2yr / 1e6 < 10:
-            return flux_10myr_uq * (0.515 * const.Rs) ** 2 / (d**2)
-        elif t * const.s2yr / 1e6 < 45:
-            return flux_45myr_uq * (0.515 * const.Rs) ** 2 / (d**2)
-        elif t * const.s2yr / 1e6 < 120:
-            return flux_120myr_uq * (0.515 * const.Rs) ** 2 / (d**2)
-        elif t * const.s2yr / 1e6 < 650:
-            return flux_650myr_uq * (0.515 * const.Rs) ** 2 / (d**2)
-        else:
-            return flux_5000myr_uq * (0.515 * const.Rs) ** 2 / (d**2)
-    elif activity == "medium":
-        if t * const.s2yr / 1e6 < 10:
-            return flux_10myr_med * (0.515 * const.Rs) ** 2 / (d**2)
-        elif t * const.s2yr / 1e6 < 45:
-            return flux_45myr_med * (0.515 * const.Rs) ** 2 / (d**2)
-        elif t * const.s2yr / 1e6 < 120:
-            return flux_120myr_med * (0.515 * const.Rs) ** 2 / (d**2)
-        elif t * const.s2yr / 1e6 < 650:
-            return flux_650myr_med * (0.515 * const.Rs) ** 2 / (d**2)
-        else:
-            return flux_5000myr_med * (0.515 * const.Rs) ** 2 / (d**2)
-    elif activity == "low":
-        if t * const.s2yr / 1e6 < 10:
-            return flux_10myr_lq * (0.515 * const.Rs) ** 2 / (d**2)
-        elif t * const.s2yr / 1e6 < 45:
-            return flux_45myr_lq * (0.515 * const.Rs) ** 2 / (d**2)
-        elif t * const.s2yr / 1e6 < 120:
-            return flux_120myr_lq * (0.515 * const.Rs) ** 2 / (d**2)
-        elif t * const.s2yr / 1e6 < 650:
-            return flux_650myr_lq * (0.515 * const.Rs) ** 2 / (d**2)
-        else:
-            return flux_5000myr_lq * (0.515 * const.Rs) ** 2 / (d**2)
-
-
-# energy-limited total mass flux
-
-
-def phi_E(t, Vpot, d, F0, options: IsocalcOptions = IsocalcOptions()):
-    """
-    Calculates energy-limited mass flux for XUV-friven hydrodynamic escape
-    Adapted from Wordsworth et al. 2018
-
-    Inputs:
-        - t: system age [s]
-        - Vpot: planetary grav. potential [J/kg]
-        - d: orbital distance [m]
-        - F0: initial incident XUV flux [W/m2]
-        - options: IsocalcOptions - supplies eps, t0, t_sat, beta, activity, flux_model,
-          stellar_type, step_fn, F_final, t_pms, pms_factor
-
-    Output: mass flux [kg/m2/s]
-    """
-    if options.flux_model == "power law":
-        return (
-            options.eps
-            * Fxuv(
-                t,
-                F0,
-                options.t0,
-                options.t_sat,
-                options.beta,
-                options.step_fn,
-                options.F_final,
-                options.t_pms,
-                options.pms_factor,
-            )
-            / (4 * Vpot)
-        )
-    elif options.flux_model == "phoenix":
-        return options.eps * Fxuv_hazmat(t, d, options.activity) / (4 * Vpot)
-    elif options.flux_model == "Johnstone":
-        return options.eps * Fxuv_Johnstone(t, d, options.stellar_type)
-
-
-# core-powered mass loss mass flux
-
-
-def phiE_CP(Teq, Mp, rho_rcb, eps, Vpot, area, mu, R_env):
-    """
-    Atmospheric mass flux for core-powered mass loss scenario
-    Adapted from Gupta & Schlicting 2020
-
-    Inputs:
-        - Teq: planetary equilibrium temperature [K]
-        - Mp: planetary mass [kg]
-        - rho_rcb: density at the RCB [kg/m3]; ref value =1 kg/m3 from eq 7 Gupta & Schlichting 2020
-        - eps: heat transfer efficiency factor [ndim]
-        - Vpot: planetary gravitational potential [J/kg]
-        - area: planetary surface area [m2]
-        - mu: average particle mass [kg]
-    Output: mass flux [kg/m2/s]
-    """
-    R_c = R_rocky(Mp)
-    V_pot = const.G * Mp / R_c
-    gamma = 7 / 5  # adiabatic index for H2
-    R_B = (gamma - 1) * const.G * Mp * mu / (gamma * const.kb * Teq)  # Bondi radius
-    kappa = 0.01  # opacity at RCB [m2/kg]; Ginzburg et al. 2016 and eq 7 Gupta & Schlichting 2020 (Freedman et al 2008)
-    L = 64 * np.pi * const.sbc * Teq**4 * R_B / (3 * kappa * rho_rcb)  # planetary core luminosity
-    phi_L = L / (V_pot * area)  # mass flux
-
-    c_s = np.sqrt(const.kb * Teq / const.mu_H)  # sound speed [m/s]
-    R_rcb = R_c + R_env  # rcb radius [m]
-    phi_B = (
-        c_s * rho_rcb * np.exp(-const.G * Mp / (c_s**2 * R_rcb))
-    )  # Bondi-limited escape (eq 10 Gupta & Schlichting 2020; eq 26 Ginzburg et al. 2016)
-
-    return min(phi_L, phi_B)
+# NOTE: Fxuv_hazmat, phi_E, phiE_CP moved to isofate.escape (see also the Fxuv note above).
 
 
 # number flux of light species
@@ -892,20 +698,12 @@ def R_Hill(Mp, Mstar, a):
     return R_H
 
 
-def phi_kill(M_atm, Rp, age):
-    """
-    Calculates mass escape flux to ensure removal of entire atmosphere
-    Use with caution, work in progress
-    Inputs:
-        - M_atm: atmospheric mass fraction; Mp*f_atm [ndim]
-        - Rp: planet radius [m]
-        - age: system age/simulation time [s]
-    Output: mass escape flux [kg/m2/s]
-    """
-    A = 4 * np.pi * Rp**2
-    return M_atm / A / age * 10
-
-
+# NOTE: phi_kill moved to isofate.escape. F0_kill below is dead code (never called anywhere in
+# the repo) and still references the bare name `phi_kill`, now undefined in this module - since
+# Python only resolves that name at call time and F0_kill is never called, this doesn't break
+# import or tests. If F0_kill is ever revived, update it to `from isofate.escape import
+# phi_kill` locally inside the function (not a module-level import - that would create a
+# circular import, since isofate.escape already imports R_rocky from this module).
 def F0_kill(Mp, Rp, M_atm, age, eps=0.15):
     C = 0.893818  # integral of power law portion of F_XUV function
     Vpot = const.G * Mp / Rp
@@ -940,57 +738,12 @@ def V_reduction(Mp, Ms, a, Rp):
     return K
 
 
-def phi_RR(Rp, Mp, Teq, t, F0, options: IsocalcOptions = IsocalcOptions()):
-    """
-    Radiation recombination-limited escape rate used in Lopez & Rice 2018 and others
-    Prescription from Murray-Clay et al 2009, and used in Wordsworth et al 2018
-    Inputs:
-     - Rp: radius of the XUV photosphere [m]
-     - Mp: planet mass [kg]
-     - Teq: planetary equilibrium temperature [K]
-     - t: system age (time) [s]
-     - F0: initial planetary incident XUV flux [W/m2]
-     - options: IsocalcOptions - supplies t0, t_sat, beta, step_fn, F_final, t_pms, pms_factor
-    Output: mass flux [kg/m2/s]
-    """
-    F = Fxuv(
-        t,
-        F0,
-        options.t0,
-        options.t_sat,
-        options.beta,
-        options.step_fn,
-        options.F_final,
-        options.t_pms,
-        options.pms_factor,
-    )
-    g = const.G * Mp / Rp**2  # grav field strength at base of flow [m/s2]
-    T = 1e4  # temp is thermostatted at 1e4 K by radiation [K]
-    nu_0 = 4.835e15  # EUV ionizing radiation frequency (~60 nm/ 20 eV) [Hz]
-    alpha_rec = (
-        2.7e-13 * (Teq / 1e4) ** (-0.9) / 1e6
-    )  # case B recombination coeff for H (Murray-Clay et al 2009 pg 4) [m3/atom/s]
-    # H_base = kb*Teq/mu_solar/g # scale height at base of flow [m]
-    # n_wind = np.sqrt(Fxuv/h/nu_0/H_base/alpha_rec) # number density at flow base [particles/m3]
-    c_s = np.sqrt(
-        2 * const.kb * T / const.mu_H
-    )  # sounds speed at sonic point [m/s] Murray-Clay et al 2009
-    R_s = const.G * Mp / (2 * c_s**2)  # sonic point [m] Murray-Clay et al 2009
-
-    ### Lopez & Rice 2018 formulation
-    # p1 = c_s*n_wind*mu_solar # divided both sides by 4 pi R_s^2 to change units to per area and removed negative sign
-    # p2 = np.sqrt(Fxuv*G*Mp/(h*nu_0*alpha_rec*c_s**2*R_base**2))
-    # p3 = np.exp((R_base/R_s - 1)*G*Mp/R_base/c_s**2)
-    # return p1*p2*p3
-
-    ### Murray-Clay et al 2009 formulation
-    p1 = 4 * np.pi * R_s**2 * c_s
-    p2 = np.sqrt(F * const.mu_H**3 * g / (const.h * nu_0 * alpha_rec * 2 * const.kb * Teq))
-    p3 = np.exp((Rp / R_s - 1) * const.G * Mp / Rp / c_s**2)
-
-    return p1 * p2 * p3 / (4 * np.pi * Rp**2)
+# NOTE: phi_RR moved to isofate.escape.
 
 
+# NOTE: dead code (never called anywhere in the repo); still references the bare name `Fxuv`,
+# now undefined in this module since Fxuv moved to isofate.escape - harmless since it's never
+# called (same situation as F0_kill above).
 def phi_RMC(t, F0, t_sat, Rp):
     F = Fxuv(t, F0, t_sat)
     phi = 4e9 * np.sqrt(F / (5e5 * const.cgs2si_flux)) / (4 * np.pi * Rp**2)

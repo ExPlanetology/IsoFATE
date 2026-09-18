@@ -15,6 +15,7 @@ from isofate.atmodeller_coupler import (
     get_tracked_gas_species,
 )
 from isofate.constants import const
+from isofate.escape import EscapeMechanism, EscapeState, XUVEscape
 from isofate.isofunks import (
     Phi_1,
     Phi_2,
@@ -27,71 +28,11 @@ from isofate.isofunks import (
     R_atm,
     R_env,
     V_reduction,
-    phi_E,
-    phi_kill,
-    phi_RR,
-    phiE_CP,
 )
 from isofate.options import IsocalcOptions
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
 from isofate.system import Planet, Star, System
 from isofate.utils import gravitational_acceleration
-
-
-def compute_mass_flux(
-    options: IsocalcOptions,
-    radius_p,
-    Mp,
-    T,
-    F0,
-    Vpot,
-    d,
-    A,
-    mu,
-    radius_env,
-    f_atm,
-    t_now,
-    t_total,
-):
-    """Atmospheric mass flux [kg/m2/s] for the escape mechanism selected by `options.mechanism`.
-
-    Args:
-        options: Mode switches and tuning constants - supplies `mechanism`, `RR`, `rho_rcb`, `eps`.
-        radius_p: Total planet radius [m].
-        Mp: Planet mass [kg].
-        T: Equilibrium temperature [K].
-        F0: Initial incident XUV flux [W/m2].
-        Vpot: Gravitational potential at the outer layer [J/kg].
-        d: Orbital distance [m].
-        A: Planet surface area [m2].
-        mu: Mean atmospheric particle mass [kg].
-        radius_env: Envelope radius [m].
-        f_atm: Atmospheric mass fraction [ndim].
-        t_now: Current simulation time [s].
-        t_total: Total simulation time [s].
-    """
-    if options.mechanism == "XUV":
-        if options.RR == True:
-            phi = min(
-                phi_RR(radius_p, Mp, T, t_now, F0, options),
-                phi_E(t_now, Vpot, d, F0, options),
-            )
-        else:
-            phi = phi_E(t_now, Vpot, d, F0, options)
-    elif options.mechanism == "CPML":
-        phi = phiE_CP(T, Mp, options.rho_rcb, options.eps, Vpot, A, mu, radius_env)
-    elif options.mechanism == "phi kill":
-        phi = phi_kill(Mp * f_atm, radius_p, t_total - t_now)
-    elif options.mechanism == "XUV+CPML":
-        if options.RR == True:
-            phi_XUV = min(
-                phi_RR(radius_p, Mp, T, t_now, F0, options),
-                phi_E(t_now, Vpot, d, F0, options),
-            )
-        else:
-            phi_XUV = phi_E(t_now, Vpot, d, F0, options)
-        phi = phi_XUV + phiE_CP(T, Mp, options.rho_rcb, options.eps, Vpot, A, mu, radius_env)
-    return phi
 
 
 def isocalc(
@@ -100,6 +41,7 @@ def isocalc(
     time=5e9,
     isofate_species_abund: ArrayLike = (0, 0, 0, 0, 0, 0, 0),
     options: IsocalcOptions = IsocalcOptions(),
+    escape: EscapeMechanism = XUVEscape(),
 ):
     """
     This is a test
@@ -133,11 +75,13 @@ def isocalc(
     #  - time: total simulation time; scalar [yr]
     #  - isofate_species_abund: initial abundance [atoms] for each tracked species, ordered as in
     #  isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
-    #  - options: mode switches and tuning constants, fixed for the whole run - see
-    #  IsocalcOptions for the full list (mechanism, rad_evol, melt_fraction_override, mu, eps,
-    #  activity, flux_model, stellar_type, t_sat, step_fn, F_final, t_pms,
-    #  pms_factor, n_steps, t0, rho_rcb, RR, thermal, beta, n_atmodeller, save_molecules,
-    #  mantle_iron_dict, dynamic_phi)
+    #  - options: mode switches and tuning constants unrelated to escape mechanism, fixed for
+    #  the whole run - see IsocalcOptions for the full list (rad_evol, melt_fraction_override,
+    #  mu, n_steps, t0, thermal, n_atmodeller, save_molecules, mantle_iron_dict, dynamic_phi)
+    #  - escape: escape-mechanism instance (isofate.escape.EscapeMechanism) controlling the
+    #  atmospheric mass-flux calculation each timestep; defaults to XUVEscape(), equivalent to
+    #  today's default mechanism="XUV", RR=True. See isofate.escape for XUVEscape, CPMLEscape,
+    #  PhiKillEscape, CombinedEscape.
 
     # Output: Dictionary of 2-D arrays [len(f_atm) x n_steps] with keys,
     #  - 'time': simulation time array [s]
@@ -369,9 +313,21 @@ def isocalc(
         A = 4 * np.pi * radius_p**2
 
         # sets mass flux [kg/m2/s]
-        phi = compute_mass_flux(
-            options, radius_p, Mp, T, F0, Vpot, d, A, mu, radius_env, f_atm, t_a[n], t
+        state = EscapeState(
+            radius_p=radius_p,
+            Mp=Mp,
+            T=T,
+            F0=F0,
+            Vpot=Vpot,
+            d=d,
+            A=A,
+            mu=mu,
+            radius_env=radius_env,
+            f_atm=f_atm,
+            t_now=t_a[n],
+            t_total=t,
         )
+        phi = escape.compute_mass_flux(state)
 
         mass_loss = phi * A * delta_t
         g = gravitational_acceleration(Mp, radius_p)

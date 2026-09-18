@@ -9,6 +9,7 @@ import time as TIME
 import matplotlib.pyplot as plt
 
 from isofate.constants import const
+from isofate.escape import XUVEscape
 from isofate.species import DEFAULT_SPECIES
 
 # from debug_isofate_coupler_v2 import *
@@ -51,7 +52,6 @@ time = 5e9  # total simulation time [yr]
 t0 = 1e6  # start time [yr]
 t_pms = 0  # pms phase duration [yr]
 step_fn = True
-mechanism = "XUV"  # if using fixed phi, be sure to change Rp = r_core below and rad_evol = False
 RR = True
 eps = 0.15
 rad_evol = True
@@ -126,33 +126,33 @@ print("d =", round(a / const.au2m, 3), "au")
 print("Fp =", round(Fp, 1), "W/m2")
 print("Teq =", round(T, 1), "K")
 print("time =", time / 1e9, "Gyr")
-print("mechanism =", mechanism)
 print("rad_evol =", rad_evol)
 print("mantle_iron_dict", mantle_iron_dict)
 print("dynamic_phi =", dynamic_phi)
 
 # run simulation (from isofate.py)
 isocalc_start = TIME.time()
-options = IsocalcOptions(
-    mechanism=mechanism,
-    rad_evol=rad_evol,
-    melt_fraction_override=melt_fraction_override,
-    mu=mu_avg,
+escape = XUVEscape(
     eps=eps,
-    activity="medium",
-    flux_model=flux_model,
-    stellar_type=stellar_type,
+    t0=t0,
     t_sat=t_sat,
+    beta=-1.23,
     step_fn=step_fn,
     F_final=F_final,
     t_pms=t_pms,
     pms_factor=1e2,
+    flux_model=flux_model,
+    activity="medium",
+    stellar_type=stellar_type,
+    RR=RR,
+)
+options = IsocalcOptions(
+    rad_evol=rad_evol,
+    melt_fraction_override=melt_fraction_override,
+    mu=mu_avg,
     n_steps=n_steps,
     t0=t0,
-    rho_rcb=1.0,
-    RR=RR,
     thermal=thermal,
-    beta=-1.23,
     n_atmodeller=n_atmodeller,
     save_molecules=save_molecules,
     mantle_iron_dict=mantle_iron_dict,
@@ -165,6 +165,7 @@ sol = isocalc(
     # ordered per isofate.species.SYMBOLS
     isofate_species_abund=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),
     options=options,
+    escape=escape,
 )
 print(f"isocalc runtime: {TIME.time() - isocalc_start:.2f} s")
 
