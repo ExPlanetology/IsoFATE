@@ -31,7 +31,7 @@ from isofate.isofunks import (
 )
 from isofate.options import IsocalcOptions
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
-from isofate.system import Planet, Star, System
+from isofate.system import Planet, System
 from isofate.utils import gravitational_acceleration
 
 
@@ -120,7 +120,7 @@ def isocalc(
     # System: it's a modeling choice (e.g. F0 = Fp*1e-3 "for M stars"), not a strict derived
     # quantity, so the caller must still supply it directly.
     planet: Planet = system.planet
-    Mstar: Star = system.star.mass
+    Mstar: ArrayLike = system.star.mass
     d: ArrayLike = system.semi_major_axis
     T: ArrayLike = system.equilibrium_temperature
     Fp: ArrayLike = system.insolation
@@ -219,13 +219,9 @@ def isocalc(
     # Molar concentration history [ndim], ordered per isofate.species.SYMBOLS (H, He, D, O, C, N,
     # S) - same order as y/x - one column per species, one row per timestep.
     x_a = np.zeros((n_tot, 7))
-    Phi_H_a = np.zeros(n_tot)  # H number flux array [atoms/s/m2]
-    Phi_He_a = np.zeros(n_tot)  # He number flux array [atoms/s/m2]
-    Phi_D_a = np.zeros(n_tot)  # D number flux array [atoms/s/m2]
-    Phi_O_a = np.zeros(n_tot)  # O number flux array [atoms/s/m2]
-    Phi_C_a = np.zeros(n_tot)  # C number flux array [atoms/s/m2]
-    Phi_N_a = np.zeros(n_tot)  # N number flux array [atoms/s/m2]
-    Phi_S_a = np.zeros(n_tot)  # S number flux array [atoms/s/m2]
+    # Number flux history [atoms/s/m2], ordered per isofate.species.SYMBOLS (H, He, D, O, C, N,
+    # S) - same convention as y_a/x_a above.
+    Phi_a = np.zeros((n_tot, 7))
     T_surf_analytic_a = np.zeros(n_tot)  # surface temperature from analytic calculation array [K]
     T_surf_atmod_a = np.zeros(n_tot)  # atmodeller surface temperature array (capped at 6000 K) [K]
 
@@ -251,13 +247,7 @@ def isocalc(
                 gas_num_a[label][n:] = 0
                 melt_num_a[label][n:] = 0
             x_a[n:] = x_a[n - 1]  # carry the last molar concentration forward
-            Phi_H_a[n:] = 0
-            Phi_He_a[n:] = 0
-            Phi_D_a[n:] = 0
-            Phi_O_a[n:] = 0
-            Phi_C_a[n:] = 0
-            Phi_N_a[n:] = 0
-            Phi_S_a[n:] = 0
+            Phi_a[n:] = 0
 
             # atmodeller full ouput for monte carlo runs
             if options.n_atmodeller != 0:
@@ -355,6 +345,8 @@ def isocalc(
             Phi_C = Phi_C_Z90(Phi_H, Phi_He, H_H, H_C, H_He, *y, T)  # C number flux [atoms/s/m2]
             Phi_N = Phi_N_Z90(Phi_H, Phi_He, H_H, H_N, H_He, *y, T)  # N number flux [atoms/s/m2]
             Phi_S = Phi_S_Z90(Phi_H, Phi_He, H_H, H_S, H_He, *y, T)  # S number flux [atoms/s/m2]
+            # Ordered per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
+            Phi = np.array([Phi_H, Phi_He, Phi_D, Phi_O, Phi_C, Phi_N, Phi_S])
 
         elif options.dynamic_phi == True:
             N_values = y  # ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
@@ -407,41 +399,16 @@ def isocalc(
             Phi_1_calc, phi_c = Phi_1(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU, output=1)
             Phi_2_calc = Phi_2(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU)
 
-            # Assign fluxes to correct species based on light/heavy dominant indices
-            if light_dominant_idx == 0:  # H is species 1 (lighter dominant)
-                Phi_H = Phi_1_calc
-            elif light_dominant_idx == 1:  # He is species 1
-                Phi_He = Phi_1_calc
-            elif light_dominant_idx == 2:  # D is species 1
-                Phi_D = Phi_1_calc
-            elif light_dominant_idx == 3:  # O is species 1
-                Phi_O = Phi_1_calc
-            elif light_dominant_idx == 4:  # C is species 1
-                Phi_C = Phi_1_calc
-            elif light_dominant_idx == 5:  # N is species 1
-                Phi_N = Phi_1_calc
-            elif light_dominant_idx == 6:  # S is species 1
-                Phi_S = Phi_1_calc
-
-            if heavy_dominant_idx == 0:  # H is species 2 (heavier dominant)
-                Phi_H = Phi_2_calc
-            elif heavy_dominant_idx == 1:  # He is species 2
-                Phi_He = Phi_2_calc
-            elif heavy_dominant_idx == 2:  # D is species 2
-                Phi_D = Phi_2_calc
-            elif heavy_dominant_idx == 3:  # O is species 2
-                Phi_O = Phi_2_calc
-            elif heavy_dominant_idx == 4:  # C is species 2
-                Phi_C = Phi_2_calc
-            elif heavy_dominant_idx == 5:  # N is species 2
-                Phi_N = Phi_2_calc
-            elif heavy_dominant_idx == 6:  # S is species 2
-                Phi_S = Phi_2_calc
+            # Assign fluxes to correct species based on light/heavy dominant indices - ordered
+            # per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
+            Phi = np.zeros(7)
+            Phi[light_dominant_idx] = Phi_1_calc
+            Phi[heavy_dominant_idx] = Phi_2_calc
 
             # Calculate fluxes for remaining species using corrected generalized function
             for i in range(7):
                 if i != light_dominant_idx and i != heavy_dominant_idx:
-                    flux = Phi_minor_species(
+                    Phi[i] = Phi_minor_species(
                         Phi_1_calc,
                         Phi_2_calc,
                         H_1,
@@ -453,21 +420,6 @@ def isocalc(
                         light_dominant_idx,
                         heavy_dominant_idx,
                     )
-                    # Assign to correct species
-                    if i == 0:  # H
-                        Phi_H = flux
-                    elif i == 1:  # He
-                        Phi_He = flux
-                    elif i == 2:  # D
-                        Phi_D = flux
-                    elif i == 3:  # O
-                        Phi_O = flux
-                    elif i == 4:  # C
-                        Phi_C = flux
-                    elif i == 5:  # N
-                        Phi_N = flux
-                    elif i == 6:  # S
-                        Phi_S = flux
 
         # record values
         Matm_a[n] = M_atm
@@ -484,13 +436,7 @@ def isocalc(
         y_a[n] = y
         y_a_int[n] = isofate_species_abund_int
         x_a[n] = x
-        Phi_H_a[n] = Phi_H
-        Phi_He_a[n] = Phi_He
-        Phi_D_a[n] = Phi_D
-        Phi_O_a[n] = Phi_O
-        Phi_C_a[n] = Phi_C
-        Phi_N_a[n] = Phi_N
-        Phi_S_a[n] = Phi_S
+        Phi_a[n] = Phi
 
         ##### run atmodeller ######
         if options.n_atmodeller != 0:  # save final molecular abundances on last time step
@@ -617,7 +563,6 @@ def isocalc(
             )  # assumes D/H is in equilibrium between interior and atmosphere
 
         # advance to next step
-        Phi = np.array([Phi_H, Phi_He, Phi_D, Phi_O, Phi_C, Phi_N, Phi_S])
         y_loss = Phi * A * delta_t
         # M_atm -= mass_loss # comes from phi*A*delta_t
         M_atm -= np.dot(y_loss, atomic_masses)
@@ -659,13 +604,15 @@ def isocalc(
         "x5": x_a[:, 4].copy(),
         "x6": x_a[:, 5].copy(),
         "x7": x_a[:, 6].copy(),
-        "Phi_H": Phi_H_a,
-        "Phi_He": Phi_He_a,
-        "Phi_D": Phi_D_a,
-        "Phi_O": Phi_O_a,
-        "Phi_C": Phi_C_a,
-        "Phi_N": Phi_N_a,
-        "Phi_S": Phi_S_a,
+        # Phi_a columns are ordered per isofate.species.SYMBOLS (H, He, D, O, C, N, S); .copy()
+        # keeps each output array independent, matching the pre-array-refactor behavior.
+        "Phi_H": Phi_a[:, 0].copy(),
+        "Phi_He": Phi_a[:, 1].copy(),
+        "Phi_D": Phi_a[:, 2].copy(),
+        "Phi_O": Phi_a[:, 3].copy(),
+        "Phi_C": Phi_a[:, 4].copy(),
+        "Phi_N": Phi_a[:, 5].copy(),
+        "Phi_S": Phi_a[:, 6].copy(),
         "T_surf_analytic": T_surf_analytic_a,
         "T_surf_atmod": T_surf_atmod_a,
     }

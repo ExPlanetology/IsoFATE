@@ -143,7 +143,7 @@ class IsoFATESpecies:
         )
         self.mass_by_symbol = dict(zip(self.species, self.atomic_masses.tolist()))
 
-    def scale_heights(self, temperature: ArrayLike, gravity: ArrayLike) -> NpFloat:
+    def scale_heights(self, temperature: ArrayLike, gravity: ArrayLike) -> ArrayLike:
         """Atmospheric scale height for each species at a given temperature and gravity.
 
         H = k_B * T / (m * g), the per-particle form of the ideal-gas scale height - `k_B`
