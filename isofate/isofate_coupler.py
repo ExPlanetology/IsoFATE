@@ -74,7 +74,7 @@ def isocalc(
     #  isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
     #  - options: mode switches and tuning constants, fixed for the whole run - see
     #  IsocalcOptions for the full list (mechanism, rad_evol, melt_fraction_override, mu, eps,
-    #  activity, flux_model, stellar_type, Rp_override, t_sat, step_fn, F_final, t_pms,
+    #  activity, flux_model, stellar_type, t_sat, step_fn, F_final, t_pms,
     #  pms_factor, n_steps, t0, rho_rcb, RR, thermal, beta, n_atmodeller, save_molecules,
     #  mantle_iron_dict, dynamic_phi)
 
@@ -130,6 +130,10 @@ def isocalc(
     ###_____Initialize physical values_____###
 
     b = DEFAULT_SPECIES.binary_diffusion.get("H", "He", T)
+    # planet.rocky_radius reflects Planet's own fixed-radius override, if any (see Planet) -
+    # fixed for the whole run either way, and resolved here (before build_atmodeller below) since
+    # interior_atmosphere's surface_radius is set once at construction and never updated
+    # afterward (see AtmodellerCoupler).
     radius_rocky = planet.rocky_radius  # [m]
     R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
     R_H = system.hill_radius  # Hill radius [m]
@@ -333,10 +337,6 @@ def isocalc(
             radius_env = 0
             radius_atm = 0
             radius_p = radius_rocky
-            if options.Rp_override != False:
-                radius_rocky = options.Rp_override
-                radius_env = 0
-                radius_atm = 0
         else:
             radius_env = R_env(Mp, f_atm, Fp, t_a[n], options.thermal)
             radius_atm = R_atm(T, Mp, radius_rocky, radius_env, mu)
@@ -542,7 +542,6 @@ def isocalc(
                 # atmod_full_output = {}
                 atmod_sol = AtmodellerCoupler(
                     T,
-                    Mp,
                     radius_p,
                     mu,
                     options.melt_fraction_override,
@@ -550,7 +549,6 @@ def isocalc(
                     *aggregate_D_into_H(y),
                     *aggregate_D_into_H(isofate_species_abund_int),
                     interior_atmosphere,
-                    radius_rocky=radius_rocky,
                     initial_guess=atmod_initial_guess,
                 )[1]
                 atmod_full_output["H2O_atm"] = atmod_sol["H2O_g"]["gas"]["number_moles"][0][0]
@@ -599,7 +597,6 @@ def isocalc(
                 atmod_results, atmod_full, mantle_iron_dict, atmod_initial_guess = (
                     AtmodellerCoupler(
                         T,
-                        Mp,
                         radius_p,
                         mu,
                         options.melt_fraction_override,
@@ -607,7 +604,6 @@ def isocalc(
                         *aggregate_D_into_H(y),
                         *aggregate_D_into_H(isofate_species_abund_int),
                         interior_atmosphere,
-                        radius_rocky=radius_rocky,
                         initial_guess=atmod_initial_guess,
                         # Species-level diagnostics (atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
                         # are only read below when save_molecules is True; otherwise the narrow

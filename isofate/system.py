@@ -76,11 +76,29 @@ class Planet:
         mass: Planet mass [kg]
         period: Orbital period [s]
         f_atm: Atmospheric mass fraction [ndim]
+        rocky_radius: Radius of the planet's rocky (condensed-matter) component [m] (optional; if
+            not provided, computed from mass via Lopez & Fortney 2014). Supply this directly when
+            a real, observationally-measured radius is known and should be used instead of the
+            generic mass-scaling estimate - independent of whether a gaseous envelope is also
+            allowed to evolve on top of it (see `isocalc`'s `rad_evol` option).
     """
 
     mass: ArrayLike
     period: ArrayLike
     f_atm: ArrayLike
+    _rocky_radius: ArrayLike | None = None
+
+    def __init__(
+        self,
+        mass: ArrayLike,
+        period: ArrayLike,
+        f_atm: ArrayLike,
+        rocky_radius: ArrayLike | None = None,
+    ):
+        self.mass = mass
+        self.period = period
+        self.f_atm = f_atm
+        self._rocky_radius = rocky_radius
 
     @property
     def atmosphere_mass(self) -> ArrayLike:
@@ -88,12 +106,22 @@ class Planet:
         return self.mass * self.f_atm
 
     @property
+    def has_fixed_radius(self) -> bool:
+        """True if `rocky_radius` was supplied explicitly rather than computed from mass."""
+        return self._rocky_radius is not None
+
+    @property
     def rocky_radius(self) -> ArrayLike:
         """Radius of the planet's rocky (condensed-matter) component [m], excluding any gaseous
-        envelope (Lopez & Fortney 2014). Named to avoid confusion with a metallic core radius.
+        envelope. Named to avoid confusion with a metallic core radius.
+
+        Returns the value supplied at construction if given; otherwise computed from mass
+        (Lopez & Fortney 2014).
 
         NOTE: const.Re is missing from the paper (typo).
         """
+        if self._rocky_radius is not None:
+            return self._rocky_radius
         return const.Re * (self.mass / const.Me) ** 0.25
 
 

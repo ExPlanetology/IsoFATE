@@ -37,8 +37,6 @@ class IsocalcOptions:
         flux_model: 'power law' for the analytic power law, 'phoenix' for `Fxuv_hazmat`,
             'Johnstone' for `Fxuv_Johnstone`.
         stellar_type: 'M1', 'K5', or 'G5'; only used when `flux_model == 'Johnstone'`.
-        Rp_override: Scalar planet radius [m] to manually fix a constant radius (radius will not
-            evolve); False to disable.
         t_sat: XUV power-law saturation time [yr]; 5e8 matches semi-empirical MUSCLES data.
         step_fn: Toggles a step-function XUV flux evolution (drops to `F_final` at `t_pms`).
         F_final: Final relative XUV flux level (of F0) once `step_fn` engages.
@@ -70,7 +68,6 @@ class IsocalcOptions:
     activity: str = "medium"
     flux_model: str = "power law"
     stellar_type: str = "M1"
-    Rp_override: ArrayLike | bool = False
     t_sat: ArrayLike = 5e8
     step_fn: bool = False
     F_final: ArrayLike = 0

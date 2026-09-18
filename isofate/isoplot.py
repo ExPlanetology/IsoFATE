@@ -87,7 +87,6 @@ def isoplot(sol,n_atmodeller,Mp,f_atm,Fp,T,M_star,d):
     R_B = R_Bondi(Mp, mu, T) # Bondi radius [m]
     R_H = R_Hill(Mp, M_star, d) # Hill radius [m]
     # Rp = r_core # use this if rad_evol = False for analytics to match isofate
-    # Rp = Rp_override
     Rp = np.min([Rp, R_B, R_H]) # [m]
     # R_avg = (Rp + r_core)/2
     # A_avg = 4*np.pi*R_avg**2

@@ -75,14 +75,18 @@ _make_atmosphere_descent_jit = jax.jit(make_atmosphere_descent_jax)
 @eqx.filter_jit
 def _update_solve_extract(
     interior_atmosphere: EquilibriumModel,
-    planet_mass,
     mantle_melt_fraction,
-    surface_radius,
     temperature,
     mass_constraints: dict,
     base_solution_array,
 ):
     """Fuses state/constraint updates, the solve, and output extraction into one jitted call.
+
+    ``planet_mass``/``surface_radius`` are deliberately not updated here: both are fixed for the
+    whole isocalc run and already set on ``interior_atmosphere`` at construction time
+    (``build_atmodeller``), so leaving them out of ``update_state`` (which defaults each omitted
+    field to "no change") avoids re-asserting a value that never differs from what the model
+    already holds.
 
     ``update_state``/``update_constraints`` are built on ``eqx.tree_at``, which does several full
     Python-level traversals of the whole model pytree per call (O(num_leaves); ~3479 leaves here)
@@ -98,9 +102,7 @@ def _update_solve_extract(
     cold-start path without needing a separate branch inside this jitted function.
     """
     model = interior_atmosphere.update_state(
-        planet_mass=planet_mass,
         mantle_melt_fraction=mantle_melt_fraction,
-        surface_radius=surface_radius,
         temperature=temperature,
     ).update_constraints(mass_constraints=mass_constraints)
     output = model.solve(base_solution_array)
@@ -111,9 +113,7 @@ def _update_solve_extract(
 @eqx.filter_jit
 def _update_solve_extract_narrow(
     interior_atmosphere: EquilibriumModel,
-    planet_mass,
     mantle_melt_fraction,
-    surface_radius,
     temperature,
     mass_constraints: dict,
     base_solution_array,
@@ -134,9 +134,7 @@ def _update_solve_extract_narrow(
     ``to_dict`` output.
     """
     model = interior_atmosphere.update_state(
-        planet_mass=planet_mass,
         mantle_melt_fraction=mantle_melt_fraction,
-        surface_radius=surface_radius,
         temperature=temperature,
     ).update_constraints(mass_constraints=mass_constraints)
     output = model.solve(base_solution_array)
@@ -256,7 +254,8 @@ def build_atmodeller(
         S2_d,
     )
 
-    # Constructed once; per-timestep state (temperature, melt fraction, radius) and mass
+    # Constructed once. planet_mass and surface_radius are fixed for the whole isocalc run and
+    # never updated afterward; per-timestep state (temperature, melt fraction) and mass
     # constraints are applied via .update_state()/.update_constraints() in AtmodellerCoupler
     planet: Planet = Planet.from_species(
         gas_species,
@@ -273,7 +272,6 @@ def build_atmodeller(
 
 def AtmodellerCoupler(
     Teq,
-    Mp,
     Rp,
     mu,
     melt_fraction,
@@ -291,15 +289,11 @@ def AtmodellerCoupler(
     N_N_int,
     N_S_int,
     interior_atmosphere: EquilibriumModel,
-    radius_rocky: ArrayLike,
     initial_guess=None,
     full_output: bool = True,
 ):
     """
     Args:
-        radius_rocky: Planet rocky-component radius [m] (``Planet.rocky_radius``), the single
-            source of truth for this quantity - passed in rather than recomputed here so callers
-            only ever compute it once.
         full_output: When ``False``, uses the narrow extraction path (element number_moles,
             gas mass, O2_g number_moles only) instead of the full ``elements_species`` output.
             The periodic per-timestep calls in ``isocalc`` never need more than that unless
@@ -309,6 +303,11 @@ def AtmodellerCoupler(
 
     results = {}
     gamma = 7 / 5
+    # Planet mass and rocky-component radius are fixed for the whole isocalc run and already set
+    # on interior_atmosphere at construction time (build_atmodeller) - read them back here rather
+    # than threading them through every call as separate arguments.
+    Mp = float(interior_atmosphere.parameters.state.background_planet_mass)
+    radius_rocky = float(interior_atmosphere.parameters.state.surface_radius)
     # Converted back to plain Python floats immediately: everything downstream in this function
     # (and the isocalc loop calling it) is plain Python/NumPy, not JAX. Matm is discarded here -
     # AtmodellerCoupler computes M_atm from the equilibrium solve's own output instead.
@@ -321,8 +320,6 @@ def AtmodellerCoupler(
         mantle_melt_fraction: float = melt_fraction
     elif melt_fraction == False:
         mantle_melt_fraction: float = MeltFraction(Mp, np.clip(T_surface, 10, 16000))
-    planet_mass: float = Mp
-    surface_radius: float = radius_rocky
 
     # element masses
     mass_H: float = (N_H_atm + N_H_int) * const.mu_H
@@ -374,9 +371,7 @@ def AtmodellerCoupler(
     # floats are treated as *static* arguments (hashed by value), which would force a full
     # retrace on every call since these values change every timestep. Casting to jnp arrays here
     # keeps _update_solve_extract's compiled trace reused across calls.
-    planet_mass_j = jnp.asarray(planet_mass)
     mantle_melt_fraction_j = jnp.asarray(mantle_melt_fraction)
-    surface_radius_j = jnp.asarray(surface_radius)
     surface_temperature_j = jnp.asarray(surface_temperature)
     mass_constraints_j = {key: jnp.asarray(value) for key, value in mass_constraints.items()}
 
@@ -384,9 +379,7 @@ def AtmodellerCoupler(
 
     sol_jax, solution, success = extract_fn(
         interior_atmosphere,
-        planet_mass_j,
         mantle_melt_fraction_j,
-        surface_radius_j,
         surface_temperature_j,
         mass_constraints_j,
         base_solution_array,
@@ -394,9 +387,7 @@ def AtmodellerCoupler(
     if not np.all(np.asarray(success)):
         sol_jax, solution, success = extract_fn(
             interior_atmosphere,
-            planet_mass_j,
             mantle_melt_fraction_j,
-            surface_radius_j,
             surface_temperature_j,
             mass_constraints_j,
             jnp.full_like(base_solution_array, jnp.nan),

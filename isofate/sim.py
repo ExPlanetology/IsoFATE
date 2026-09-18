@@ -55,7 +55,6 @@ mechanism = "XUV"  # if using fixed phi, be sure to change Rp = r_core below and
 RR = True
 eps = 0.15
 rad_evol = True
-Rp_override = False
 n_steps = int(1e5)
 # Collin starts with 1e3
 # For 1e4 the run-time is reasonable.
@@ -143,7 +142,6 @@ options = IsocalcOptions(
     activity="medium",
     flux_model=flux_model,
     stellar_type=stellar_type,
-    Rp_override=Rp_override,
     t_sat=t_sat,
     step_fn=step_fn,
     F_final=F_final,
@@ -325,8 +323,8 @@ Rp = r_core + r_env + r_atm
 # Rp = r_core
 R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
 R_H = system.hill_radius  # Hill radius [m]
-# Rp = r_core # use this if rad_evol = False for analytics to match isofate
-# Rp = Rp_override
+# Rp = r_core  # use this if rad_evol = False for analytics to match isofate; r_core already
+# reflects planet's own fixed-radius override, if any (see Planet.rocky_radius)
 Rp = np.min([Rp, R_B, R_H])  # [m]
 # R_avg = (Rp + r_core)/2
 # A_avg = 4*np.pi*R_avg**2
