@@ -8,13 +8,15 @@
 `isofunks.py` functions (`phi_E`, `phi_RR`) take it directly, and `isofate_coupler.py` builds it.
 """
 
-import equinox as eqx
+from dataclasses import dataclass
+
 from jaxtyping import ArrayLike
 
 from isofate.constants import const
 
 
-class IsocalcOptions(eqx.Module):
+@dataclass
+class IsocalcOptions:
     """Mode switches and tuning constants for `isocalc`, fixed for the whole run.
 
     These are numerical/modeling choices, as opposed to `isocalc`'s other arguments (`system`,
