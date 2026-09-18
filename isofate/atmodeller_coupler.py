@@ -12,6 +12,7 @@ import numpy as np
 from atmodeller import ChemicalSpecies, EquilibriumModel, Planet, ReservoirSpecies
 from atmodeller.constants import GAS_PHASE_INDEX, SILICATE_MELT_PHASE_INDEX
 from atmodeller.output_base import OutputNamedArraysDict
+from atmodeller.sci_utils import earth
 from atmodeller.solubility import get_solubility_models
 from jax.typing import ArrayLike
 
@@ -69,7 +70,6 @@ def aggregate_D_into_H(values: ArrayLike) -> np.ndarray:
 # together cost more (~0.07 ms/call) than plain jax.jit accepting raw Python floats directly
 # (~0.02 ms/call).
 _make_atmosphere_descent_jit = jax.jit(make_atmosphere_descent_jax)
-
 
 
 @eqx.filter_jit
@@ -170,37 +170,48 @@ def _update_solve_extract_narrow(
     return sol, output.solution, output.multi_attempt_solution.success
 
 
-def build_atmodeller(planet_mass: ArrayLike) -> EquilibriumModel:
+def build_atmodeller(
+    planet_mass: ArrayLike,
+    *,
+    core_mass_fraction=earth.core_mass_fraction,
+    surface_radius: ArrayLike = earth.radius,
+    temperature=2000,
+) -> EquilibriumModel:
     """Builds an Atmodeller model for the interior-atmosphere coupling.
 
     Args:
         planet_mass (ArrayLike): Mass of the planet in kg
+        core_mass_fraction: Fraction of the planet's mass that is in the core. Defaults to Earth's
+            core mass fraction.
+        surface_radius (ArrayLike): Radius of the planet's surface in m. Defaults to Earth's
+            radius.
+        temperature: Temperature of the planet in K. Defaults to 2000 K.
 
     Returns:
         EquilibriumModel: An Atmodeller equilibrium model for the interior-atmosphere coupling
     """
     # Gas-phase species (v2preview drops per-species solubility; dissolution is now modeled via a
     # separate ReservoirSpecies tied to the silicate melt phase, matched by formula below)
-    H2O_g: ChemicalSpecies = ChemicalSpecies.create_gas("H2O")
+    He_g: ChemicalSpecies = ChemicalSpecies.create_gas("He")
     H2_g: ChemicalSpecies = ChemicalSpecies.create_gas("H2")
+    H2O_g: ChemicalSpecies = ChemicalSpecies.create_gas("H2O")
     O2_g: ChemicalSpecies = ChemicalSpecies.create_gas("O2")
     CO_g: ChemicalSpecies = ChemicalSpecies.create_gas("CO")
     CO2_g: ChemicalSpecies = ChemicalSpecies.create_gas("CO2")
     CH4_g: ChemicalSpecies = ChemicalSpecies.create_gas("CH4")
-    He_g: ChemicalSpecies = ChemicalSpecies.create_gas("He")
     N2_g: ChemicalSpecies = ChemicalSpecies.create_gas("N2")
     S2_g: ChemicalSpecies = ChemicalSpecies.create_gas("S2")
     H2O4S_g: ChemicalSpecies = ChemicalSpecies.create_gas("H2O4S")
     SO2_g: ChemicalSpecies = ChemicalSpecies.create_gas("SO2")
 
     gas_species: tuple[ChemicalSpecies, ...] = (
+        He_g,
         H2_g,
         H2O_g,
         O2_g,
-        CO_g,
         CO2_g,
+        CO_g,
         CH4_g,
-        He_g,
         N2_g,
         S2_g,
         H2O4S_g,
@@ -209,11 +220,14 @@ def build_atmodeller(planet_mass: ArrayLike) -> EquilibriumModel:
 
     # Dissolved (melt-reservoir) species; O2 and H2O4S have no solubility model, so they are
     # gas-only and have no counterpart here
-    H2O_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
-        "H2O", solubility=solubility_models["H2O_basalt_dixon95"]
+    He_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
+        "He", solubility=solubility_models["He_basalt_jambon86"]
     )
     H2_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
         "H2", solubility=solubility_models["H2_basalt_hirschmann12"]
+    )
+    H2O_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
+        "H2O", solubility=solubility_models["H2O_basalt_dixon95"]
     )
     CO_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
         "CO", solubility=solubility_models["CO_basalt_yoshioka19"]
@@ -224,9 +238,6 @@ def build_atmodeller(planet_mass: ArrayLike) -> EquilibriumModel:
     CH4_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
         "CH4", solubility=solubility_models["CH4_basalt_ardia13"]
     )
-    He_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
-        "He", solubility=solubility_models["He_basalt_jambon86"]
-    )
     N2_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
         "N2", solubility=solubility_models["N2_basalt_libourel03"]
     )
@@ -235,12 +246,12 @@ def build_atmodeller(planet_mass: ArrayLike) -> EquilibriumModel:
     )
 
     melt_species: tuple[ReservoirSpecies, ...] = (
-        H2O_d,
-        H2_d,
-        CO_d,
-        CO2_d,
-        CH4_d,
         He_d,
+        H2_d,
+        H2O_d,
+        CO2_d,
+        CO_d,
+        CH4_d,
         N2_d,
         S2_d,
     )
@@ -248,7 +259,12 @@ def build_atmodeller(planet_mass: ArrayLike) -> EquilibriumModel:
     # Constructed once; per-timestep state (temperature, melt fraction, radius) and mass
     # constraints are applied via .update_state()/.update_constraints() in AtmodellerCoupler
     planet: Planet = Planet.from_species(
-        gas_species, silicate_melt_species=melt_species, planet_mass=planet_mass
+        gas_species,
+        planet_mass=planet_mass,
+        core_mass_fraction=core_mass_fraction,
+        surface_radius=surface_radius * earth.radius,
+        temperature=temperature,
+        silicate_melt_species=melt_species,
     )
     model: EquilibriumModel = EquilibriumModel.from_state(planet)
 
@@ -274,8 +290,8 @@ def AtmodellerCoupler(
     N_C_int,
     N_N_int,
     N_S_int,
-    interior_atmosphere,
-    radius_rocky,
+    interior_atmosphere: EquilibriumModel,
+    radius_rocky: ArrayLike,
     initial_guess=None,
     full_output: bool = True,
 ):
@@ -296,7 +312,9 @@ def AtmodellerCoupler(
     # Converted back to plain Python floats immediately: everything downstream in this function
     # (and the isocalc loop calling it) is plain Python/NumPy, not JAX. Matm is discarded here -
     # AtmodellerCoupler computes M_atm from the equilibrium solve's own output instead.
-    _, T_surface_j, P_surface_j = _make_atmosphere_descent_jit(Teq, mu, Rp, Mp, gamma, radius_rocky)
+    _, T_surface_j, P_surface_j = _make_atmosphere_descent_jit(
+        Teq, mu, Rp, Mp, gamma, radius_rocky
+    )
     T_surface, P_surface = float(T_surface_j), float(P_surface_j)
     surface_temperature: float = np.min([6000, T_surface])  # K
     if melt_fraction != False:
