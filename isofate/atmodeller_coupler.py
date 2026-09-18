@@ -262,7 +262,7 @@ def build_atmodeller(
         gas_species,
         planet_mass=planet_mass,
         core_mass_fraction=core_mass_fraction,
-        surface_radius=surface_radius * earth.radius,
+        surface_radius=surface_radius,
         temperature=temperature,
         silicate_melt_species=melt_species,
     )
