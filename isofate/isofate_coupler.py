@@ -38,6 +38,62 @@ from isofate.system import Planet, Star, System
 from isofate.utils import gravitational_acceleration
 
 
+def compute_mass_flux(
+    options: IsocalcOptions,
+    radius_p,
+    Mp,
+    T,
+    F0,
+    Vpot,
+    d,
+    A,
+    mu,
+    radius_env,
+    f_atm,
+    t_now,
+    t_total,
+):
+    """Atmospheric mass flux [kg/m2/s] for the escape mechanism selected by `options.mechanism`.
+
+    Args:
+        options: Mode switches and tuning constants - supplies `mechanism`, `RR`, `rho_rcb`, `eps`.
+        radius_p: Total planet radius [m].
+        Mp: Planet mass [kg].
+        T: Equilibrium temperature [K].
+        F0: Initial incident XUV flux [W/m2].
+        Vpot: Gravitational potential at the outer layer [J/kg].
+        d: Orbital distance [m].
+        A: Planet surface area [m2].
+        mu: Mean atmospheric particle mass [kg].
+        radius_env: Envelope radius [m].
+        f_atm: Atmospheric mass fraction [ndim].
+        t_now: Current simulation time [s].
+        t_total: Total simulation time [s].
+    """
+    if options.mechanism == "XUV":
+        if options.RR == True:
+            phi = min(
+                phi_RR(radius_p, Mp, T, t_now, F0, options),
+                phi_E(t_now, Vpot, d, F0, options),
+            )
+        else:
+            phi = phi_E(t_now, Vpot, d, F0, options)
+    elif options.mechanism == "CPML":
+        phi = phiE_CP(T, Mp, options.rho_rcb, options.eps, Vpot, A, mu, radius_env)
+    elif options.mechanism == "phi kill":
+        phi = phi_kill(Mp * f_atm, radius_p, t_total - t_now)
+    elif options.mechanism == "XUV+CPML":
+        if options.RR == True:
+            phi_XUV = min(
+                phi_RR(radius_p, Mp, T, t_now, F0, options),
+                phi_E(t_now, Vpot, d, F0, options),
+            )
+        else:
+            phi_XUV = phi_E(t_now, Vpot, d, F0, options)
+        phi = phi_XUV + phiE_CP(T, Mp, options.rho_rcb, options.eps, Vpot, A, mu, radius_env)
+    return phi
+
+
 def isocalc(
     system: System,
     F0,
@@ -313,27 +369,9 @@ def isocalc(
         A = 4 * np.pi * radius_p**2
 
         # sets mass flux [kg/m2/s]
-        if options.mechanism == "XUV":
-            if options.RR == True:
-                phi = min(
-                    phi_RR(radius_p, Mp, T, t_a[n], F0, options),
-                    phi_E(t_a[n], Vpot, d, F0, options),
-                )
-            else:
-                phi = phi_E(t_a[n], Vpot, d, F0, options)
-        elif options.mechanism == "CPML":
-            phi = phiE_CP(T, Mp, options.rho_rcb, options.eps, Vpot, A, mu, radius_env)
-        elif options.mechanism == "phi kill":
-            phi = phi_kill(Mp * f_atm, radius_p, t - t_a[n])
-        elif options.mechanism == "XUV+CPML":
-            if options.RR == True:
-                phi_XUV = min(
-                    phi_RR(radius_p, Mp, T, t_a[n], F0, options),
-                    phi_E(t_a[n], Vpot, d, F0, options),
-                )
-            else:
-                phi_XUV = phi_E(t_a[n], Vpot, d, F0, options)
-            phi = phi_XUV + phiE_CP(T, Mp, options.rho_rcb, options.eps, Vpot, A, mu, radius_env)
+        phi = compute_mass_flux(
+            options, radius_p, Mp, T, F0, Vpot, d, A, mu, radius_env, f_atm, t_a[n], t
+        )
 
         mass_loss = phi * A * delta_t
         g = gravitational_acceleration(Mp, radius_p)
