@@ -50,7 +50,8 @@ def test_get_tracked_gas_species_matches_atmodeller_order():
     assert labels == ("H2", "H2O", "O2", "CO2", "CO", "CH4", "N2", "S2", "H2O4S", "SO2")
 
     by_label = {sp.label: sp for sp in tracked}
-    # atmodeller canonicalizes SO2 to Hill notation "O2S_g", not "SO2_g" - the override must fire.
+    # atmodeller canonicalizes SO2 to Hill notation "O2S_g", not "SO2_g" (read straight off
+    # atmodeller's own ChemicalSpeciesData.name - no isofate-side conversion or override).
     assert by_label["SO2"].gas_name == "O2S_g"
 
     no_melt_reservoir = {"O2", "H2O4S", "SO2"}

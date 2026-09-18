@@ -37,15 +37,6 @@ _COUPLING_ELEMENT_INDICES: tuple[int, ...] = tuple(
 _D_INDEX: int = SYMBOLS.index("D")
 _H_POSITION: int = _COUPLING_ELEMENTS.index("H")
 
-# atmodeller canonicalizes some formulas to Hill notation for its internal species names, which
-# can differ from the human-readable label isofate uses in its output dict keys (e.g. "n_SO2_a").
-# Add an entry here whenever a newly tracked gas species' Hill-notation name would otherwise
-# diverge from its "strip the _g suffix" label.
-_GAS_LABEL_OVERRIDES: dict[str, str] = {
-    "O2S_g": "SO2",
-}
-
-
 @dataclass(frozen=True)
 class TrackedGasSpecies:
     """One isofate-tracked gas-phase species, derived from atmodeller's own species lists."""
@@ -60,24 +51,27 @@ class TrackedGasSpecies:
 
 def get_tracked_gas_species(interior_atmosphere: EquilibriumModel) -> tuple[TrackedGasSpecies, ...]:
     """Ordered set of gas-phase species isofate tracks as molecular output - every gas species
-    except He_g, which isofate tracks separately as one of its own 7 core H/He/D/O/C/N/S species.
+    except He, which isofate tracks separately as one of its own 7 core H/He/D/O/C/N/S species.
 
-    Derived directly from interior_atmosphere so this can never drift from atmodeller's own
-    species set/order the way a hand-typed list could.
+    Derived directly from interior_atmosphere's own species objects, which already carry both
+    the original formula (used as isofate's output label, e.g. "SO2") and the Hill-canonicalized
+    name atmodeller actually indexes its solve output by (e.g. "O2S_g" - atmodeller internally
+    derives this from molmass, see ChemicalSpeciesData) - so no separate Hill-notation
+    conversion or per-species override table is needed on isofate's side.
     """
-    gas_names = interior_atmosphere.parameters.reaction_system.phase_system.gas.species_names
+    gas_species = interior_atmosphere.parameters.reaction_system.phase_system.gas.species.species
     melt_names = interior_atmosphere.parameters.reaction_system.phase_system.phases[
         SILICATE_MELT_PHASE_INDEX
     ].species_names
     melt_by_stem = {name.removesuffix("_d"): name for name in melt_names}
 
     tracked = []
-    for gas_name in gas_names:
-        if gas_name == "He_g":
+    for sp in gas_species:
+        if sp.data.formula == "He":
             continue
-        stem = gas_name.removesuffix("_g")
-        label = _GAS_LABEL_OVERRIDES.get(gas_name, stem)
-        tracked.append(TrackedGasSpecies(gas_name, label, melt_by_stem.get(stem)))
+        tracked.append(
+            TrackedGasSpecies(sp.data.name, sp.data.formula, melt_by_stem.get(sp.data.hill_formula))
+        )
     return tuple(tracked)
 
 
