@@ -1,3 +1,6 @@
+from scipy import constants as scipy_constants
+
+from isofate.constants import const
 from isofate.species import (
     DEFAULT_BINARY_DIFFUSION,
     DEFAULT_SPECIES,
@@ -64,3 +67,30 @@ def test_species_can_take_custom_binary_diffusion():
 
     species = IsoFATESpecies(binary_diffusion=OtherBinaryDiffusion())
     assert species.binary_diffusion.get("H", "He", 10.0) == 10.0
+
+
+def test_scale_heights_ordered_per_species():
+    T, g = 500.0, 20.0
+    H = DEFAULT_SPECIES.scale_heights(T, g)
+    for symbol, height in zip(SYMBOLS, H):
+        expected = scipy_constants.Boltzmann * T / (DEFAULT_SPECIES.mass_by_symbol[symbol] * g)
+        assert height == expected
+
+
+def test_scale_heights_matches_ideal_gas_law_with_molar_mass():
+    # H = kB*T/(m*g) (per-particle) should agree with H = R*T/(M*g) (per-mole), since
+    # R = kB*N_A and M = m*N_A.
+    T, g = 500.0, 20.0
+    H = DEFAULT_SPECIES.scale_heights(T, g)
+    molar_masses = {
+        "H": const.M_H,
+        "He": const.M_He,
+        "D": const.M_D,
+        "O": const.M_O,
+        "C": const.M_C,
+        "N": const.M_N,
+        "S": const.M_S,
+    }
+    for symbol, height in zip(SYMBOLS, H):
+        expected = const.R_gas * T / (molar_masses[symbol] * g)
+        assert abs(height - expected) / expected < 1e-3
