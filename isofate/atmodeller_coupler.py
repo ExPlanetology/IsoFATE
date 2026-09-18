@@ -5,6 +5,8 @@
 
 """Atmodeller coupler for IsoFATE."""
 
+from dataclasses import dataclass
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -34,6 +36,49 @@ _COUPLING_ELEMENT_INDICES: tuple[int, ...] = tuple(
 )
 _D_INDEX: int = SYMBOLS.index("D")
 _H_POSITION: int = _COUPLING_ELEMENTS.index("H")
+
+# atmodeller canonicalizes some formulas to Hill notation for its internal species names, which
+# can differ from the human-readable label isofate uses in its output dict keys (e.g. "n_SO2_a").
+# Add an entry here whenever a newly tracked gas species' Hill-notation name would otherwise
+# diverge from its "strip the _g suffix" label.
+_GAS_LABEL_OVERRIDES: dict[str, str] = {
+    "O2S_g": "SO2",
+}
+
+
+@dataclass(frozen=True)
+class TrackedGasSpecies:
+    """One isofate-tracked gas-phase species, derived from atmodeller's own species lists."""
+
+    gas_name: str
+    """Atmodeller canonical gas-phase name, e.g. "H2_g", "O2S_g"."""
+    label: str
+    """Isofate's human-readable output label, e.g. "H2", "SO2"."""
+    melt_name: str | None
+    """Atmodeller canonical melt-phase name, or None if this species has no melt reservoir."""
+
+
+def get_tracked_gas_species(interior_atmosphere: EquilibriumModel) -> tuple[TrackedGasSpecies, ...]:
+    """Ordered set of gas-phase species isofate tracks as molecular output - every gas species
+    except He_g, which isofate tracks separately as one of its own 7 core H/He/D/O/C/N/S species.
+
+    Derived directly from interior_atmosphere so this can never drift from atmodeller's own
+    species set/order the way a hand-typed list could.
+    """
+    gas_names = interior_atmosphere.parameters.reaction_system.phase_system.gas.species_names
+    melt_names = interior_atmosphere.parameters.reaction_system.phase_system.phases[
+        SILICATE_MELT_PHASE_INDEX
+    ].species_names
+    melt_by_stem = {name.removesuffix("_d"): name for name in melt_names}
+
+    tracked = []
+    for gas_name in gas_names:
+        if gas_name == "He_g":
+            continue
+        stem = gas_name.removesuffix("_g")
+        label = _GAS_LABEL_OVERRIDES.get(gas_name, stem)
+        tracked.append(TrackedGasSpecies(gas_name, label, melt_by_stem.get(stem)))
+    return tuple(tracked)
 
 
 def aggregate_D_into_H(values: ArrayLike) -> np.ndarray:
@@ -194,8 +239,8 @@ def build_atmodeller(
     H2_g: ChemicalSpecies = ChemicalSpecies.create_gas("H2")
     H2O_g: ChemicalSpecies = ChemicalSpecies.create_gas("H2O")
     O2_g: ChemicalSpecies = ChemicalSpecies.create_gas("O2")
-    CO_g: ChemicalSpecies = ChemicalSpecies.create_gas("CO")
     CO2_g: ChemicalSpecies = ChemicalSpecies.create_gas("CO2")
+    CO_g: ChemicalSpecies = ChemicalSpecies.create_gas("CO")
     CH4_g: ChemicalSpecies = ChemicalSpecies.create_gas("CH4")
     N2_g: ChemicalSpecies = ChemicalSpecies.create_gas("N2")
     S2_g: ChemicalSpecies = ChemicalSpecies.create_gas("S2")
@@ -227,11 +272,11 @@ def build_atmodeller(
     H2O_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
         "H2O", solubility=solubility_models["H2O_basalt_dixon95"]
     )
-    CO_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
-        "CO", solubility=solubility_models["CO_basalt_yoshioka19"]
-    )
     CO2_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
         "CO2", solubility=solubility_models["CO2_basalt_dixon95"]
+    )
+    CO_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
+        "CO", solubility=solubility_models["CO_basalt_yoshioka19"]
     )
     CH4_d: ReservoirSpecies = ReservoirSpecies.create_dissolved(
         "CH4", solubility=solubility_models["CH4_basalt_ardia13"]

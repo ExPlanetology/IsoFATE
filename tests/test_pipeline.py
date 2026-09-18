@@ -29,7 +29,7 @@ underlying physics is now more accurate, not different.
 import numpy as np
 import pytest
 
-from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller
+from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller, get_tracked_gas_species
 from isofate.constants import const
 from isofate.isofate_coupler import IsocalcOptions, isocalc
 from isofate.system import Planet, Star, System
@@ -38,6 +38,27 @@ from isofate.system import Planet, Star, System
 def _assert_finite(*values):
     for value in values:
         assert np.all(np.isfinite(value))
+
+
+def test_get_tracked_gas_species_matches_atmodeller_order():
+    """Order/labels/melt-name mapping must be derived from interior_atmosphere itself, not
+    hand-typed - this pins that derivation against atmodeller's actual species order."""
+    interior_atmosphere = build_atmodeller(5.6 * const.Me, surface_radius=1.5 * 6.371e6)
+    tracked = get_tracked_gas_species(interior_atmosphere)
+
+    labels = tuple(sp.label for sp in tracked)
+    assert labels == ("H2", "H2O", "O2", "CO2", "CO", "CH4", "N2", "S2", "H2O4S", "SO2")
+
+    by_label = {sp.label: sp for sp in tracked}
+    # atmodeller canonicalizes SO2 to Hill notation "O2S_g", not "SO2_g" - the override must fire.
+    assert by_label["SO2"].gas_name == "O2S_g"
+
+    no_melt_reservoir = {"O2", "H2O4S", "SO2"}
+    for sp in tracked:
+        if sp.label in no_melt_reservoir:
+            assert sp.melt_name is None
+        else:
+            assert sp.melt_name == f"{sp.label}_d"
 
 
 def test_atmodeller_coupler_single_solve():

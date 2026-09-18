@@ -8,7 +8,12 @@
 import numpy as np
 from jaxtyping import ArrayLike
 
-from isofate.atmodeller_coupler import AtmodellerCoupler, aggregate_D_into_H, build_atmodeller
+from isofate.atmodeller_coupler import (
+    AtmodellerCoupler,
+    aggregate_D_into_H,
+    build_atmodeller,
+    get_tracked_gas_species,
+)
 from isofate.constants import const
 from isofate.isofunks import (
     Phi_1,
@@ -162,6 +167,10 @@ def isocalc(
 
     # build atmodeller model for interior-atmosphere coupling
     interior_atmosphere = build_atmodeller(Mp, surface_radius=radius_rocky)
+    # Ordered per interior_atmosphere's own gas-phase species (SpeciesCollection), not hand-typed
+    # - see the molecule-array declarations/writes below, which are driven by this tuple so they
+    # can never drift out of sync with atmodeller's actual species set/order.
+    tracked_species = get_tracked_gas_species(interior_atmosphere)
     # Warm-starts each AtmodellerCoupler call from the previous call's converged solution instead
     # of solving cold every time - consecutive calls are a tiny physical perturbation apart, so
     # this drastically cuts the number of Newton iterations needed. None on the first call.
@@ -201,27 +210,12 @@ def isocalc(
     # timestep.
     y_a = np.zeros((n_tot, 7))  # atmospheric number array [atoms]
     y_a_int = np.zeros((n_tot, 7))  # mantle number array [atoms]
-    H2_a = np.zeros(n_tot)  # atmospheric H2 number array [molecules]
-    H2O_a = np.zeros(n_tot)  # atmospheric H2O number array [molecules]
-    O2_a = np.zeros(n_tot)  # atmospheric O2 number array [molecules]
-    CO2_a = np.zeros(n_tot)  # atmospheric CO2 number array [molecules]
-    CO_a = np.zeros(n_tot)  # atmospheric CO number array [molecules]
-    CH4_a = np.zeros(n_tot)  # atmospheric CH4 number array [molecules]
-    N2_a = np.zeros(n_tot)  # atmospheric N2 number array [molecules]
-    S2_a = np.zeros(n_tot)  # atmospheric S2 number array [molecules]
-    H2O4S_a = np.zeros(n_tot)  # atmospheric H2O4S gas number array [molecules]
-    SO2_a = np.zeros(n_tot)  # atmospheric SO2 number array [molecules]
+    # Atmospheric/mantle molecule number history, ordered per interior_atmosphere's own gas-phase
+    # SpeciesCollection (see tracked_species above), keyed by isofate's human-readable label
+    # (e.g. "SO2", not atmodeller's canonical "O2S_g").
+    gas_num_a: dict[str, np.ndarray] = {sp.label: np.zeros(n_tot) for sp in tracked_species}
+    melt_num_a: dict[str, np.ndarray] = {sp.label: np.zeros(n_tot) for sp in tracked_species}
     fO2_a = np.zeros(n_tot)  # fugacity array [bar]
-    H2_a_int = np.zeros(n_tot)  # mantle H2 number array [molecules]
-    H2O_a_int = np.zeros(n_tot)  # mantle H2O number array [molecules]
-    O2_a_int = np.zeros(n_tot)  # mantle O2 number array [molecules]
-    CO2_a_int = np.zeros(n_tot)  # mantle CO2 number array [molecules]
-    CO_a_int = np.zeros(n_tot)  # mantle CO number array [molecules]
-    CH4_a_int = np.zeros(n_tot)  # mantle CH4 number array [molecules]
-    N2_a_int = np.zeros(n_tot)  # mantle N2 number array [molecules]
-    S2_a_int = np.zeros(n_tot)  # mantle S2 number array [molecules]
-    H2O4S_a_int = np.zeros(n_tot)  # mantle H2O4S gas number array [molecules]
-    SO2_a_int = np.zeros(n_tot)  # mantle SO2 number array [molecules]
     # Molar concentration history [ndim], ordered per isofate.species.SYMBOLS (H, He, D, O, C, N,
     # S) - same order as y/x - one column per species, one row per timestep.
     x_a = np.zeros((n_tot, 7))
@@ -253,24 +247,9 @@ def isocalc(
 
             y_a[n:] = 0
             y_a_int[n:] = 0
-            H2_a[n:] = 0  # H2_a[n-1]
-            H2O_a[n:] = 0  # H2O_a[n-1]
-            O2_a[n:] = 0  # O2_a[n-1]
-            CO2_a[n:] = 0  # CO2_a[n-1]
-            CO_a[n:] = 0  # CO_a[n-1]
-            CH4_a[n:] = 0  # CH4_a[n-1]
-            N2_a[n:] = 0  # N2_a[n-1]
-            S2_a[n:] = 0  # S2_a[n-1]
-            H2_a_int[n:] = 0  # H2_a_int[n-1]
-            H2O_a_int[n:] = 0  # H2O_a_int[n-1]
-            O2_a_int[n:] = 0  # O2_a_int[n-1]
-            CO2_a_int[n:] = 0  # CO2_a_int[n-1]
-            CO_a_int[n:] = 0  # CO_a_int[n-1]
-            CH4_a_int[n:] = 0  # CH4_a_int[n-1]
-            N2_a_int[n:] = 0  # N2_a_int[n-1]
-            S2_a_int[n:] = 0  # S2_a_int[n-1]
-            H2O4S_a_int[n:] = 0  # H2O4S_a_int[n-1]
-            SO2_a_int[n:] = 0  # SO2_a_int[n-1]
+            for label in gas_num_a:
+                gas_num_a[label][n:] = 0
+                melt_num_a[label][n:] = 0
             x_a[n:] = x_a[n - 1]  # carry the last molar concentration forward
             Phi_H_a[n:] = 0
             Phi_He_a[n:] = 0
@@ -305,26 +284,9 @@ def isocalc(
                 atmod_full_output["SO2_atm"] = np.nan
                 atmod_full_output["O2_fugacity"] = np.nan
                 if options.save_molecules == True:
-                    H2_a[n:] = 0
-                    H2O_a[n:] = 0
-                    O2_a[n:] = 0
-                    CO2_a[n:] = 0
-                    CO_a[n:] = 0
-                    CH4_a[n:] = 0
-                    N2_a[n:] = 0
-                    S2_a[n:] = 0
-                    H2O4S_a[n:] = 0
-                    SO2_a[n:] = 0
-                    H2_a_int[n:] = 0
-                    H2O_a_int[n:] = 0
-                    O2_a_int[n:] = 0
-                    CO2_a_int[n:] = 0
-                    CO_a_int[n:] = 0
-                    CH4_a_int[n:] = 0
-                    N2_a_int[n:] = 0
-                    S2_a_int[n:] = 0
-                    H2O4S_a_int[n:] = 0
-                    SO2_a_int[n:] = 0
+                    for label in gas_num_a:
+                        gas_num_a[label][n:] = 0
+                        melt_num_a[label][n:] = 0
                     fO2_a[n:] = 0
 
             break
@@ -635,48 +597,21 @@ def isocalc(
                 T_surf_analytic = atmod_results["T_surface"]
                 T_surf_atmod = atmod_results["T_surface_atmod"]
                 if options.save_molecules == True:
-                    H2_a[n] = atmod_full["H2_g"]["gas"]["number_moles"][0][0]
-                    H2O_a[n] = atmod_full["H2O_g"]["gas"]["number_moles"][0][0]
-                    O2_a[n] = atmod_full["O2_g"]["gas"]["number_moles"][0][0]
-                    CO2_a[n] = atmod_full["CO2_g"]["gas"]["number_moles"][0][0]
-                    CO_a[n] = atmod_full["CO_g"]["gas"]["number_moles"][0][0]
-                    CH4_a[n] = atmod_full["CH4_g"]["gas"]["number_moles"][0][0]
-                    N2_a[n] = atmod_full["N2_g"]["gas"]["number_moles"][0][0]
-                    S2_a[n] = atmod_full["S2_g"]["gas"]["number_moles"][0][0]
-                    H2O4S_a[n] = atmod_full["H2O4S_g"]["gas"]["number_moles"][0][0]
-                    SO2_a[n] = atmod_full["O2S_g"]["gas"]["number_moles"][0][0]
-                    H2_a_int[n] = atmod_full["H2_d"]["silicate_melt"]["number_moles"][0][0]
-                    H2O_a_int[n] = atmod_full["H2O_d"]["silicate_melt"]["number_moles"][0][0]
-                    O2_a_int[n] = 0.0  # O2 has no solubility model / melt reservoir
-                    CO2_a_int[n] = atmod_full["CO2_d"]["silicate_melt"]["number_moles"][0][0]
-                    CO_a_int[n] = atmod_full["CO_d"]["silicate_melt"]["number_moles"][0][0]
-                    CH4_a_int[n] = atmod_full["CH4_d"]["silicate_melt"]["number_moles"][0][0]
-                    N2_a_int[n] = atmod_full["N2_d"]["silicate_melt"]["number_moles"][0][0]
-                    S2_a_int[n] = atmod_full["S2_d"]["silicate_melt"]["number_moles"][0][0]
-                    H2O4S_a_int[n] = 0.0  # H2O4S has no solubility model / melt reservoir
-                    SO2_a_int[n] = 0.0  # SO2 has no solubility model / melt reservoir
+                    for sp in tracked_species:
+                        gas_num_a[sp.label][n] = atmod_full[sp.gas_name]["gas"]["number_moles"][0][
+                            0
+                        ]
+                        if sp.melt_name is not None:
+                            melt_num_a[sp.label][n] = atmod_full[sp.melt_name]["silicate_melt"][
+                                "number_moles"
+                            ][0][0]
+                        else:
+                            melt_num_a[sp.label][n] = 0.0  # no solubility model / melt reservoir
                     fO2_a[n] = atmod_full["O2_g"]["gas"]["activity"][0][0]
             else:
-                H2_a[n] = H2_a[n - 1]
-                H2O_a[n] = H2O_a[n - 1]
-                O2_a[n] = O2_a[n - 1]
-                CO2_a[n] = CO2_a[n - 1]
-                CO_a[n] = CO_a[n - 1]
-                CH4_a[n] = CH4_a[n - 1]
-                N2_a[n] = N2_a[n - 1]
-                S2_a[n] = S2_a[n - 1]
-                H2O4S_a[n] = H2O4S_a[n - 1]
-                SO2_a[n] = SO2_a[n - 1]
-                H2_a_int[n] = H2_a_int[n - 1]
-                H2O_a_int[n] = H2O_a_int[n - 1]
-                O2_a_int[n] = O2_a_int[n - 1]
-                CO2_a_int[n] = CO2_a_int[n - 1]
-                CO_a_int[n] = CO_a_int[n - 1]
-                CH4_a_int[n] = CH4_a_int[n - 1]
-                N2_a_int[n] = N2_a_int[n - 1]
-                S2_a_int[n] = S2_a_int[n - 1]
-                H2O4S_a_int[n] = H2O4S_a_int[n - 1]
-                SO2_a_int[n] = SO2_a_int[n - 1]
+                for label in gas_num_a:
+                    gas_num_a[label][n] = gas_num_a[label][n - 1]
+                    melt_num_a[label][n] = melt_num_a[label][n - 1]
                 fO2_a[n] = fO2_a[n - 1]
         T_surf_analytic_a[n] = T_surf_analytic
         T_surf_atmod_a[n] = T_surf_atmod
@@ -741,26 +676,10 @@ def isocalc(
         "T_surf_atmod": T_surf_atmod_a,
     }
     if options.save_molecules == True:
-        solutions["n_H2_a"] = H2_a
-        solutions["n_H2O_a"] = H2O_a
-        solutions["n_O2_a"] = O2_a
-        solutions["n_CO2_a"] = CO2_a
-        solutions["n_CO_a"] = CO_a
-        solutions["n_CH4_a"] = CH4_a
-        solutions["n_N2_a"] = N2_a
-        solutions["n_S2_a"] = S2_a
-        solutions["n_H2O4S_a"] = H2O4S_a
-        solutions["n_SO2_a"] = SO2_a
-        solutions["n_H2_a_int"] = H2_a_int
-        solutions["n_H2O_a_int"] = H2O_a_int
-        solutions["n_O2_a_int"] = O2_a_int
-        solutions["n_CO2_a_int"] = CO2_a_int
-        solutions["n_CO_a_int"] = CO_a_int
-        solutions["n_CH4_a_int"] = CH4_a_int
-        solutions["n_N2_a_int"] = N2_a_int
-        solutions["n_S2_a_int"] = S2_a_int
-        solutions["n_H2O4S_a_int"] = H2O4S_a_int
-        solutions["n_SO2_a_int"] = SO2_a_int
+        for label, arr in gas_num_a.items():
+            solutions[f"n_{label}_a"] = arr
+        for label, arr in melt_num_a.items():
+            solutions[f"n_{label}_a_int"] = arr
         solutions["fO2_a"] = fO2_a
     if options.n_atmodeller != 0:
         solutions["atmodeller_final"] = atmod_full_output
