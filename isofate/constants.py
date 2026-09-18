@@ -7,29 +7,36 @@
 
 from dataclasses import dataclass
 
-# TODO: Swap out the constants to use scipy or maybe astropy constants which have units attached to
-# them. This will subtly change the results of the code though, so deferred for now.
+from atmodeller.sci_utils import GAS_CONSTANT
+from atmodeller.sci_utils import constants as _constants
+
+# NOTE: Re and Me are deliberately NOT sourced from atmodeller.sci_utils.earth: earth.radius
+# (6.371e6 m, the mean/volumetric Earth radius) differs from Re (6.378e6 m, the equatorial
+# radius) by ~0.1% - a real convention difference, not just precision, and Re feeds directly into
+# Planet.rocky_radius's Lopez & Fortney 2014 mass-radius scaling relation, which may assume one
+# specific convention. earth.mass (5.972e24 kg) is also less precise than Me (5.9722e24 kg), so
+# swapping would be a downgrade rather than an improvement.
 
 
 @dataclass(frozen=True)
 class PhysicalConstants:
     inv_cm2m: float = 100  # convert inverse cm to inverse m
-    avogadro: float = 6.022e23  # Avogadro's number [particles/mole]
+    avogadro: float = _constants.Avogadro  # Avogadro's number [particles/mole]
     s2day: float = 1 / (3600 * 24)  # convert s to day
     s2yr: float = 1 / (3600 * 24 * 365)  # convert s to year
-    au2m: float = 1.496e11  # convert au to m
+    au2m: float = _constants.au  # convert au to m
     cgs2si_flux: float = 1 / 1000  # convert flux from erg/cm2/s to W/m2
     erg2joule: float = 1e-7  # convert ergs to Joules
     gcm2kgm: float = 1000  # convert g/cm3 to kg/m3 (SI)
     J2E_mass: float = 1.898e27 / 5.972e24  # convert Jupiter mass to Earth mass [kg]
     J2E_rad: float = 7.1492e7 / 6.3781e6  # convert Jupiter radius to Earth radius [m]
-    R_gas: float = 8.314462  # gas constant [J/mol/K]
-    kb: float = 1.38e-23  # Boltzmann constant [m2 kg/s2 K]
-    sbc: float = 5.67e-8  # Stefan Boltzmann constant W/m2/K4
+    R_gas: float = GAS_CONSTANT  # gas constant [J/mol/K]
+    kb: float = _constants.Boltzmann  # Boltzmann constant [m2 kg/s2 K]
+    sbc: float = _constants.Stefan_Boltzmann  # Stefan Boltzmann constant W/m2/K4
     g_e: float = 9.8  # grav field strength [m/s/s]
-    G: float = 6.6743e-11  # [m3/kg/s2]
-    h: float = 6.62607015e-34  # [J s]
-    c: float = 2.99792458e8  # [m/s]
+    G: float = _constants.gravitational_constant  # [m3/kg/s2]
+    h: float = _constants.h  # [J s]
+    c: float = _constants.c  # [m/s]
     Re: float = 6.378e6  # Earth radius [m]
     Me: float = 5.9722e24  # Earth mass [kg]
     Fe: float = 1366  # Earth bolometric flux [W/m2]
