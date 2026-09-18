@@ -157,7 +157,7 @@ def isocalc(
         X_DH = N_D / (N_H + N_D)  # ignores D in mantle
 
     # build atmodeller model for interior-atmosphere coupling
-    interior_atmosphere = build_atmodeller(Mp)
+    interior_atmosphere = build_atmodeller(Mp, surface_radius=radius_rocky)
     # Warm-starts each AtmodellerCoupler call from the previous call's converged solution instead
     # of solving cold every time - consecutive calls are a tiny physical perturbation apart, so
     # this drastically cuts the number of Newton iterations needed. None on the first call.
@@ -182,7 +182,7 @@ def isocalc(
     ###_____Initialize arrays_____###
 
     t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t0_seconds  # time array [s]
-    
+
     phi_a = np.zeros(n_tot)  # mass flux array [kg/s/m2]
     phic_a = np.zeros(n_tot)  # critical mass flux array [kg/s/m2]
     Rp_a = np.zeros(n_tot)  # total radius, diagnostic [m]
@@ -375,13 +375,8 @@ def isocalc(
 
         mass_loss = phi * A * delta_t
         g = gravitational_acceleration(Mp, radius_p)
-        H_H = const.R_gas * T / (const.M_H * g)  # H scale height [m]
-        H_He = const.R_gas * T / (const.M_He * g)  # He scale height [m]
-        H_D = const.R_gas * T / (const.M_D * g)  # D scale height [m]
-        H_O = const.R_gas * T / (const.M_O * g)  # O scale height [m]
-        H_C = const.R_gas * T / (const.M_C * g)  # C scale height [m]
-        H_N = const.R_gas * T / (const.M_N * g)  # N scale height [m]
-        H_S = const.R_gas * T / (const.M_S * g)  # S scale height [m]
+        # Ordered per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
+        H_H, H_He, H_D, H_O, H_C, H_N, H_S = DEFAULT_SPECIES.scale_heights(T, g)
 
         x = y / N_tot  # molar concentration per species [ndim]
 
@@ -399,21 +394,11 @@ def isocalc(
             Phi_He = Phi_2(
                 phi, b, H_H, H_He, const.mu_H, const.mu_He, X1, X2, MU
             )  # He number flux [atoms/s/m2]
-            Phi_D = Phi_D_Z90(
-                Phi_H, Phi_He, H_H, H_D, H_He, *y, T
-            )  # D number flux [atoms/s/m2]
-            Phi_O = Phi_O_Z90(
-                Phi_H, Phi_He, H_H, H_O, H_He, *y, T
-            )  # O number flux [atoms/s/m2]
-            Phi_C = Phi_C_Z90(
-                Phi_H, Phi_He, H_H, H_C, H_He, *y, T
-            )  # C number flux [atoms/s/m2]
-            Phi_N = Phi_N_Z90(
-                Phi_H, Phi_He, H_H, H_N, H_He, *y, T
-            )  # N number flux [atoms/s/m2]
-            Phi_S = Phi_S_Z90(
-                Phi_H, Phi_He, H_H, H_S, H_He, *y, T
-            )  # S number flux [atoms/s/m2]
+            Phi_D = Phi_D_Z90(Phi_H, Phi_He, H_H, H_D, H_He, *y, T)  # D number flux [atoms/s/m2]
+            Phi_O = Phi_O_Z90(Phi_H, Phi_He, H_H, H_O, H_He, *y, T)  # O number flux [atoms/s/m2]
+            Phi_C = Phi_C_Z90(Phi_H, Phi_He, H_H, H_C, H_He, *y, T)  # C number flux [atoms/s/m2]
+            Phi_N = Phi_N_Z90(Phi_H, Phi_He, H_H, H_N, H_He, *y, T)  # N number flux [atoms/s/m2]
+            Phi_S = Phi_S_Z90(Phi_H, Phi_He, H_H, H_S, H_He, *y, T)  # S number flux [atoms/s/m2]
 
         elif options.dynamic_phi == True:
             N_values = y  # ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
@@ -424,7 +409,7 @@ def isocalc(
             second_most_abundant_idx = abundances_with_idx[1][0]
 
             # Get masses and scale heights for the two most abundant species
-            scale_heights = [H_H, H_He, H_D, H_O, H_C, H_N, H_S]
+            scale_heights = DEFAULT_SPECIES.scale_heights(T, g)
 
             mass_most = atomic_masses[most_abundant_idx]
             mass_second = atomic_masses[second_most_abundant_idx]
