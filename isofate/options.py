@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from jaxtyping import ArrayLike
 
 from isofate.constants import const
+from isofate.mantle_iron import MantleIronConfig
 
 
 @dataclass
@@ -38,9 +39,9 @@ class IsocalcOptions:
         n_atmodeller: Interval of timesteps between each Atmodeller call.
         save_molecules: Save molecular abundances at every timestep (True) or only the final
             abundances (False).
-        mantle_iron_dict: Allows Fe in the mantle to react with O2. `['type']="dynamic"` reacts
-            only molten mantle Fe; `['type']="static"` reacts all mantle Fe; also specify
-            `['Fe_mass_fraction']`. False disables this.
+        mantle_iron: Allows Fe in the mantle to react with O2. `reaction_type="dynamic"` reacts
+            only molten mantle Fe; `reaction_type="static"` reacts all mantle Fe; also specify
+            `fe_mass_fraction`. None disables this.
         dynamic_phi: Toggle dynamic phi calculation based on the most abundant species (True) or
             static phi calculation (False).
     """
@@ -53,5 +54,5 @@ class IsocalcOptions:
     thermal: bool = True
     n_atmodeller: int = int(1e2)
     save_molecules: bool = False
-    mantle_iron_dict: dict | bool = False
+    mantle_iron: MantleIronConfig | None = None
     dynamic_phi: bool = False

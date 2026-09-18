@@ -32,6 +32,7 @@ import pytest
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller, get_tracked_gas_species
 from isofate.constants import const
 from isofate.isofate_coupler import IsocalcOptions, isocalc
+from isofate.mantle_iron import MantleIronConfig
 from isofate.system import Planet, Star, System
 
 
@@ -68,12 +69,12 @@ def test_atmodeller_coupler_single_solve():
     radius_rocky = Planet(mass=Mp, period=1.0, f_atm=0.0).rocky_radius
     interior_atmosphere = build_atmodeller(Mp, surface_radius=radius_rocky)
 
-    results, sol, mantle_iron_dict, _initial_guess = AtmodellerCoupler(
+    results, sol, mantle_iron_state, _initial_guess = AtmodellerCoupler(
         Teq=900.0,
         Rp=1.5 * 6.371e6,
         mu=const.mu_H,
         melt_fraction=1.0,
-        mantle_iron_dict=False,
+        mantle_iron_state=None,
         N_H_atm=5e46,
         N_He_atm=1e44,
         N_O_atm=1e43,
@@ -90,7 +91,7 @@ def test_atmodeller_coupler_single_solve():
     )
 
     _assert_finite(*results.values())
-    assert mantle_iron_dict is False
+    assert mantle_iron_state is None
 
     # Cross-checked by hand against ../IsoFATE_main (atmodeller 0.9.1) to ~3e-5 relative; re-pinned
     # for the Tsit5/adaptive-step make_atmosphere_descent_jax (see module docstring)
@@ -168,8 +169,8 @@ def test_isocalc_mantle_iron_dict(mantle_iron_type, expected_N_O_int):
     integration once mass_Fe2 != 0); the v2preview port fixed that incidentally by scalarizing
     every atmodeller output access. See atmodeller_coupler.py for details.
     """
-    mantle_iron_dict = {"type": mantle_iron_type, "Fe_mass_fraction": 0.06}
-    sol = isocalc(**_toy_isocalc_kwargs(mantle_iron_dict=mantle_iron_dict, save_molecules=True))
+    mantle_iron = MantleIronConfig(reaction_type=mantle_iron_type, fe_mass_fraction=0.06)
+    sol = isocalc(**_toy_isocalc_kwargs(mantle_iron=mantle_iron, save_molecules=True))
 
     _assert_finite(sol["Matm"], sol["N_O_int"], sol["n_H2O_a"])
     assert sol["N_O_int"][-1] == pytest.approx(expected_N_O_int, rel=1e-2)

@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 from isofate.constants import const
 from isofate.escape import XUVEscape
+from isofate.mantle_iron import MantleIronConfig
 from isofate.species import DEFAULT_SPECIES
 
 # from debug_isofate_coupler_v2 import *
@@ -63,8 +64,8 @@ thermal = True
 M_atm = Mp * f_atm  # initial atmospheric mass [kg]
 melt_fraction_override = False
 save_molecules = False
-# mantle_iron_dict = {'type': 'static', 'Fe_mass_fraction': 0.1}
-mantle_iron_dict = False
+# mantle_iron = MantleIronConfig(reaction_type="static", fe_mass_fraction=0.1)
+mantle_iron = None
 dynamic_phi = True
 OtoH_enhancement = 1
 OtoH_enhanced = const.OtoH_protosolar * OtoH_enhancement
@@ -127,7 +128,7 @@ print("Fp =", round(Fp, 1), "W/m2")
 print("Teq =", round(T, 1), "K")
 print("time =", time / 1e9, "Gyr")
 print("rad_evol =", rad_evol)
-print("mantle_iron_dict", mantle_iron_dict)
+print("mantle_iron", mantle_iron)
 print("dynamic_phi =", dynamic_phi)
 
 # run simulation (from isofate.py)
@@ -155,7 +156,7 @@ options = IsocalcOptions(
     thermal=thermal,
     n_atmodeller=n_atmodeller,
     save_molecules=save_molecules,
-    mantle_iron_dict=mantle_iron_dict,
+    mantle_iron=mantle_iron,
     dynamic_phi=dynamic_phi,
 )
 sol = isocalc(

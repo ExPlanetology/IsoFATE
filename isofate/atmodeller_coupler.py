@@ -5,6 +5,8 @@
 
 """Atmodeller coupler for IsoFATE."""
 
+import dataclasses
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import equinox as eqx
@@ -17,6 +19,8 @@ from atmodeller.output_base import OutputNamedArraysDict
 from atmodeller.sci_utils import earth
 from atmodeller.solubility import get_solubility_models
 from jax.typing import ArrayLike
+
+from isofate.mantle_iron import MantleIronState
 
 from isofate.constants import const
 from isofate.isofunks import *
@@ -37,6 +41,7 @@ _COUPLING_ELEMENT_INDICES: tuple[int, ...] = tuple(
 _D_INDEX: int = SYMBOLS.index("D")
 _H_POSITION: int = _COUPLING_ELEMENTS.index("H")
 
+
 @dataclass(frozen=True)
 class TrackedGasSpecies:
     """One isofate-tracked gas-phase species, derived from atmodeller's own species lists."""
@@ -49,7 +54,9 @@ class TrackedGasSpecies:
     """Atmodeller canonical melt-phase name, or None if this species has no melt reservoir."""
 
 
-def get_tracked_gas_species(interior_atmosphere: EquilibriumModel) -> tuple[TrackedGasSpecies, ...]:
+def get_tracked_gas_species(
+    interior_atmosphere: EquilibriumModel,
+) -> tuple[TrackedGasSpecies, ...]:
     """Ordered set of gas-phase species isofate tracks as molecular output - every gas species
     except He, which isofate tracks separately as one of its own 7 core H/He/D/O/C/N/S species.
 
@@ -70,7 +77,9 @@ def get_tracked_gas_species(interior_atmosphere: EquilibriumModel) -> tuple[Trac
         if sp.data.formula == "He":
             continue
         tracked.append(
-            TrackedGasSpecies(sp.data.name, sp.data.formula, melt_by_stem.get(sp.data.hill_formula))
+            TrackedGasSpecies(
+                sp.data.name, sp.data.formula, melt_by_stem.get(sp.data.hill_formula)
+            )
         )
     return tuple(tracked)
 
@@ -146,6 +155,7 @@ def _update_solve_extract(
     ).update_constraints(mass_constraints=mass_constraints)
     output = model.solve(base_solution_array)
     sol = output.to_dict(output_format="elements_species", to_numpy=False)
+
     return sol, output.solution, output.multi_attempt_solution.success
 
 
@@ -309,12 +319,39 @@ def build_atmodeller(
     return model
 
 
+def _passthrough_o(sol: dict, results: dict) -> None:
+    """No Fe-O2 reaction this call (mass_Fe2 depleted, or feature disabled) - O just passes
+    straight from the equilibrium solve to results, unmodified."""
+    results["N_O_atm"] = sol["O"]["gas"]["number_moles"][0][0] * const.avogadro
+    results["N_O_int"] = sol["O"]["silicate_melt"]["number_moles"][0][0] * const.avogadro
+
+
+def _react_mantle_fe2_with_o2(mass_Fe2: float, sol: dict, results: dict) -> float:
+    """Oxidizes Fe2+ -> Fe3+ against atmospheric O2, mutating sol's/results' O-bearing entries in
+    place, and returns the mass_Fe2 remaining after reaction (>= 0)."""
+    n_Fe2 = mass_Fe2 / const.M_Fe - 4 * sol["O2_g"]["gas"]["number_moles"][0][0]
+    n_O2_atm = sol["O2_g"]["gas"]["number_moles"][0][0] - 0.25 * (mass_Fe2 / const.M_Fe - n_Fe2)
+    delta_n_O2_atm = 0.25 * (mass_Fe2 / const.M_Fe - n_Fe2)
+    sol["O2_g"]["gas"]["number_moles"] = np.array([[np.max([n_O2_atm, 0])]])
+    results["N_O_atm"] = (
+        sol["O"]["gas"]["number_moles"][0][0] * const.avogadro
+        - 2 * delta_n_O2_atm * const.avogadro
+    )
+    sol["O"]["gas"]["number_moles"] = np.array([[results["N_O_atm"] / const.avogadro]])
+    results["N_O_int"] = (
+        sol["O"]["silicate_melt"]["number_moles"][0][0] * const.avogadro
+        + 2 * delta_n_O2_atm * const.avogadro
+    )
+    sol["O"]["silicate_melt"]["number_moles"] = np.array([[results["N_O_int"] / const.avogadro]])
+    return np.max([n_Fe2 * const.M_Fe, 0])
+
+
 def AtmodellerCoupler(
     Teq,
     Rp,
     mu,
     melt_fraction,
-    mantle_iron_dict,
+    mantle_iron_state: MantleIronState | None,
     N_H_atm,
     N_He_atm,
     N_O_atm,
@@ -440,93 +477,25 @@ def AtmodellerCoupler(
     results["N_He_atm"] = sol["He"]["gas"]["number_moles"][0][0] * const.avogadro
     results["N_He_int"] = sol["He"]["silicate_melt"]["number_moles"][0][0] * const.avogadro
 
-    if mantle_iron_dict:
-        if mantle_iron_dict["type"] == "dynamic":
-            if mantle_iron_dict["mass_Fe2"] == 0:
-                results["N_O_atm"] = sol["O"]["gas"]["number_moles"][0][0] * const.avogadro
-                results["N_O_int"] = (
-                    sol["O"]["silicate_melt"]["number_moles"][0][0] * const.avogadro
-                )
-            else:
-                mantle_iron_dict["mass_Fe"] = (
-                    mantle_melt_fraction * Mp * mantle_iron_dict["Fe_mass_fraction"]
-                )
-                if mantle_iron_dict["mass_Fe"] > 0:
-                    mantle_iron_dict["mass_Fe2"] = (
-                        mantle_iron_dict["X_Fe2"] * mantle_iron_dict["mass_Fe"]
-                    )
-                    n_Fe2 = (
-                        mantle_iron_dict["mass_Fe2"] / const.M_Fe
-                        - 4 * sol["O2_g"]["gas"]["number_moles"][0][0]
-                    )  # oxidize Fe2+ to Fe3+
-                    n_O2_atm = sol["O2_g"]["gas"]["number_moles"][0][0] - 0.25 * (
-                        mantle_iron_dict["mass_Fe2"] / const.M_Fe - n_Fe2
-                    )
-                    delta_n_O2_atm = 0.25 * (mantle_iron_dict["mass_Fe2"] / const.M_Fe - n_Fe2)
-                    sol["O2_g"]["gas"]["number_moles"] = np.array([[np.max([n_O2_atm, 0])]])
-                    results["N_O_atm"] = (
-                        sol["O"]["gas"]["number_moles"][0][0] * const.avogadro
-                        - 2 * delta_n_O2_atm * const.avogadro
-                    )
-                    sol["O"]["gas"]["number_moles"] = np.array(
-                        [[results["N_O_atm"] / const.avogadro]]
-                    )
-                    results["N_O_int"] = (
-                        sol["O"]["silicate_melt"]["number_moles"][0][0] * const.avogadro
-                        + 2 * delta_n_O2_atm * const.avogadro
-                    )
-                    sol["O"]["silicate_melt"]["number_moles"] = np.array(
-                        [[results["N_O_int"] / const.avogadro]]
-                    )
-                    mantle_iron_dict["mass_Fe2"] = np.max(
-                        [n_Fe2 * const.M_Fe, 0]
-                    )  # update remaining Fe2 mass
-                    mantle_iron_dict["X_Fe2"] = (
-                        mantle_iron_dict["mass_Fe2"] / mantle_iron_dict["mass_Fe"]
-                    )
-                else:
-                    results["N_O_atm"] = sol["O"]["gas"]["number_moles"][0][0] * const.avogadro
-                    results["N_O_int"] = (
-                        sol["O"]["silicate_melt"]["number_moles"][0][0] * const.avogadro
-                    )
-        elif mantle_iron_dict["type"] == "static":
-            if mantle_iron_dict["mass_Fe2"] == 0:
-                results["N_O_atm"] = sol["O"]["gas"]["number_moles"][0][0] * const.avogadro
-                results["N_O_int"] = (
-                    sol["O"]["silicate_melt"]["number_moles"][0][0] * const.avogadro
-                )
-            else:
-                n_Fe2 = (
-                    mantle_iron_dict["mass_Fe2"] / const.M_Fe
-                    - 4 * sol["O2_g"]["gas"]["number_moles"][0][0]
-                )  # oxidize Fe2+ to Fe3+; this goes neg. when n_O2 > n_Fe2/4
-                n_O2_atm = sol["O2_g"]["gas"]["number_moles"][0][0] - 0.25 * (
-                    mantle_iron_dict["mass_Fe2"] / const.M_Fe - n_Fe2
-                )  # goes to zero when when n_O2 >= n_Fe2/4 (won't go neg.)
-                delta_n_O2_atm = 0.25 * (
-                    mantle_iron_dict["mass_Fe2"] / const.M_Fe - n_Fe2
-                )  # calculates exactly the n_O2 reacted away
-                sol["O2_g"]["gas"]["number_moles"] = np.array(
-                    [[np.max([n_O2_atm, 0])]]
-                )  # goes to zero even when n_Fe2 goes neg., which should put O2 back in atm. Confirmed: doesn't matter b/c of line results['N_O_atm'] = ...
-                results["N_O_atm"] = (
-                    sol["O"]["gas"]["number_moles"][0][0] * const.avogadro
-                    - 2 * delta_n_O2_atm * const.avogadro
-                )  # takes away only O2 reacted from total O_atm inventory
-                sol["O"]["gas"]["number_moles"] = np.array([[results["N_O_atm"] / const.avogadro]])
-                results["N_O_int"] = (
-                    sol["O"]["silicate_melt"]["number_moles"][0][0] * const.avogadro
-                    + 2 * delta_n_O2_atm * const.avogadro
-                )
-                sol["O"]["silicate_melt"]["number_moles"] = np.array(
-                    [[results["N_O_int"] / const.avogadro]]
-                )
-                mantle_iron_dict["mass_Fe2"] = np.max(
-                    [n_Fe2 * const.M_Fe, 0]
-                )  # update remaining Fe2 mass
-    else:
-        results["N_O_atm"] = sol["O"]["gas"]["number_moles"][0][0] * const.avogadro
-        results["N_O_int"] = sol["O"]["silicate_melt"]["number_moles"][0][0] * const.avogadro
+    if mantle_iron_state is None or mantle_iron_state.mass_Fe2 == 0:
+        _passthrough_o(sol, results)
+    elif mantle_iron_state.config.reaction_type == "dynamic":
+        # Read the OLD Fe2+ fraction before mass_Fe is overwritten below - mass_Fe is recomputed
+        # fresh every call from the current melt fraction, but the fraction of it that's still
+        # Fe2+ (as opposed to already-oxidized) must persist across calls.
+        old_x_Fe2 = mantle_iron_state.x_Fe2
+        new_mass_Fe = mantle_melt_fraction * Mp * mantle_iron_state.config.fe_mass_fraction
+        if new_mass_Fe > 0:
+            final_mass_Fe2 = _react_mantle_fe2_with_o2(old_x_Fe2 * new_mass_Fe, sol, results)
+            mantle_iron_state = dataclasses.replace(
+                mantle_iron_state, mass_Fe=new_mass_Fe, mass_Fe2=final_mass_Fe2
+            )
+        else:
+            _passthrough_o(sol, results)
+            mantle_iron_state = dataclasses.replace(mantle_iron_state, mass_Fe=new_mass_Fe)
+    else:  # "static": mass_Fe is fixed for the whole run, only mass_Fe2 evolves
+        final_mass_Fe2 = _react_mantle_fe2_with_o2(mantle_iron_state.mass_Fe2, sol, results)
+        mantle_iron_state = dataclasses.replace(mantle_iron_state, mass_Fe2=final_mass_Fe2)
     results["N_C_atm"] = sol["C"]["gas"]["number_moles"][0][0] * const.avogadro
     results["N_C_int"] = sol["C"]["silicate_melt"]["number_moles"][0][0] * const.avogadro
     results["N_N_atm"] = sol["N"]["gas"]["number_moles"][0][0] * const.avogadro
@@ -537,4 +506,159 @@ def AtmodellerCoupler(
     results["T_surface"] = T_surface
     results["T_surface_atmod"] = surface_temperature
 
-    return results, sol, mantle_iron_dict, solution
+    return results, sol, mantle_iron_state, solution
+
+
+@dataclass(frozen=True)
+class AtmodellerStepResult:
+    """Result of one per-timestep AtmodellerCoupler call, already unpacked into isocalc's y/
+    isofate_species_abund_int layout (ordered per isofate.species.SYMBOLS: H, He, D, O, C, N, S).
+    """
+
+    y: np.ndarray
+    isofate_species_abund_int: np.ndarray
+    M_atm: float
+    T_surf_analytic: float
+    T_surf_atmod: float
+    mantle_iron_state: MantleIronState | None
+    atmod_initial_guess: ArrayLike | None
+    atmod_full: dict
+
+
+def run_atmodeller_step(
+    T,
+    radius_p,
+    mu,
+    melt_fraction_override,
+    mantle_iron_state: MantleIronState | None,
+    y: np.ndarray,
+    isofate_species_abund_int: np.ndarray,
+    X_DH: float,
+    interior_atmosphere: EquilibriumModel,
+    atmod_initial_guess,
+    full_output: bool,
+) -> AtmodellerStepResult:
+    """Runs one AtmodellerCoupler equilibrium solve and unpacks its results into isocalc's
+    per-species y/isofate_species_abund_int layout - the same unpacking previously inlined in
+    isocalc's `n % n_atmodeller == 0` branch. Does not touch T_surf_analytic/T_surf_atmod's
+    carry-forward-when-not-run behavior - that stays in isocalc, which only calls this when it has
+    already decided to run atmodeller this step.
+    """
+    atmod_results, atmod_full, mantle_iron_state, atmod_initial_guess = AtmodellerCoupler(
+        T,
+        radius_p,
+        mu,
+        melt_fraction_override,
+        mantle_iron_state,
+        *aggregate_D_into_H(y),
+        *aggregate_D_into_H(isofate_species_abund_int),
+        interior_atmosphere,
+        initial_guess=atmod_initial_guess,
+        full_output=full_output,
+    )
+
+    isofate_species_abund_int = isofate_species_abund_int.copy()
+    isofate_species_abund_int[0] = atmod_results["N_H_int"] * (1 - X_DH)
+    isofate_species_abund_int[2] = atmod_results["N_H_int"] * X_DH
+    isofate_species_abund_int[1] = atmod_results["N_He_int"]
+    isofate_species_abund_int[3] = atmod_results["N_O_int"]
+    isofate_species_abund_int[4] = atmod_results["N_C_int"]
+    isofate_species_abund_int[5] = atmod_results["N_N_int"]
+    isofate_species_abund_int[6] = atmod_results["N_S_int"]
+
+    y = y.copy()
+    if atmod_results["N_H_atm"] == 0:
+        y[0] = 0
+        y[2] = 0
+    else:
+        Y3 = X_DH * atmod_results["N_H_atm"]
+        Y1 = (1 - X_DH) * atmod_results["N_H_atm"]
+        y[0] = Y1
+        y[2] = Y3
+    y[1] = atmod_results["N_He_atm"]
+    y[3] = atmod_results["N_O_atm"]
+    y[4] = atmod_results["N_C_atm"]
+    y[5] = atmod_results["N_N_atm"]
+    y[6] = atmod_results["N_S_atm"]
+
+    return AtmodellerStepResult(
+        y=y,
+        isofate_species_abund_int=isofate_species_abund_int,
+        M_atm=atmod_results["M_atm"],
+        T_surf_analytic=atmod_results["T_surface"],
+        T_surf_atmod=atmod_results["T_surface_atmod"],
+        mantle_iron_state=mantle_iron_state,
+        atmod_initial_guess=atmod_initial_guess,
+        atmod_full=atmod_full,
+    )
+
+
+# Keys of isocalc's "atmodeller_final" full-output snapshot - single source of truth shared by
+# extract_full_output (the real, equilibrium-solve-derived values) and nan_full_output (the
+# early-exit placeholder, used when isocalc terminates before ever reaching a real snapshot), so
+# the two can never drift out of sync.
+ATMOD_FULL_OUTPUT_KEYS: tuple[str, ...] = (
+    "H2O_atm",
+    "H2O_mantle",
+    "H2_atm",
+    "H2_mantle",
+    "O2_atm",
+    "O2_mantle",
+    "CO_atm",
+    "CO_mantle",
+    "CO2_atm",
+    "CO2_mantle",
+    "CH4_atm",
+    "CH4_mantle",
+    "N2_atm",
+    "N2_mantle",
+    "S2_atm",
+    "S2_mantle",
+    "H2O4S_atm",
+    "H2O4S_mantle",
+    "SO2_atm",
+    "He_mantle",
+    "O2_fugacity",
+    "log10dIW_1_bar",
+)
+
+
+def extract_full_output(atmod_sol: dict) -> dict[str, float]:
+    """Extracts the full per-molecule/fugacity diagnostic snapshot from one AtmodellerCoupler
+    solve's raw `sol` output (see AtmodellerCoupler's `full_output=True` path), keyed per
+    ATMOD_FULL_OUTPUT_KEYS.
+    """
+    extractors: dict[str, Callable[[dict], float]] = {
+        "H2O_atm": lambda sol: sol["H2O_g"]["gas"]["number_moles"][0][0],
+        "H2O_mantle": lambda sol: sol["H2O_d"]["silicate_melt"]["number_moles"][0][0],
+        "H2_atm": lambda sol: sol["H2_g"]["gas"]["number_moles"][0][0],
+        "H2_mantle": lambda sol: sol["H2_d"]["silicate_melt"]["number_moles"][0][0],
+        "O2_atm": lambda sol: sol["O2_g"]["gas"]["number_moles"][0][0],
+        "O2_mantle": lambda sol: 0.0,  # O2 has no solubility model / melt reservoir
+        "CO_atm": lambda sol: sol["CO_g"]["gas"]["number_moles"][0][0],
+        "CO_mantle": lambda sol: sol["CO_d"]["silicate_melt"]["number_moles"][0][0],
+        "CO2_atm": lambda sol: sol["CO2_g"]["gas"]["number_moles"][0][0],
+        "CO2_mantle": lambda sol: sol["CO2_d"]["silicate_melt"]["number_moles"][0][0],
+        "CH4_atm": lambda sol: sol["CH4_g"]["gas"]["number_moles"][0][0],
+        "CH4_mantle": lambda sol: sol["CH4_d"]["silicate_melt"]["number_moles"][0][0],
+        "N2_atm": lambda sol: sol["N2_g"]["gas"]["number_moles"][0][0],
+        "N2_mantle": lambda sol: sol["N2_d"]["silicate_melt"]["number_moles"][0][0],
+        "S2_atm": lambda sol: sol["S2_g"]["gas"]["number_moles"][0][0],
+        "S2_mantle": lambda sol: sol["S2_d"]["silicate_melt"]["number_moles"][0][0],
+        "H2O4S_atm": lambda sol: sol["H2O4S_g"]["gas"]["number_moles"][0][0],
+        "H2O4S_mantle": lambda sol: 0.0,  # H2O4S has no solubility model / melt reservoir
+        "SO2_atm": lambda sol: sol["O2S_g"]["gas"]["number_moles"][0][0],
+        "He_mantle": lambda sol: sol["He_d"]["silicate_melt"]["number_moles"][0][0],
+        "O2_fugacity": lambda sol: sol["O2_g"]["gas"]["activity"][0][0],
+        "log10dIW_1_bar": lambda sol: sol["gas"]["phase"]["log10dIW_1_bar"][0][0],
+    }
+    return {key: extractors[key](atmod_sol) for key in ATMOD_FULL_OUTPUT_KEYS}
+
+
+def nan_full_output() -> dict[str, float]:
+    """NaN-filled placeholder for isocalc's "atmodeller_final" full-output snapshot, used when a
+    run terminates early (e.g. the entire atmosphere is lost) before ever reaching a real
+    equilibrium-solve snapshot. Shares ATMOD_FULL_OUTPUT_KEYS with extract_full_output so the two
+    can never drift out of sync.
+    """
+    return {key: np.nan for key in ATMOD_FULL_OUTPUT_KEYS}

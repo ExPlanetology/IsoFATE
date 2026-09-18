@@ -20,6 +20,7 @@ from jaxtyping import ArrayLike
 
 from isofate.constants import const
 from isofate.isofunks import R_rocky
+from isofate.utils import gravitational_acceleration
 
 
 @dataclass(frozen=True)
@@ -304,7 +305,7 @@ def phi_RR(
     Output: mass flux [kg/m2/s]
     """
     F = Fxuv(t, F0, t0, t_sat, beta, step_fn, F_final, t_pms, pms_factor)
-    g = const.G * Mp / Rp**2  # grav field strength at base of flow [m/s2]
+    g = gravitational_acceleration(Mp, Rp)  # grav field strength at base of flow [m/s2]
     T = 1e4  # temp is thermostatted at 1e4 K by radiation [K]
     nu_0 = 4.835e15  # EUV ionizing radiation frequency (~60 nm/ 20 eV) [Hz]
     alpha_rec = (

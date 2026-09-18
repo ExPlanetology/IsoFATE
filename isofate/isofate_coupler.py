@@ -10,9 +10,13 @@ from jaxtyping import ArrayLike
 
 from isofate.atmodeller_coupler import (
     AtmodellerCoupler,
+    TrackedGasSpecies,
     aggregate_D_into_H,
     build_atmodeller,
+    extract_full_output,
     get_tracked_gas_species,
+    nan_full_output,
+    run_atmodeller_step,
 )
 from isofate.constants import const
 from isofate.escape import EscapeMechanism, EscapeState, XUVEscape
@@ -29,6 +33,7 @@ from isofate.isofunks import (
     R_env,
     V_reduction,
 )
+from isofate.mantle_iron import MantleIronState
 from isofate.options import IsocalcOptions
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
 from isofate.system import Planet, System
@@ -77,7 +82,7 @@ def isocalc(
     #  isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
     #  - options: mode switches and tuning constants unrelated to escape mechanism, fixed for
     #  the whole run - see IsocalcOptions for the full list (rad_evol, melt_fraction_override,
-    #  mu, n_steps, t0, thermal, n_atmodeller, save_molecules, mantle_iron_dict, dynamic_phi)
+    #  mu, n_steps, t0, thermal, n_atmodeller, save_molecules, mantle_iron, dynamic_phi)
     #  - escape: escape-mechanism instance (isofate.escape.EscapeMechanism) controlling the
     #  atmospheric mass-flux calculation each timestep; defaults to XUVEscape(), equivalent to
     #  today's default mechanism="XUV", RR=True. See isofate.escape for XUVEscape, CPMLEscape,
@@ -104,11 +109,11 @@ def isocalc(
     # '''
 
     # Every other IsocalcOptions field is read-only for the whole run and referenced directly as
-    # `options.<field>` below. `mu` and `mantle_iron_dict` are the two exceptions: both become
-    # this loop's own time-evolving local state (like f_atm below) - `options.mu`/
-    # `options.mantle_iron_dict` supply only their *initial* values and are never read again.
+    # `options.<field>` below. `mu` is the one exception: it becomes this loop's own
+    # time-evolving local state (like f_atm below) - `options.mu` supplies only its *initial*
+    # value and is never read again. (`options.mantle_iron` similarly seeds a local
+    # `mantle_iron_state` below, once `interior_atmosphere` is available.)
     mu = options.mu
-    mantle_iron_dict = options.mantle_iron_dict
 
     # isofate_species_abund is ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N,
     # S) - the same order used throughout this function for y, atomic_masses, and species_names
@@ -135,11 +140,6 @@ def isocalc(
     ###_____Initialize physical values_____###
 
     b = DEFAULT_SPECIES.binary_diffusion.get("H", "He", T)
-    # planet.rocky_radius reflects Planet's own fixed-radius override, if any (see Planet) -
-    # fixed for the whole run either way, and resolved here (before build_atmodeller below) since
-    # interior_atmosphere's surface_radius is set once at construction and never updated
-    # afterward (see AtmodellerCoupler).
-    radius_rocky = planet.rocky_radius  # [m]
     R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
     R_H = system.hill_radius  # Hill radius [m]
 
@@ -166,11 +166,11 @@ def isocalc(
         X_DH = N_D / (N_H + N_D)  # ignores D in mantle
 
     # build atmodeller model for interior-atmosphere coupling
-    interior_atmosphere = build_atmodeller(Mp, surface_radius=radius_rocky)
+    interior_atmosphere = build_atmodeller(Mp, surface_radius=planet.rocky_radius)
     # Ordered per interior_atmosphere's own gas-phase species (SpeciesCollection), not hand-typed
     # - see the molecule-array declarations/writes below, which are driven by this tuple so they
     # can never drift out of sync with atmodeller's actual species set/order.
-    tracked_species = get_tracked_gas_species(interior_atmosphere)
+    tracked_species: tuple[TrackedGasSpecies, ...] = get_tracked_gas_species(interior_atmosphere)
     # Warm-starts each AtmodellerCoupler call from the previous call's converged solution instead
     # of solving cold every time - consecutive calls are a tiny physical perturbation apart, so
     # this drastically cuts the number of Newton iterations needed. None on the first call.
@@ -178,13 +178,13 @@ def isocalc(
 
     atmod_full_output = {}  # dictionary to store atmodeller full output
 
-    if mantle_iron_dict:
-        mantle_iron_dict["mantle_mass"] = 0.704665308539034 * Mp  # fraction from atmodeller
-        mantle_iron_dict["mass_Fe"] = (
-            mantle_iron_dict["mantle_mass"] * mantle_iron_dict["Fe_mass_fraction"]
-        )
-        mantle_iron_dict["mass_Fe2"] = mantle_iron_dict["mass_Fe"]
-        mantle_iron_dict["X_Fe2"] = mantle_iron_dict["mass_Fe2"] / mantle_iron_dict["mass_Fe"]
+    # background_mantle_mass reads atmodeller's own mantle-mass partitioning (from the
+    # core_mass_fraction build_atmodeller passed to Planet.from_species) directly, rather than
+    # re-deriving/duplicating it here.
+    mantle_iron_state: MantleIronState | None = None
+    if options.mantle_iron is not None:
+        mantle_mass = float(interior_atmosphere.parameters.state.background_mantle_mass)
+        mantle_iron_state = MantleIronState.initial(options.mantle_iron, mantle_mass)
 
     ### atmosphere
     M_atm0 = Mp * f_atm  # initial atmospheric mass [kg]
@@ -233,11 +233,12 @@ def isocalc(
             Matm_a[n:] = 0  # M_atm #Matm_a[n-1]
             fatm_a[n:] = 0  # f_atm #fatm_a[n-1]
             Renv_a[n:] = 0  # radius_env #Renv_a[n-1]
-            Rp_a[n:] = radius_rocky
+            Rp_a[n:] = planet.rocky_radius
             K = np.max(
-                [V_reduction(Mp, Mstar, d, radius_rocky), 0.01]
+                [V_reduction(Mp, Mstar, d, planet.rocky_radius), 0.01]
             )  # grav potential reduction factor due to stellar tidal forces
-            Vpot_a[n:] = K * const.G * Mp / radius_rocky
+            Vpot_a[n:] = K * const.G * Mp / planet.rocky_radius
+
             phi_a[n:] = 0
             Mloss_a[n:] = 0
 
@@ -251,28 +252,7 @@ def isocalc(
 
             # atmodeller full ouput for monte carlo runs
             if options.n_atmodeller != 0:
-                # atmod_full_output = {}
-                atmod_full_output["H2O_atm"] = np.nan
-                atmod_full_output["H2O_mantle"] = np.nan
-                atmod_full_output["H2_atm"] = np.nan
-                atmod_full_output["H2_mantle"] = np.nan
-                atmod_full_output["O2_atm"] = np.nan
-                atmod_full_output["O2_mantle"] = np.nan
-                atmod_full_output["CO_atm"] = np.nan
-                atmod_full_output["CO_mantle"] = np.nan
-                atmod_full_output["CO2_atm"] = np.nan
-                atmod_full_output["CO2_mantle"] = np.nan
-                atmod_full_output["CH4_atm"] = np.nan
-                atmod_full_output["CH4_mantle"] = np.nan
-                atmod_full_output["He_mantle"] = np.nan
-                atmod_full_output["N2_atm"] = np.nan
-                atmod_full_output["N2_mantle"] = np.nan
-                atmod_full_output["S2_atm"] = np.nan
-                atmod_full_output["S2_mantle"] = np.nan
-                atmod_full_output["H2O4S_atm"] = np.nan
-                atmod_full_output["H2O4S_mantle"] = np.nan
-                atmod_full_output["SO2_atm"] = np.nan
-                atmod_full_output["O2_fugacity"] = np.nan
+                atmod_full_output = nan_full_output()
                 if options.save_molecules == True:
                     for label in gas_num_a:
                         gas_num_a[label][n:] = 0
@@ -288,11 +268,11 @@ def isocalc(
         if options.rad_evol == False:
             radius_env = 0
             radius_atm = 0
-            radius_p = radius_rocky
+            radius_p = planet.rocky_radius
         else:
             radius_env = R_env(Mp, f_atm, Fp, t_a[n], options.thermal)
-            radius_atm = R_atm(T, Mp, radius_rocky, radius_env, mu)
-            radius_p = radius_rocky + radius_atm + radius_env
+            radius_atm = R_atm(T, Mp, planet.rocky_radius, radius_env, mu)
+            radius_p = planet.rocky_radius + radius_atm + radius_env
             # limits Rp to the min of Bondi/Hill/Lopez+Fortney radius; plain min() avoids numpy's
             # array-construction/dispatch overhead on a 3-scalar comparison run every timestep
             radius_p = min(R_B, R_H, radius_p)
@@ -441,113 +421,54 @@ def isocalc(
         ##### run atmodeller ######
         if options.n_atmodeller != 0:  # save final molecular abundances on last time step
             if n == options.n_steps - 1:
-                # atmod_full_output = {}
                 atmod_sol = AtmodellerCoupler(
                     T,
                     radius_p,
                     mu,
                     options.melt_fraction_override,
-                    mantle_iron_dict,
+                    mantle_iron_state,
                     *aggregate_D_into_H(y),
                     *aggregate_D_into_H(isofate_species_abund_int),
                     interior_atmosphere,
                     initial_guess=atmod_initial_guess,
                 )[1]
-                atmod_full_output["H2O_atm"] = atmod_sol["H2O_g"]["gas"]["number_moles"][0][0]
-                atmod_full_output["H2O_mantle"] = atmod_sol["H2O_d"]["silicate_melt"][
-                    "number_moles"
-                ][0][0]
-                atmod_full_output["H2_atm"] = atmod_sol["H2_g"]["gas"]["number_moles"][0][0]
-                atmod_full_output["H2_mantle"] = atmod_sol["H2_d"]["silicate_melt"][
-                    "number_moles"
-                ][0][0]
-                atmod_full_output["O2_atm"] = atmod_sol["O2_g"]["gas"]["number_moles"][0][0]
-                atmod_full_output["O2_mantle"] = 0.0  # O2 has no solubility model / melt reservoir
-                atmod_full_output["CO_atm"] = atmod_sol["CO_g"]["gas"]["number_moles"][0][0]
-                atmod_full_output["CO_mantle"] = atmod_sol["CO_d"]["silicate_melt"][
-                    "number_moles"
-                ][0][0]
-                atmod_full_output["CO2_atm"] = atmod_sol["CO2_g"]["gas"]["number_moles"][0][0]
-                atmod_full_output["CO2_mantle"] = atmod_sol["CO2_d"]["silicate_melt"][
-                    "number_moles"
-                ][0][0]
-                atmod_full_output["CH4_atm"] = atmod_sol["CH4_g"]["gas"]["number_moles"][0][0]
-                atmod_full_output["CH4_mantle"] = atmod_sol["CH4_d"]["silicate_melt"][
-                    "number_moles"
-                ][0][0]
-                atmod_full_output["N2_atm"] = atmod_sol["N2_g"]["gas"]["number_moles"][0][0]
-                atmod_full_output["N2_mantle"] = atmod_sol["N2_d"]["silicate_melt"][
-                    "number_moles"
-                ][0][0]
-                atmod_full_output["S2_atm"] = atmod_sol["S2_g"]["gas"]["number_moles"][0][0]
-                atmod_full_output["S2_mantle"] = atmod_sol["S2_d"]["silicate_melt"][
-                    "number_moles"
-                ][0][0]
-                atmod_full_output["H2O4S_atm"] = atmod_sol["H2O4S_g"]["gas"]["number_moles"][0][0]
-                atmod_full_output["H2O4S_mantle"] = (
-                    0.0  # H2O4S has no solubility model / melt reservoir
-                )
-                atmod_full_output["SO2_atm"] = atmod_sol["O2S_g"]["gas"]["number_moles"][0][0]
-                atmod_full_output["He_mantle"] = atmod_sol["He_d"]["silicate_melt"][
-                    "number_moles"
-                ][0][0]
-                atmod_full_output["O2_fugacity"] = atmod_sol["O2_g"]["gas"]["activity"][0][0]
-                atmod_full_output["log10dIW_1_bar"] = atmod_sol["gas"]["phase"]["log10dIW_1_bar"][
-                    0
-                ][0]
+                atmod_full_output = extract_full_output(atmod_sol)
             if n % options.n_atmodeller == 0:  # run atmodeller every n_atmodeller steps.
-                atmod_results, atmod_full, mantle_iron_dict, atmod_initial_guess = (
-                    AtmodellerCoupler(
-                        T,
-                        radius_p,
-                        mu,
-                        options.melt_fraction_override,
-                        mantle_iron_dict,
-                        *aggregate_D_into_H(y),
-                        *aggregate_D_into_H(isofate_species_abund_int),
-                        interior_atmosphere,
-                        initial_guess=atmod_initial_guess,
-                        # Species-level diagnostics (atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
-                        # are only read below when save_molecules is True; otherwise the narrow
-                        # extraction (element number_moles + gas mass only) is all this loop needs.
-                        full_output=options.save_molecules,
-                    )
+                # Species-level diagnostics (step.atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
+                # are only read below when save_molecules is True; otherwise the narrow extraction
+                # (element number_moles + gas mass only) is all this loop needs.
+                step = run_atmodeller_step(
+                    T,
+                    radius_p,
+                    mu,
+                    options.melt_fraction_override,
+                    mantle_iron_state,
+                    y,
+                    isofate_species_abund_int,
+                    X_DH,
+                    interior_atmosphere,
+                    atmod_initial_guess,
+                    full_output=options.save_molecules,
                 )
-                isofate_species_abund_int[0] = atmod_results["N_H_int"] * (1 - X_DH)
-                isofate_species_abund_int[2] = atmod_results["N_H_int"] * X_DH
-                isofate_species_abund_int[1] = atmod_results["N_He_int"]
-                isofate_species_abund_int[3] = atmod_results["N_O_int"]
-                isofate_species_abund_int[4] = atmod_results["N_C_int"]
-                isofate_species_abund_int[5] = atmod_results["N_N_int"]
-                isofate_species_abund_int[6] = atmod_results["N_S_int"]
-                if atmod_results["N_H_atm"] == 0:
-                    y[0] = 0
-                    y[2] = 0
-                else:
-                    Y3 = X_DH * atmod_results["N_H_atm"]
-                    Y1 = (1 - X_DH) * atmod_results["N_H_atm"]
-                    y[0] = Y1
-                    y[2] = Y3
-                y[1] = atmod_results["N_He_atm"]
-                y[3] = atmod_results["N_O_atm"]
-                y[4] = atmod_results["N_C_atm"]
-                y[5] = atmod_results["N_N_atm"]
-                y[6] = atmod_results["N_S_atm"]
-                M_atm = atmod_results["M_atm"]
-                T_surf_analytic = atmod_results["T_surface"]
-                T_surf_atmod = atmod_results["T_surface_atmod"]
+                y = step.y
+                isofate_species_abund_int = step.isofate_species_abund_int
+                M_atm = step.M_atm
+                T_surf_analytic = step.T_surf_analytic
+                T_surf_atmod = step.T_surf_atmod
+                mantle_iron_state = step.mantle_iron_state
+                atmod_initial_guess = step.atmod_initial_guess
                 if options.save_molecules == True:
                     for sp in tracked_species:
-                        gas_num_a[sp.label][n] = atmod_full[sp.gas_name]["gas"]["number_moles"][0][
-                            0
-                        ]
+                        gas_num_a[sp.label][n] = step.atmod_full[sp.gas_name]["gas"][
+                            "number_moles"
+                        ][0][0]
                         if sp.melt_name is not None:
-                            melt_num_a[sp.label][n] = atmod_full[sp.melt_name]["silicate_melt"][
-                                "number_moles"
-                            ][0][0]
+                            melt_num_a[sp.label][n] = step.atmod_full[sp.melt_name][
+                                "silicate_melt"
+                            ]["number_moles"][0][0]
                         else:
                             melt_num_a[sp.label][n] = 0.0  # no solubility model / melt reservoir
-                    fO2_a[n] = atmod_full["O2_g"]["gas"]["activity"][0][0]
+                    fO2_a[n] = step.atmod_full["O2_g"]["gas"]["activity"][0][0]
             else:
                 for label in gas_num_a:
                     gas_num_a[label][n] = gas_num_a[label][n - 1]
