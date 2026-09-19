@@ -128,9 +128,6 @@ class IsoFATESpecies(eqx.Module):
     """
 
     species: tuple[str, ...] = SYMBOLS
-    binary_diffusion: BinaryDiffusionCoefficients = eqx.field(
-        default_factory=lambda: DEFAULT_BINARY_DIFFUSION
-    )
     atomic_masses: NpFloat = eqx.field(init=False)
     mass_by_symbol: dict[str, float] = eqx.field(init=False)
     _symbol_index: dict[str, int] = eqx.field(init=False, repr=False)

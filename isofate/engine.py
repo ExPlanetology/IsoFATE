@@ -18,7 +18,7 @@ from jax import Array
 from jaxtyping import ArrayLike
 
 from isofate.escape import EscapeState
-from isofate.escape_core import EscapeNumberFlux
+from isofate.escape_fractionation import EscapeNumberFlux
 from isofate.isofunks import R_atm, R_env
 from isofate.parameters import Parameters
 from isofate.utils import gravitational_acceleration
@@ -51,9 +51,9 @@ def _algebraic(
     initial condition: the initial atmosphere mass is `dot(isofate_species_abund, atomic_masses)`.
 
     For the same reason, the Bondi radius R_B is recomputed here from the current (evolving) mu at
-    every call, rather than fixed once from a bootstrap `options.mu` guess before the trajectory
-    exists - there's no "before mu exists" moment to bootstrap, since mu is always computable
-    straight from y.
+    every call, rather than fixed once from a bootstrap guess before the trajectory exists -
+    there's no "before mu exists" moment to bootstrap, since mu is always computable straight from
+    y (there is no `IsocalcOptions.mu` field to bootstrap from).
 
     Clips y to >= 0 before use: the adaptive step-size controller can propose trial steps that
     briefly overshoot into slightly negative territory near exhaustion (the original discrete

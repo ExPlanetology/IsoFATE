@@ -18,8 +18,7 @@ import pytest
 from isofate.constants import const
 from isofate.escape import XUVEscape
 from isofate.isofate_coupler import isocalc, isocalc_jax
-from isofate.options import IsocalcOptions
-from isofate.parameters import Parameters
+from isofate.parameters import IsocalcOptions, Parameters
 from isofate.presets import LHS1140b, LHS1140Star
 from isofate.system import System
 
@@ -82,15 +81,6 @@ def _sim_isocalc_kwargs(n_steps=int(1e5)):
     N_C = const.CtoH_protosolar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_C
     N_N = const.NtoH_protosolar_mass * M_atm / const.mu_N
     N_S = const.StoH_protosolar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_S
-    mu_avg = (
-        N_H * const.mu_H
-        + N_He * const.mu_He
-        + N_D * const.mu_D
-        + N_O * const.mu_O
-        + N_C * const.mu_C
-        + N_N * const.mu_N
-        + N_S * const.mu_S
-    ) / (N_H + N_He + N_D + N_O + N_C + N_N + N_S)
 
     escape = XUVEscape(
         F0=F0,
@@ -110,7 +100,6 @@ def _sim_isocalc_kwargs(n_steps=int(1e5)):
     options = IsocalcOptions(
         rad_evol=rad_evol,
         melt_fraction_override=melt_fraction_override,
-        mu=mu_avg,
         n_steps=n_steps,
         t0=t0,
         thermal=thermal,

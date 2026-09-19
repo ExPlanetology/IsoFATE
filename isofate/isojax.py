@@ -69,7 +69,7 @@ def make_atmosphere_descent_jax(
     Mc: ArrayLike,
     gamma: ArrayLike,
     r_rocky: ArrayLike,
-) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
+) -> tuple[ArrayLike, Array, ArrayLike]:
     """JAX/diffrax-jittable atmosphere-descent integration: returns `M_atm`, `T_surf`, `P_surf`.
 
     The original NumPy implementation's three per-step array updates reduce to a 2-state ODE in
@@ -114,6 +114,6 @@ def make_atmosphere_descent_jax(
     )
     P_surf: ArrayLike = sol.ys[0][-1]  # pyright: ignore[reportOptionalSubscript]
     M_atm: ArrayLike = sol.ys[1][-1]  # pyright: ignore[reportOptionalSubscript]
-    T_surf: ArrayLike = Tem * (P_surf / pem) ** K
+    T_surf: Array = jnp.power((P_surf / pem), K) * Tem
 
     return M_atm, T_surf, P_surf

@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 
 from isofate.constants import const
 from isofate.escape import XUVEscape
-from isofate.escape_core import EscapeNumberFlux
 
 # from debug_isofate_coupler_v2 import *
 from isofate.isofate_coupler import *
@@ -18,11 +17,10 @@ from isofate.isofate_coupler import *
 # from isofate_coupler_v3 import *
 # from isofate_coupler_v3_cannon import *
 from isofate.isofunks import *
-from isofate.options import IsocalcOptions
 from isofate.orbit_params import *
-from isofate.parameters import Parameters
+from isofate.parameters import IsocalcOptions, Parameters
 from isofate.presets import LHS1140b, LHS1140Star
-from isofate.species import DEFAULT_SPECIES
+from isofate.species import DEFAULT_BINARY_DIFFUSION
 from isofate.system import Planet, Star, System
 
 # LHS 1140 / LHS 1140 b
@@ -111,15 +109,6 @@ N_N = const.NtoH_protosolar_mass * M_atm / const.mu_N
 # N_N = M_atm/mu_N
 N_S = const.StoH_protosolar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_S
 # N_S = 0
-mu_avg = (
-    N_H * const.mu_H
-    + N_He * const.mu_He
-    + N_D * const.mu_D
-    + N_O * const.mu_O
-    + N_C * const.mu_C
-    + N_N * const.mu_N
-    + N_S * const.mu_S
-) / (N_H + N_He + N_D + N_O + N_C + N_N + N_S)
 
 # these print statements serve as a check when running sim.py
 print("n_steps =", n_steps)
@@ -139,7 +128,7 @@ print("mantle_iron", mantle_iron)
 print("dynamic_phi =", dynamic_phi)
 
 
-escape = XUVEscape(
+escape_mechanism = XUVEscape(
     F0=F0,
     eps=eps,
     t0=t0,
@@ -157,7 +146,6 @@ escape = XUVEscape(
 options = IsocalcOptions(
     rad_evol=rad_evol,
     melt_fraction_override=melt_fraction_override,
-    mu=mu_avg,
     n_steps=n_steps,
     t0=t0,
     thermal=thermal,
@@ -167,11 +155,7 @@ options = IsocalcOptions(
     dynamic_phi=dynamic_phi,
 )
 
-escape_number_flux: EscapeNumberFlux = EscapeNumberFlux()
-
-parameters = Parameters(
-    system, escape_mechanism=escape, escape_number_flux=escape_number_flux, isocalc_options=options
-)
+parameters = Parameters(system, escape_mechanism=escape_mechanism, isocalc_options=options)
 
 # run simulation (from isofate.py)
 isocalc_start = TIME.time()
@@ -379,7 +363,7 @@ if ND_a[0] != 0:
     ax1.plot(t_a * const.s2yr, PhiD_a * const.mu_D, color="orangered", label="D flux")
     ax1.plot(
         t_a * const.s2yr,
-        DEFAULT_SPECIES.binary_diffusion.get("H", "D", T) * x1_a * (const.mu_D - const.mu_H) / H_H,
+        DEFAULT_BINARY_DIFFUSION.get("H", "D", T) * x1_a * (const.mu_D - const.mu_H) / H_H,
         "--",
         color="orangered",
         label="D critical",
@@ -388,7 +372,7 @@ if NO_a[0] != 0:
     ax1.plot(t_a * const.s2yr, PhiO_a * const.mu_O, color="green", label="O flux")
     ax1.plot(
         t_a * const.s2yr,
-        DEFAULT_SPECIES.binary_diffusion.get("H", "O", T) * x1_a * (const.mu_O - const.mu_H) / H_H,
+        DEFAULT_BINARY_DIFFUSION.get("H", "O", T) * x1_a * (const.mu_O - const.mu_H) / H_H,
         "--",
         color="green",
         label="O critical",
@@ -397,7 +381,7 @@ if NC_a[0] != 0:
     ax1.plot(t_a * const.s2yr, PhiC_a * const.mu_C, color="gold", label="C flux")
     ax1.plot(
         t_a * const.s2yr,
-        DEFAULT_SPECIES.binary_diffusion.get("H", "C", T) * x1_a * (const.mu_C - const.mu_H) / H_H,
+        DEFAULT_BINARY_DIFFUSION.get("H", "C", T) * x1_a * (const.mu_C - const.mu_H) / H_H,
         "--",
         color="gold",
         label="C critical",
@@ -406,7 +390,7 @@ if NC_a[0] != 0:
     ax1.plot(t_a * const.s2yr, PhiN_a * const.mu_N, color="blue", label="N flux")
     ax1.plot(
         t_a * const.s2yr,
-        DEFAULT_SPECIES.binary_diffusion.get("H", "N", T) * x1_a * (const.mu_N - const.mu_H) / H_H,
+        DEFAULT_BINARY_DIFFUSION.get("H", "N", T) * x1_a * (const.mu_N - const.mu_H) / H_H,
         "--",
         color="blue",
         label="N critical",
@@ -415,7 +399,7 @@ if NS_a[0] != 0:
     ax1.plot(t_a * const.s2yr, PhiS_a * const.mu_S, color="purple", label="S flux")
     ax1.plot(
         t_a * const.s2yr,
-        DEFAULT_SPECIES.binary_diffusion.get("H", "S", T) * x1_a * (const.mu_S - const.mu_H) / H_H,
+        DEFAULT_BINARY_DIFFUSION.get("H", "S", T) * x1_a * (const.mu_S - const.mu_H) / H_H,
         "--",
         color="purple",
         label="S critical",

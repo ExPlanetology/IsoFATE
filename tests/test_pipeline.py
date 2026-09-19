@@ -35,8 +35,7 @@ from isofate.constants import const
 from isofate.escape import XUVEscape
 from isofate.isofate_coupler import isocalc
 from isofate.mantle_iron import MantleIronConfig
-from isofate.options import IsocalcOptions
-from isofate.parameters import Parameters
+from isofate.parameters import IsocalcOptions, Parameters
 from isofate.system import Planet, Star, System
 
 

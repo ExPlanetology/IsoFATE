@@ -23,7 +23,7 @@ from isofate.atmodeller_coupler import (
 from isofate.constants import const
 from isofate.engine import _integrate_isocalc_jax
 from isofate.escape import EscapeState
-from isofate.escape_core import Phi_1_2, Phi_minor_species
+from isofate.escape_fractionation import Phi_1_2, Phi_minor_species
 from isofate.isofunks import R_atm, R_env
 from isofate.mantle_iron import MantleIronState
 from isofate.parameters import Parameters
@@ -100,12 +100,11 @@ def isocalc(
     # `parameters` bundles the config that's fixed for the whole run (System, escape mechanism,
     # EscapeNumberFlux, IsocalcOptions) - unpacked once here so the rest of this function (largely
     # unchanged from when these were separate arguments) can keep referring to them by these same
-    # local names, matching isocalc_jax. Every other IsocalcOptions field is read-only for the
-    # whole run and referenced directly as `options.<field>` below. `options.mu`/`mu` are NOT read
-    # here (unlike an earlier version of this function): mu/R_B are derived fresh from the
-    # evolving y every iteration below instead of bootstrapping from `options.mu`, matching
-    # isocalc_jax's `_algebraic` (see engine.py). (`options.mantle_iron` similarly seeds a local
-    # `mantle_iron_state` below, once `interior_atmosphere` is available.)
+    # local names, matching isocalc_jax. Every IsocalcOptions field is read-only for the whole run
+    # and referenced directly as `options.<field>` below. `mu`/R_B are derived fresh from the
+    # evolving y every iteration below (no bootstrap `IsocalcOptions.mu` field exists anymore),
+    # matching isocalc_jax's `_algebraic` (see engine.py). (`options.mantle_iron` similarly seeds a
+    # local `mantle_iron_state` below, once `interior_atmosphere` is available.)
     system = parameters.system
     options = parameters.isocalc_options
     escape = parameters.escape_mechanism
@@ -343,7 +342,7 @@ def isocalc(
             light_name = species_names[light_dominant_idx]  # species 1
             heavy_name = species_names[heavy_dominant_idx]  # species 2
 
-            b = DEFAULT_SPECIES.binary_diffusion.get(light_name, heavy_name, T)
+            b = escape_number_flux.binary_diffusion.get(light_name, heavy_name, T)
 
             # Calculate escape fluxes for the two dominant species
             Phi_1_calc, Phi_2_calc, phi_c = Phi_1_2(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU)
@@ -587,11 +586,11 @@ def isocalc_jax(
     # `system`/`options` are unpacked here since they're also read directly below (`system.planet`,
     # `options.<field>`); `escape`/`escape_number_flux` are not - `parameters` itself is passed
     # straight through to `_integrate_isocalc_jax`, which pulls them off internally.
-    # `options.mu`/`planet.f_atm` are NOT read here (unlike isocalc): `_integrate_isocalc_jax`
-    # derives mu/M_atm/f_atm/R_B purely from the evolving y instead of bootstrapping from these -
-    # see that function's docstring for why. Every other IsocalcOptions field is read-only for the
-    # whole run and referenced directly as `options.<field>` below. (`options.mantle_iron`
-    # similarly seeds a local `mantle_iron_state` below, once `interior_atmosphere` is available.)
+    # `planet.f_atm` is NOT read here (unlike isocalc): `_integrate_isocalc_jax` derives
+    # mu/M_atm/f_atm/R_B purely from the evolving y - see that function's docstring for why. Every
+    # other IsocalcOptions field is read-only for the whole run and referenced directly as
+    # `options.<field>` below. (`options.mantle_iron` similarly seeds a local `mantle_iron_state`
+    # below, once `interior_atmosphere` is available.)
     system = parameters.system
     options = parameters.isocalc_options
 

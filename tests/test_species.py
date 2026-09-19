@@ -57,18 +57,6 @@ def test_binary_diffusion_subclass_overrides_coefficients():
     assert DEFAULT_BINARY_DIFFUSION.get("H", "He", 10.0) != 10.0
 
 
-def test_species_default_binary_diffusion_is_shared_default():
-    assert DEFAULT_SPECIES.binary_diffusion is DEFAULT_BINARY_DIFFUSION
-
-
-def test_species_can_take_custom_binary_diffusion():
-    class OtherBinaryDiffusion(BinaryDiffusionCoefficients):
-        COEFFICIENTS = (("H", "He", 1.0, 1.0, "test override"),)
-
-    species = IsoFATESpecies(binary_diffusion=OtherBinaryDiffusion())
-    assert species.binary_diffusion.get("H", "He", 10.0) == 10.0
-
-
 def test_scale_heights_ordered_per_species():
     T, g = 500.0, 20.0
     H = DEFAULT_SPECIES.scale_heights(T, g)

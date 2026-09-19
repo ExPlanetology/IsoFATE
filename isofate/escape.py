@@ -368,8 +368,8 @@ class XUVEscape(EscapeMechanism):
             flux (`phi_RR`), taking the min of the two (Wordsworth et al. 2018 prescription).
     """
 
-    _: dataclasses.KW_ONLY
     F0: ArrayLike
+    _: dataclasses.KW_ONLY
     eps: ArrayLike = 0.15
     t0: ArrayLike = 1e6
     t_sat: ArrayLike = 5e8

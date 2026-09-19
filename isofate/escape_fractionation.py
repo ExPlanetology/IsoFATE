@@ -10,6 +10,7 @@
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
 from jaxtyping import ArrayLike
 
 from isofate.species import (
@@ -20,7 +21,7 @@ from isofate.species import (
     IsoFATESpecies,
 )
 
-# number flux of light and heavy species
+# Number flux of light and heavy species
 
 
 def Phi_1_2(
@@ -42,12 +43,12 @@ def Phi_1_2(
     their shared phi_c/mu==0/phi<phi_c logic once instead of twice.
 
     Args:
-        phi: mass flux [kg/m2/s] - traced
-        b: binary diffusion coefficient [particles/m/s] - traced
-        H1/H2: scale heights of light/heavy species [m] - traced
-        m1/m2: molecular mass of light/heavy species [kg/particle] - traced
-        x1/x2: molar concentration of light/heavy species (x1=mol_1/mol_tot) [ndim] - traced
-        mu: average atmospheric atomic mass [kg/particle] - traced
+        phi: mass flux [kg/m2/s]
+        b: binary diffusion coefficient [particles/m/s]
+        H1/H2: scale heights of light/heavy species [m]
+        m1/m2: molecular mass of light/heavy species [kg/particle]
+        x1/x2: molar concentration of light/heavy species (x1=mol_1/mol_tot) [ndim]
+        mu: average atmospheric atomic mass [kg/particle]
 
     Returns:
         number flux of light species [particles/m2/s], number flux of heavy species
@@ -56,21 +57,18 @@ def Phi_1_2(
     # critical mass flux [kg/s/m2]
     phi_c = b * x1 * (m2 - m1) / H1  # pyright: ignore[reportOperatorIssue]
 
-    # mu==0 and phi<phi_c both depend on traced quantities (mu evolves with the abundances every
-    # timestep, unlike e.g. Fxuv's t_pms, which is a fixed config value resolvable in plain
-    # Python) - both branches are computed unconditionally and selected via jnp.where. mu is
-    # guarded before dividing so the discarded mu==0 branch never computes a 0/0 division, which
-    # would otherwise corrupt jax.grad through the jnp.where even though it's never selected.
-    safe_mu = jnp.where(mu == 0, 1.0, mu)
+    # mu is guarded before dividing so the discarded mu==0 branch never computes a 0/0 division,
+    # which would otherwise corrupt jax.grad through the jnp.where even though it's never selected.
+    safe_mu: Array = jnp.where(mu == 0, 1.0, mu)
 
-    phi1_below_critical = phi / m1
-    phi2_below_critical = 0.0
-    phi1_above_critical = (x1 * phi + x1 * x2 * (m2 - m1) * b / H2) / safe_mu  # pyright: ignore[reportOperatorIssue]
-    phi2_above_critical = (x2 * phi + x1 * x2 * (m1 - m2) * b / H1) / safe_mu  # pyright: ignore[reportOperatorIssue]
+    phi1_below_critical: ArrayLike = phi / m1
+    phi2_below_critical: ArrayLike = 0.0
+    phi1_above_critical: ArrayLike = (x1 * phi + x1 * x2 * (m2 - m1) * b / H2) / safe_mu  # pyright: ignore[reportOperatorIssue]
+    phi2_above_critical: ArrayLike = (x2 * phi + x1 * x2 * (m1 - m2) * b / H1) / safe_mu  # pyright: ignore[reportOperatorIssue]
 
-    below_critical = phi < phi_c
-    phi1 = jnp.where(below_critical, phi1_below_critical, phi1_above_critical)
-    phi2 = jnp.where(below_critical, phi2_below_critical, phi2_above_critical)
+    below_critical: Array = phi < phi_c
+    phi1: Array = jnp.where(below_critical, phi1_below_critical, phi1_above_critical)
+    phi2: Array = jnp.where(below_critical, phi2_below_critical, phi2_above_critical)
 
     phi1 = jnp.where(mu == 0, 0.0, phi1)
     phi2 = jnp.where(mu == 0, 0.0, phi2)
@@ -171,27 +169,26 @@ def Phi_minor_species(
     binary_diffusion: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION,
     species_symbols: tuple[str, ...] = SYMBOLS,
 ):
-    """
-    Calculates number flux for minor species using correct Zahnle et al. 1990 formulation
+    """Calculates number flux for minor species using Zahnle et al. 1990
 
-    Inputs:
-        - Phi_1: number flux of lightest dominant species [atoms/s/m2] - traced
-        - Phi_2: number flux of heaviest dominant species [atoms/s/m2] - traced
-        - H_1: scale height of lightest dominant species [m] - traced
-        - H_2: scale height of heaviest dominant species [m] - traced
-        - H_minor: scale height of minor species [m] - traced
-        - N_values: list [N_H, N_He, N_D, N_O, N_C, N_N, N_S] - current abundances - traced
-        - T: temperature [K] - traced
-        - minor_species_idx: index (0-4) of the minor species being calculated - static
-        - light_dominant_idx: index of lightest dominant species (species 1) - static
-        - heavy_dominant_idx: index of heaviest dominant species (species 2) - static
-        - binary_diffusion: Binary diffusion coefficient lookup to use - static.
-        - species_symbols: Symbols that `minor_species_idx`/`light_dominant_idx`/
-          `heavy_dominant_idx` index into - static.
+    Args:
+        Phi_1: number flux of lightest dominant species [atoms/s/m2]
+        Phi_2: number flux of heaviest dominant species [atoms/s/m2]
+        H_1: scale height of lightest dominant species [m]
+        H_2: scale height of heaviest dominant species [m]
+        H_minor: scale height of minor species [m]
+        N_values: list [N_H, N_He, N_D, N_O, N_C, N_N, N_S] - current abundances
+        T: temperature [K]
+        minor_species_idx: index (0-4) of the minor species being calculated
+        light_dominant_idx: index of lightest dominant species (species 1)
+        heavy_dominant_idx: index of heaviest dominant species (species 2)
+        binary_diffusion: Binary diffusion coefficient lookup to use
+        species_symbols: Symbols that `minor_species_idx`/`light_dominant_idx`/
+            `heavy_dominant_idx` index into
     """
-    minor_name = species_symbols[minor_species_idx]
-    light_name = species_symbols[light_dominant_idx]  # species 1
-    heavy_name = species_symbols[heavy_dominant_idx]  # species 2
+    minor_name: str = species_symbols[minor_species_idx]
+    light_name: str = species_symbols[light_dominant_idx]  # species 1
+    heavy_name: str = species_symbols[heavy_dominant_idx]  # species 2
 
     # Get binary diffusion coefficients
     b_1_minor = binary_diffusion.get(light_name, minor_name, T)  # b between species 1 and minor
@@ -251,6 +248,7 @@ class EscapeNumberFlux(eqx.Module):
     """
 
     species: IsoFATESpecies = DEFAULT_SPECIES
+    binary_diffusion: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
 
     def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike):
         """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux.
@@ -283,7 +281,7 @@ class EscapeNumberFlux(eqx.Module):
         X1 = jnp.where(y_HHe_total == 0, 0.0, y_H / safe_y_HHe_total)
         X2 = jnp.where(y_HHe_total == 0, 0.0, y_He / safe_y_HHe_total)
         MU = X1 * mu_H + X2 * mu_He
-        b_H_He = self.species.binary_diffusion.get("H", "He", T)
+        b_H_He = self.binary_diffusion.get("H", "He", T)
 
         Phi_H, Phi_He, phi_c = Phi_1_2(phi, b_H_He, H[H_idx], H[He_idx], mu_H, mu_He, X1, X2, MU)
 
@@ -315,6 +313,6 @@ class EscapeNumberFlux(eqx.Module):
             minor_species_idx=minor_idx,
             light_dominant_idx=H_idx,
             heavy_dominant_idx=He_idx,
-            binary_diffusion=self.species.binary_diffusion,
+            binary_diffusion=self.binary_diffusion,
             species_symbols=self.species.species,
         )
