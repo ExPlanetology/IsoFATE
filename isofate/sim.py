@@ -477,7 +477,7 @@ ax3.set_yscale("log")
 # planet radius
 ax4.loglog(t_a * const.s2yr, rp_a / const.Re, color="mediumseagreen")
 # ax4.set_title('planetary radius')
-ax4.set_ylabel("radius [R$_\oplus$]", labelpad=2)
+ax4.set_ylabel(r"radius [R$_\oplus$]", labelpad=2)
 # ax4.set_xlabel('time [yr]')
 
 # envelope radius
@@ -527,7 +527,7 @@ else:
 # envelope mass
 ax6.loglog(t_a * const.s2yr, menv_a / const.Me, color="midnightblue")
 # ax6.set_title('envelope mass')
-ax6.set_ylabel("M$_{env}$ [M$_\oplus$]", labelpad=2)
+ax6.set_ylabel(r"M$_{env}$ [M$_\oplus$]", labelpad=2)
 # ax6.set_xlabel('time [yr]')
 
 # grav potential
@@ -539,7 +539,7 @@ ax7.set_xlabel("time [yr]")
 # mass loss
 ax8.loglog(t_a * const.s2yr, mloss_a, color="crimson")
 # ax8.set_title('mass loss per time step')
-ax8.set_ylabel("$\Delta$ mass [kg]", labelpad=2)
+ax8.set_ylabel(r"$\Delta$ mass [kg]", labelpad=2)
 ax8.set_xlabel("time [yr]")
 
 # f_env or system parameters
