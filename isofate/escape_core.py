@@ -10,7 +10,6 @@
 
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import ArrayLike
 
 from isofate.species import (
@@ -243,22 +242,19 @@ class EscapeNumberFlux(eqx.Module):
 
     H and He are always treated as the light/heavy diffusive pair (Phi_1_2); every other tracked
     species is treated as a minor/trace species relative to that pair (Phi_minor_species).
-
-    Not an `eqx.Module`: this is called once per timestep in isocalc's still-plain-Python loop,
-    and eqx.Module wraps every bound-method access in a fresh BoundMethod pytree.
     """
 
     binary_diffusion: BinaryDiffusionCoefficients
     species: IsoFATESpecies
 
-    def get_number_flux(self, y, T, g, phi):
+    def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike):
         """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux.
 
         Args:
-            y: Current abundances [atoms], ordered per `self.species.species`.
-            T: Temperature [K].
-            g: Gravitational acceleration [m/s2].
-            phi: Total escape mass flux [kg/m2/s] (from the EscapeMechanism).
+            y: Current abundances [atoms], ordered per `self.species.species` - traced.
+            T: Temperature [K] - traced.
+            g: Gravitational acceleration [m/s2] - traced.
+            phi: Total escape mass flux [kg/m2/s] (from the EscapeMechanism) - traced.
 
         Returns:
             Phi (number flux [atoms/s/m2] for each species, ordered per `self.species.species`),
@@ -272,24 +268,32 @@ class EscapeNumberFlux(eqx.Module):
         mu_H = self.species.atomic_masses[H_idx]
         mu_He = self.species.atomic_masses[He_idx]
 
+        # y_H + y_He == 0 is traced (depends on the evolving abundances), so its guard is
+        # resolved via jnp.where rather than a plain Python if - same pattern as Phi_1_2/
+        # Phi_minor_species: guard the denominator before dividing so the discarded branch never
+        # computes 0/0.
         y_H, y_He = y[H_idx], y[He_idx]
-        if y_H + y_He == 0:
-            X1, X2 = 0, 0
-        else:
-            X1 = y_H / (y_H + y_He)
-            X2 = y_He / (y_H + y_He)
+        y_HHe_total = y_H + y_He
+        safe_y_HHe_total = jnp.where(y_HHe_total == 0, 1.0, y_HHe_total)
+        X1 = jnp.where(y_HHe_total == 0, 0.0, y_H / safe_y_HHe_total)
+        X2 = jnp.where(y_HHe_total == 0, 0.0, y_He / safe_y_HHe_total)
         MU = X1 * mu_H + X2 * mu_He
         b_H_He = self.binary_diffusion.get("H", "He", T)
 
         Phi_H, Phi_He, phi_c = Phi_1_2(phi, b_H_He, H[H_idx], H[He_idx], mu_H, mu_He, X1, X2, MU)
 
-        Phi = np.zeros(len(symbols))
-        Phi[H_idx] = Phi_H
-        Phi[He_idx] = Phi_He
+        # H_idx/He_idx/i are all static (Python-int indices fixed by species order, never
+        # data-dependent), so building a plain list and stacking at the end is trace-safe -
+        # unlike a `Phi = np.zeros(...); Phi[idx] = ...` mutation, which doesn't work on JAX's
+        # immutable arrays once phi/y/T are traced.
+        values = [None] * len(symbols)
+        values[H_idx] = Phi_H
+        values[He_idx] = Phi_He
         for i in range(len(symbols)):
             if i in (H_idx, He_idx):
                 continue
-            Phi[i] = self._minor_species_flux(Phi_H, Phi_He, H, y, T, i, H_idx, He_idx)
+            values[i] = self._minor_species_flux(Phi_H, Phi_He, H, y, T, i, H_idx, He_idx)
+        Phi = jnp.stack(values)
 
         return Phi, phi_c
 
