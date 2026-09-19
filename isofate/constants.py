@@ -5,21 +5,12 @@
 
 """Physical constants and binary diffusion coefficients used in IsoFATE."""
 
-from dataclasses import dataclass
-
-from atmodeller.sci_utils import GAS_CONSTANT
+import equinox as eqx
+from atmodeller.sci_utils import GAS_CONSTANT, earth
 from atmodeller.sci_utils import constants as _constants
 
-# NOTE: Re and Me are deliberately NOT sourced from atmodeller.sci_utils.earth: earth.radius
-# (6.371e6 m, the mean/volumetric Earth radius) differs from Re (6.378e6 m, the equatorial
-# radius) by ~0.1% - a real convention difference, not just precision, and Re feeds directly into
-# Planet.rocky_radius's Lopez & Fortney 2014 mass-radius scaling relation, which may assume one
-# specific convention. earth.mass (5.972e24 kg) is also less precise than Me (5.9722e24 kg), so
-# swapping would be a downgrade rather than an improvement.
 
-
-@dataclass(frozen=True)
-class PhysicalConstants:
+class PhysicalConstants(eqx.Module):
     inv_cm2m: float = 100  # convert inverse cm to inverse m
     avogadro: float = _constants.Avogadro  # Avogadro's number [particles/mole]
     s2day: float = 1 / (3600 * 24)  # convert s to day
@@ -28,8 +19,6 @@ class PhysicalConstants:
     cgs2si_flux: float = 1 / 1000  # convert flux from erg/cm2/s to W/m2
     erg2joule: float = 1e-7  # convert ergs to Joules
     gcm2kgm: float = 1000  # convert g/cm3 to kg/m3 (SI)
-    J2E_mass: float = 1.898e27 / 5.972e24  # convert Jupiter mass to Earth mass [kg]
-    J2E_rad: float = 7.1492e7 / 6.3781e6  # convert Jupiter radius to Earth radius [m]
     R_gas: float = GAS_CONSTANT  # gas constant [J/mol/K]
     kb: float = _constants.Boltzmann  # Boltzmann constant [m2 kg/s2 K]
     sbc: float = _constants.Stefan_Boltzmann  # Stefan Boltzmann constant W/m2/K4
@@ -37,8 +26,8 @@ class PhysicalConstants:
     G: float = _constants.gravitational_constant  # [m3/kg/s2]
     h: float = _constants.h  # [J s]
     c: float = _constants.c  # [m/s]
-    Re: float = 6.378e6  # Earth radius [m]
-    Me: float = 5.9722e24  # Earth mass [kg]
+    Re: float = earth.radius  # Earth radius [m]
+    Me: float = earth.mass  # Earth mass [kg]
     Fe: float = 1366  # Earth bolometric flux [W/m2]
     Ms: float = 1.98847e30  # Solar mass [kg]
     Rs: float = 6.957e8  # Solar radius [m]
@@ -85,6 +74,16 @@ class PhysicalConstants:
     def Fe_xuv(self):
         """Earth XUV flux [W/m2] [Ribas et al. 2005]"""
         return 3.88 * self.cgs2si_flux
+
+    @property
+    def J2E_mass(self):
+        """Convert Jupiter mass to Earth mass [kg]"""
+        return self.Mjup / self.Me
+
+    @property
+    def J2E_rad(self):
+        """Convert Jupiter radius to Earth radius [m]"""
+        return self.Rjup / self.Re
 
     @property
     def mu_H2(self):
@@ -177,4 +176,4 @@ class PhysicalConstants:
         return 0.00235 / self.avogadro
 
 
-const = PhysicalConstants()
+const: PhysicalConstants = PhysicalConstants()
