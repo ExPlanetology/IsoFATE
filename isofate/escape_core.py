@@ -53,7 +53,8 @@ def Phi_1_2(
         number flux of light species [particles/m2/s], number flux of heavy species
         [particles/m2/s], critical mass flux [kg/s/m2]
     """
-    phi_c = b * x1 * (m2 - m1) / H1  # critical mass flux [kg/s/m2]
+    # critical mass flux [kg/s/m2]
+    phi_c = b * x1 * (m2 - m1) / H1  # pyright: ignore[reportOperatorIssue]
 
     # mu==0 and phi<phi_c both depend on traced quantities (mu evolves with the abundances every
     # timestep, unlike e.g. Fxuv's t_pms, which is a fixed config value resolvable in plain
@@ -62,19 +63,19 @@ def Phi_1_2(
     # would otherwise corrupt jax.grad through the jnp.where even though it's never selected.
     safe_mu = jnp.where(mu == 0, 1.0, mu)
 
-    Phi1_below_critical = phi / m1
-    Phi2_below_critical = 0.0
-    Phi1_above_critical = (x1 * phi + x1 * x2 * (m2 - m1) * b / H2) / safe_mu
-    Phi2_above_critical = (x2 * phi + x1 * x2 * (m1 - m2) * b / H1) / safe_mu
+    phi1_below_critical = phi / m1
+    phi2_below_critical = 0.0
+    phi1_above_critical = (x1 * phi + x1 * x2 * (m2 - m1) * b / H2) / safe_mu  # pyright: ignore[reportOperatorIssue]
+    phi2_above_critical = (x2 * phi + x1 * x2 * (m1 - m2) * b / H1) / safe_mu  # pyright: ignore[reportOperatorIssue]
 
     below_critical = phi < phi_c
-    Phi1 = jnp.where(below_critical, Phi1_below_critical, Phi1_above_critical)
-    Phi2 = jnp.where(below_critical, Phi2_below_critical, Phi2_above_critical)
+    phi1 = jnp.where(below_critical, phi1_below_critical, phi1_above_critical)
+    phi2 = jnp.where(below_critical, phi2_below_critical, phi2_above_critical)
 
-    Phi1 = jnp.where(mu == 0, 0.0, Phi1)
-    Phi2 = jnp.where(mu == 0, 0.0, Phi2)
+    phi1 = jnp.where(mu == 0, 0.0, phi1)
+    phi2 = jnp.where(mu == 0, 0.0, phi2)
 
-    return Phi1, Phi2, phi_c
+    return phi1, phi2, phi_c
 
 
 # number flux deuterium Gu & Chen 2023
@@ -249,7 +250,6 @@ class EscapeNumberFlux(eqx.Module):
         species: Tracked-species registry (defaults to `DEFAULT_SPECIES`)
     """
 
-    binary_diffusion: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
     species: IsoFATESpecies = DEFAULT_SPECIES
 
     def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike):
@@ -283,7 +283,7 @@ class EscapeNumberFlux(eqx.Module):
         X1 = jnp.where(y_HHe_total == 0, 0.0, y_H / safe_y_HHe_total)
         X2 = jnp.where(y_HHe_total == 0, 0.0, y_He / safe_y_HHe_total)
         MU = X1 * mu_H + X2 * mu_He
-        b_H_He = self.binary_diffusion.get("H", "He", T)
+        b_H_He = self.species.binary_diffusion.get("H", "He", T)
 
         Phi_H, Phi_He, phi_c = Phi_1_2(phi, b_H_He, H[H_idx], H[He_idx], mu_H, mu_He, X1, X2, MU)
 
@@ -315,6 +315,6 @@ class EscapeNumberFlux(eqx.Module):
             minor_species_idx=minor_idx,
             light_dominant_idx=H_idx,
             heavy_dominant_idx=He_idx,
-            binary_diffusion=self.binary_diffusion,
+            binary_diffusion=self.species.binary_diffusion,
             species_symbols=self.species.species,
         )
