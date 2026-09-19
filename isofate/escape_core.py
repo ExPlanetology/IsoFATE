@@ -9,6 +9,7 @@
 """
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 from jaxtyping import ArrayLike
 
@@ -41,27 +42,37 @@ def Phi_1_2(
     their shared phi_c/mu==0/phi<phi_c logic once instead of twice.
 
     Args:
-        phi: mass flux [kg/m2/s]
-        b: binary diffusion coefficient [particles/m/s]
-        H1/H2: scale heights of light/heavy species [m]
-        m1/m2: molecular mass of light/heavy species [kg/particle]
-        x1/x2: molar concentration of light/heavy species (x1=mol_1/mol_tot) [ndim]
-        mu: average atmospheric atomic mass [kg/particle]
+        phi: mass flux [kg/m2/s] - traced
+        b: binary diffusion coefficient [particles/m/s] - traced
+        H1/H2: scale heights of light/heavy species [m] - traced
+        m1/m2: molecular mass of light/heavy species [kg/particle] - traced
+        x1/x2: molar concentration of light/heavy species (x1=mol_1/mol_tot) [ndim] - traced
+        mu: average atmospheric atomic mass [kg/particle] - traced
 
     Returns:
         number flux of light species [particles/m2/s], number flux of heavy species
         [particles/m2/s], critical mass flux [kg/s/m2]
     """
     phi_c = b * x1 * (m2 - m1) / H1  # critical mass flux [kg/s/m2]
-    if mu == 0:
-        return 0, 0, phi_c
 
-    if phi < phi_c:
-        Phi1 = phi / m1
-        Phi2 = 0
-    else:
-        Phi1 = (x1 * phi + x1 * x2 * (m2 - m1) * b / H2) / mu
-        Phi2 = (x2 * phi + x1 * x2 * (m1 - m2) * b / H1) / mu
+    # mu==0 and phi<phi_c both depend on traced quantities (mu evolves with the abundances every
+    # timestep, unlike e.g. Fxuv's t_pms, which is a fixed config value resolvable in plain
+    # Python) - both branches are computed unconditionally and selected via jnp.where. mu is
+    # guarded before dividing so the discarded mu==0 branch never computes a 0/0 division, which
+    # would otherwise corrupt jax.grad through the jnp.where even though it's never selected.
+    safe_mu = jnp.where(mu == 0, 1.0, mu)
+
+    Phi1_below_critical = phi / m1
+    Phi2_below_critical = 0.0
+    Phi1_above_critical = (x1 * phi + x1 * x2 * (m2 - m1) * b / H2) / safe_mu
+    Phi2_above_critical = (x2 * phi + x1 * x2 * (m1 - m2) * b / H1) / safe_mu
+
+    below_critical = phi < phi_c
+    Phi1 = jnp.where(below_critical, Phi1_below_critical, Phi1_above_critical)
+    Phi2 = jnp.where(below_critical, Phi2_below_critical, Phi2_above_critical)
+
+    Phi1 = jnp.where(mu == 0, 0.0, Phi1)
+    Phi2 = jnp.where(mu == 0, 0.0, Phi2)
 
     return Phi1, Phi2, phi_c
 
@@ -102,35 +113,12 @@ def Phi_D_GC23(Phi_H, Phi_He, H_H, H_D, H_He, N_H, N_He, N_D, T):
 # number flux deuterium derived from Zahnle et al 1990
 
 
-def Phi_D_Z90(Phi_H, Phi_He, H_H, H_D, H_He, N_H, N_He, N_D, N_O, N_C, N_N, N_S, T):
-    """
-    Calculates number flux of deuterium for simultaneous calculation of H/He/D escape
-    Derived from Zahnle et al 1990 starting w/ their Eq (17)
-
-    Inputs:
-        - Phi_i: number flux [particles/m2/s]
-        - H_i: scale height [m]
-        - N_i: particles of species i
-        - T: eq temp [K]
-    """
-    N_values = [N_H, N_He, N_D, N_O, N_C, N_N, N_S]  # ordered per SYMBOLS
-    return Phi_minor_species(
-        Phi_H,
-        Phi_He,
-        H_H,
-        H_He,
-        H_D,
-        N_values,
-        T,
-        minor_species_idx=2,
-        light_dominant_idx=0,
-        heavy_dominant_idx=1,
-    )
-
-
 def Phi_D_Z90_mod(Phi_H, H_D, N_D, N_H, T):
     """
     Phi_D_Z90 solution with He set to zero
+
+    Not currently plugged into the Phi calc - an alternate/experimental formulation kept for
+    reference.
     """
     b_H_D = (
         7.183e19 * T**0.728
@@ -143,6 +131,9 @@ def Phi_D_Z90_mod(Phi_H, H_D, N_D, N_H, T):
 def Phi_D_Z90_mod2(Phi_H, Phi_He, H_H, H_D, H_He, N_H, N_He, N_D, T):
     """
     Phi_D solution from referee report Cherubim et al 2024
+
+    Not currently plugged into the Phi calc - an alternate/experimental formulation kept for
+    reference.
     """
     b_H_D = (
         7.183e19 * T**0.728
@@ -160,110 +151,6 @@ def Phi_D_Z90_mod2(Phi_H, Phi_He, H_H, H_D, H_He, N_H, N_He, N_D, T):
     num = Phi_DL_He * x_He - Phi_DL_D + Phi_H + alpha_3 * Phi_He
     denom = 1 + alpha_3 * f_He
     return max(0, f_D * num / denom)
-
-
-def Phi_O_Z90(Phi_H, Phi_He, H_H, H_O, H_He, N_H, N_He, N_D, N_O, N_C, N_N, N_S, T):
-    """
-    Calculates number flux of oxygen for simultaneous calculation of H/He/O escape
-    Derived from Zahnle et al 1990 starting w/ their Eq (17)
-
-    Inputs:
-        - Phi_i: number flux [particles/m2/s]
-        - H_i: scale height [m]
-        - N_i: particles of species i
-        - T: eq temp [K]
-    """
-    N_values = [N_H, N_He, N_D, N_O, N_C, N_N, N_S]  # ordered per SYMBOLS
-    return Phi_minor_species(
-        Phi_H,
-        Phi_He,
-        H_H,
-        H_He,
-        H_O,
-        N_values,
-        T,
-        minor_species_idx=3,
-        light_dominant_idx=0,
-        heavy_dominant_idx=1,
-    )
-
-
-def Phi_C_Z90(Phi_H, Phi_He, H_H, H_C, H_He, N_H, N_He, N_D, N_O, N_C, N_N, N_S, T):
-    """
-    Calculates number flux of carbon for simultaneous calculation of H/He/D/O/C escape
-    Derived from Zahnle et al 1990 starting w/ their Eq (17)
-
-    Inputs:
-        - Phi_i: number flux [particles/m2/s]
-        - H_i: scale height [m]
-        - N_i: particles of species i
-        - T: eq temp [K]
-    """
-    N_values = [N_H, N_He, N_D, N_O, N_C, N_N, N_S]  # ordered per SYMBOLS
-    return Phi_minor_species(
-        Phi_H,
-        Phi_He,
-        H_H,
-        H_He,
-        H_C,
-        N_values,
-        T,
-        minor_species_idx=4,
-        light_dominant_idx=0,
-        heavy_dominant_idx=1,
-    )
-
-
-def Phi_N_Z90(Phi_H, Phi_He, H_H, H_N, H_He, N_H, N_He, N_D, N_O, N_C, N_N, N_S, T):
-    """
-    Calculates number flux of nitrogen for simultaneous calculation of H/He/D/O/C/N/S escape
-    Derived from Zahnle et al 1990 starting w/ their Eq (17)
-
-    Inputs:
-        - Phi_i: number flux [particles/m2/s]
-        - H_i: scale height [m]
-        - N_i: particles of species i
-        - T: eq temp [K]
-    """
-    N_values = [N_H, N_He, N_D, N_O, N_C, N_N, N_S]  # ordered per SYMBOLS
-    return Phi_minor_species(
-        Phi_H,
-        Phi_He,
-        H_H,
-        H_He,
-        H_N,
-        N_values,
-        T,
-        minor_species_idx=5,
-        light_dominant_idx=0,
-        heavy_dominant_idx=1,
-    )
-
-
-def Phi_S_Z90(Phi_H, Phi_He, H_H, H_S, H_He, N_H, N_He, N_D, N_O, N_C, N_N, N_S, T):
-    """
-    Calculates number flux of sulfur for simultaneous calculation of H/He/D/O/C/N/S escape
-    Derived from Zahnle et al 1990 starting w/ their Eq (17)
-
-    Inputs:
-        - Phi_i: number flux [particles/m2/s]
-        - H_i: scale height [m]
-        - N_i: particles of species i
-        - T: eq temp [K]
-    """
-    N_values = [N_H, N_He, N_D, N_O, N_C, N_N, N_S]  # ordered per SYMBOLS
-    return Phi_minor_species(
-        Phi_H,
-        Phi_He,
-        H_H,
-        H_He,
-        H_S,
-        N_values,
-        T,
-        minor_species_idx=6,
-        light_dominant_idx=0,
-        heavy_dominant_idx=1,
-    )
 
 
 def Phi_minor_species(

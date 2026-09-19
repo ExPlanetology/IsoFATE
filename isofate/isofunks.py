@@ -77,8 +77,10 @@ def Fxuv_Ribas(t):
 
 # NOTE: Fxuv_hazmat, phi_E, phiE_CP moved to isofate.escape (see also the Fxuv note above).
 
-# NOTE: Phi_1_2, Phi_D_GC23, Phi_D_Z90(_mod/_mod2), Phi_O_Z90, Phi_C_Z90, Phi_N_Z90, Phi_S_Z90,
-# and Phi_minor_species moved to isofate.escape_core.
+# NOTE: Phi_1_2, Phi_D_GC23, Phi_D_Z90_mod, Phi_D_Z90_mod2, Phi_minor_species, and
+# EscapeNumberFlux moved to isofate.escape_core. Phi_D_Z90/Phi_O_Z90/Phi_C_Z90/Phi_N_Z90/
+# Phi_S_Z90 also moved there and were later removed entirely, once fully superseded by
+# EscapeNumberFlux.get_number_flux (which calls Phi_minor_species directly).
 
 #####_____ Lopez & Fortney 2014 thermal evolution equations _____#####
 
