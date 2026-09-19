@@ -15,6 +15,7 @@ the old `options.mechanism`/`options.RR` string dispatch.
 from abc import abstractmethod
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 from jaxtyping import ArrayLike
 
@@ -75,30 +76,41 @@ def Fxuv(t, F0, t0=1e6, t_sat=5e8, beta=-1.23, step_fn=False, F_final=0, t_pms=0
     Consistent with empirical data from MUSCLES spectra for early M dwarfs
 
     Inputs:
-        - t: time/age [s]
-        - F0: initial main sequence incident XUV flux [W/m2]
-        - t0: start time [yr]
-        - t_sat: saturation time [yr]; change this for different stellar types (M1:500Myr, G:50Myr)
-        - beta: exponential term [ndim]
-        - step_fn: True for step function from F0 to F_final [Bool]
-        - F_final: if step_fn == True, set the final XUV flux [W/m2]
-        - t_pms: pre-main sequence phase duration (power law decay) [yr]
-        - pms_factor: Fxuv_pms_0/Fxuv_sat; ~1e2 for mid-to-late M stars (Ramirez & Kaltenegger 2014) [ndim]
+        - t: time/age [s] - traced
+        - F0: initial main sequence incident XUV flux [W/m2] - traced
+        - t0: start time [yr] - static (fixed per XUVEscape instance, confirmed constant across
+          isocalc's per-timestep loop - see isofate_coupler.py)
+        - t_sat: saturation time [yr]; change this for different stellar types (M1:500Myr, G:50Myr) - static
+        - beta: exponential term [ndim] - static
+        - step_fn: True for step function from F0 to F_final [Bool] - static
+        - F_final: if step_fn == True, set the final XUV flux [W/m2] - static
+        - t_pms: pre-main sequence phase duration (power law decay) [yr] - static
+        - pms_factor: Fxuv_pms_0/Fxuv_sat; ~1e2 for mid-to-late M stars (Ramirez & Kaltenegger 2014) [ndim] - static
 
     Output: incident XUV flux [W/m2]
     """
     time = t * const.s2yr
-    if 0 < time < t_pms:
+
+    # t_pms is static (see Inputs above) - resolved with a plain Python `if`, same as step_fn
+    # below, so log10(t_pms) is only ever evaluated when t_pms > 0 (never computed-then-discarded
+    # when t_pms=0, the common pre-main-sequence-disabled default - avoids ever hitting log10(0)).
+    if t_pms > 0:
         F_pms0 = F0 * pms_factor
-        s = (np.log10(F0) - np.log10(F_pms0)) / (np.log10(t_pms) - np.log10(t0))
-        return F_pms0 * (time / t0) ** s
-    elif time < t_sat:
-        return F0
+        s = (jnp.log10(F0) - jnp.log10(F_pms0)) / (jnp.log10(t_pms) - jnp.log10(t0))
+        pre_main_sequence = F_pms0 * (time / t0) ** s
+        is_pre_main_sequence = (time > 0) & (time < t_pms)
     else:
-        if step_fn == False:
-            return F0 * (time / t_sat) ** beta
-        elif step_fn == True:
-            return F_final
+        pre_main_sequence = 0.0  # never selected below (is_pre_main_sequence is statically False)
+        is_pre_main_sequence = False
+
+    saturated = F0
+    post_saturation = F_final if step_fn else F0 * (time / t_sat) ** beta
+
+    return jnp.where(
+        is_pre_main_sequence,
+        pre_main_sequence,
+        jnp.where(time < t_sat, saturated, post_saturation),
+    )
 
 
 def Fxuv_Johnstone(t, d, stellar_type):
@@ -316,7 +328,7 @@ def phi_RR(
     )  # case B recombination coeff for H (Murray-Clay et al 2009 pg 4) [m3/atom/s]
     # H_base = kb*Teq/mu_solar/g # scale height at base of flow [m]
     # n_wind = np.sqrt(Fxuv/h/nu_0/H_base/alpha_rec) # number density at flow base [particles/m3]
-    c_s = np.sqrt(
+    c_s = jnp.sqrt(
         2 * const.kb * T / const.mu_H
     )  # sounds speed at sonic point [m/s] Murray-Clay et al 2009
     R_s = const.G * Mp / (2 * c_s**2)  # sonic point [m] Murray-Clay et al 2009
@@ -328,11 +340,11 @@ def phi_RR(
     # return p1*p2*p3
 
     ### Murray-Clay et al 2009 formulation
-    p1 = 4 * np.pi * R_s**2 * c_s
-    p2 = np.sqrt(F * const.mu_H**3 * g / (const.h * nu_0 * alpha_rec * 2 * const.kb * Teq))
-    p3 = np.exp((Rp / R_s - 1) * const.G * Mp / Rp / c_s**2)
+    p1 = 4 * jnp.pi * R_s**2 * c_s
+    p2 = jnp.sqrt(F * const.mu_H**3 * g / (const.h * nu_0 * alpha_rec * 2 * const.kb * Teq))
+    p3 = jnp.exp((Rp / R_s - 1) * const.G * Mp / Rp / c_s**2)
 
-    return p1 * p2 * p3 / (4 * np.pi * Rp**2)
+    return p1 * p2 * p3 / (4 * jnp.pi * Rp**2)
 
 
 # ---- concrete EscapeMechanism subclasses -------------------------------------------------------
@@ -402,7 +414,7 @@ class XUVEscape(EscapeMechanism):
             t_pms=self.t_pms,
             pms_factor=self.pms_factor,
         )
-        return min(phi_recombination_limited, phi_energy_limited)
+        return jnp.minimum(phi_recombination_limited, phi_energy_limited)
 
 
 class CPMLEscape(EscapeMechanism):
