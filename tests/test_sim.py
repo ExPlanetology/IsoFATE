@@ -17,15 +17,19 @@ import pytest
 
 from isofate.constants import const
 from isofate.escape import XUVEscape
-from isofate.isofate_coupler import isocalc
+from isofate.isofate_coupler import isocalc, isocalc_jax
 from isofate.options import IsocalcOptions
 from isofate.parameters import Parameters
 from isofate.presets import LHS1140b, LHS1140Star
 from isofate.system import System
 
 
-def _sim_isocalc_kwargs():
-    """Reconstructs isofate/sim.py's isocalc() call, as of the current version of that script."""
+def _sim_isocalc_kwargs(n_steps=int(1e5)):
+    """Reconstructs isofate/sim.py's isocalc() call, as of the current version of that script.
+
+    `n_steps` defaults to sim.py's own value but can be overridden (e.g. by the isocalc/
+    isocalc_jax cross-check below, which doesn't need full resolution to confirm agreement).
+    """
     star = LHS1140Star
     planet = LHS1140b
     system = System(star=star, planet=planet)
@@ -49,7 +53,6 @@ def _sim_isocalc_kwargs():
     RR = True
     eps = 0.15
     rad_evol = True
-    n_steps = int(1e5)
     n_atmodeller = 0
     thermal = True
     melt_fraction_override = False
@@ -154,3 +157,25 @@ def test_sim_regression():
     assert sol["N_S"][-1] == pytest.approx(2.5955614470233587e45, rel=1e-6)
     assert sol["Rp"][-1] == pytest.approx(13824654.981228502, rel=1e-6)
     assert sol["Vpot"][-1] == pytest.approx(153883574.58031628, rel=1e-6)
+
+
+def test_isocalc_isocalc_jax_cross_check():
+    """isocalc and isocalc_jax should agree closely on the same scenario: both now derive
+    M_atm/f_atm fresh from y (see isocalc's and _integrate_isocalc_jax's docstrings), so the only
+    remaining difference is the integration scheme itself - isocalc's fixed-step Euler loop vs.
+    isocalc_jax's adaptive Tsit5 (diffrax). They also now share the exact same call signature
+    (`parameters`, `F0`, `time`, `isofate_species_abund`), so the same kwargs work for both.
+
+    Uses n_steps=2000 rather than test_sim_regression's full 1e5 - at 1e5 the two agree to
+    ~2e-5 relative (verified by hand), but that isocalc run alone takes ~5 minutes; this only
+    needs enough resolution to confirm the two implementations agree, not to test isocalc's own
+    convergence. At n_steps=2000, isocalc runs in a few seconds and the two agree to ~5e-4
+    relative - rel=1e-2 below leaves ample margin without being sensitive to incidental changes
+    in either integrator.
+    """
+    kwargs = _sim_isocalc_kwargs(n_steps=2000)
+    sol_isocalc = isocalc(**kwargs)
+    sol_jax = isocalc_jax(**kwargs)
+
+    for key in ("Matm", "N_H", "N_He", "N_D", "N_O", "N_C", "N_N", "N_S", "Rp", "Vpot"):
+        assert sol_jax[key][-1] == pytest.approx(sol_isocalc[key][-1], rel=1e-2), key
