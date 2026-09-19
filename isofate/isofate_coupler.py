@@ -22,24 +22,21 @@ from isofate.atmodeller_coupler import (
 )
 from isofate.constants import const
 from isofate.engine import _integrate_isocalc_jax
-from isofate.escape import EscapeMechanism, EscapeState, XUVEscape
-from isofate.escape_core import EscapeNumberFlux, Phi_1_2, Phi_minor_species
+from isofate.escape import EscapeState
+from isofate.escape_core import Phi_1_2, Phi_minor_species
 from isofate.isofunks import R_atm, R_env
 from isofate.mantle_iron import MantleIronState
-from isofate.options import IsocalcOptions
 from isofate.parameters import Parameters
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
-from isofate.system import Planet, System
+from isofate.system import Planet
 from isofate.utils import gravitational_acceleration
 
 
 def isocalc(
-    system: System,
+    parameters: Parameters,
     F0,
     time=5e9,
     isofate_species_abund: ArrayLike = (0, 0, 0, 0, 0, 0, 0),
-    options: IsocalcOptions = IsocalcOptions(),
-    escape: EscapeMechanism = XUVEscape(),
 ):
     """
     This is a test
@@ -101,11 +98,18 @@ def isocalc(
     #  - 'Phi_D': D number flux [atoms/s/m2]
     # '''
 
-    # Every other IsocalcOptions field is read-only for the whole run and referenced directly as
-    # `options.<field>` below. `mu` is the one exception: it becomes this loop's own
-    # time-evolving local state (like f_atm below) - `options.mu` supplies only its *initial*
+    # `parameters` bundles the config that's fixed for the whole run (System, escape mechanism,
+    # EscapeNumberFlux, IsocalcOptions) - unpacked once here so the rest of this function (largely
+    # unchanged from when these were separate arguments) can keep referring to them by these same
+    # local names, matching isocalc_jax. Every other IsocalcOptions field is read-only for the
+    # whole run and referenced directly as `options.<field>` below. `mu` is the one exception: it
+    # becomes this loop's own time-evolving local state - `options.mu` supplies only its *initial*
     # value and is never read again. (`options.mantle_iron` similarly seeds a local
     # `mantle_iron_state` below, once `interior_atmosphere` is available.)
+    system = parameters.system
+    options = parameters.isocalc_options
+    escape = parameters.escape_mechanism
+    escape_number_flux = parameters.escape_number_flux
     mu = options.mu
 
     # isofate_species_abund is ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N,
@@ -123,16 +127,13 @@ def isocalc(
     T: ArrayLike = system.equilibrium_temperature
     Fp: ArrayLike = system.insolation
 
-    # Only planet.mass and planet.f_atm are ever read, and only here, once, to seed the
-    # *initial* conditions: Mp never changes over the run, but f_atm is immediately reassigned
-    # to a plain float and becomes this loop's own time-evolving local variable (see M_atm/f_atm
-    # below) - it must never be read from `planet` (or `system`) again after this point.
+    # Only planet.mass is ever read here (Mp never changes over the run) - planet.f_atm is not
+    # read at all: M_atm/f_atm are derived fresh from y every iteration below (see the loop body),
+    # not seeded from it, so the initial atmosphere mass is exactly
+    # dot(isofate_species_abund, atomic_masses), matching isocalc_jax.
     Mp = planet.mass
-    f_atm = planet.f_atm
 
     ###_____Initialize physical values_____###
-
-    escape_number_flux = EscapeNumberFlux()
     R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
     R_H = system.hill_radius  # Hill radius [m]
 
@@ -180,10 +181,10 @@ def isocalc(
         mantle_iron_state = MantleIronState.initial(options.mantle_iron, mantle_mass)
 
     ### atmosphere
-    M_atm0 = Mp * f_atm  # initial atmospheric mass [kg]
-    M_atm = M_atm0
     # Atmospheric number of atoms per species [atoms], ordered per
     # isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S), same as isofate_species_abund above.
+    # M_atm/f_atm are not seeded here - they're derived fresh from y at the top of every loop
+    # iteration below (see the loop body).
     y = np.array(isofate_species_abund, dtype=float)
     ###_____Initialize arrays_____###
 
@@ -221,6 +222,12 @@ def isocalc(
     ###_____Loop through timesteps_____###
 
     for n in range(n_tot):
+        # Derived fresh from y every iteration (mass-conservation identity: the atmosphere's
+        # total mass is exactly the sum of its constituent atoms' masses), rather than tracked as
+        # separately-updated state - matches isocalc_jax's design (see engine.py's _algebraic).
+        M_atm = np.dot(y, atomic_masses)
+        f_atm = M_atm / Mp
+
         ### Stop simulation when entire atmosphere is lost
         if M_atm <= 0 or np.sum(y) <= 0:
             Matm_a[n:] = 0  # M_atm #Matm_a[n-1]
@@ -418,7 +425,10 @@ def isocalc(
                 )
                 y = step.y
                 isofate_species_abund_int = step.isofate_species_abund_int
-                M_atm = step.M_atm
+                # Not read into M_atm here (unlike before): M_atm is derived fresh from y at the
+                # top of every iteration (see above), and step.M_atm is exactly
+                # dot(step.y, atomic_masses) anyway (see atmodeller_coupler.py's
+                # run_atmodeller_step), so next iteration's derived M_atm already reflects this.
                 T_surf_analytic = step.T_surf_analytic
                 T_surf_atmod = step.T_surf_atmod
                 mantle_iron_state = step.mantle_iron_state
@@ -449,11 +459,9 @@ def isocalc(
                 y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2]
             )  # assumes D/H is in equilibrium between interior and atmosphere
 
-        # advance to next step
+        # advance to next step - M_atm/f_atm are not updated here: next iteration re-derives them
+        # fresh from this same y (see the top of the loop above).
         y_loss = Phi * A * delta_t
-        # M_atm -= mass_loss # comes from phi*A*delta_t
-        M_atm -= np.dot(y_loss, atomic_masses)
-        f_atm = M_atm / Mp
         y -= y_loss
         y = np.maximum(y, 0)
 

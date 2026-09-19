@@ -77,7 +77,6 @@ class Planet(eqx.Module):
     Args:
         mass: Planet mass [kg]
         period: Orbital period [s]
-        f_atm: Atmospheric mass fraction [ndim]
         albedo: Planetary albedo [ndim] (optional; defaults to 0)
         _rocky_radius: Radius of the planet's rocky (condensed-matter) component [m] (optional; if
             not provided, computed from mass via Lopez & Fortney 2014). Supply this directly when
@@ -88,7 +87,6 @@ class Planet(eqx.Module):
 
     mass: Array
     period: Array
-    f_atm: Array  # TODO: remove eventually
     albedo: Array
     _rocky_radius: Array | None = None
 
@@ -96,13 +94,11 @@ class Planet(eqx.Module):
         self,
         mass: ArrayLike,
         period: ArrayLike,
-        f_atm: ArrayLike,  # TODO: remove eventually
         albedo: ArrayLike = 0.0,
         rocky_radius: ArrayLike | None = None,
     ):
         self.mass = as_j64(mass)
         self.period = as_j64(period)
-        self.f_atm = as_j64(f_atm)  # TODO: remove eventually
         self.albedo = as_j64(albedo)
         self._rocky_radius = as_j64(rocky_radius) if rocky_radius is not None else None
 

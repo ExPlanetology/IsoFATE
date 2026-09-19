@@ -31,8 +31,11 @@ import pytest
 
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller, get_tracked_gas_species
 from isofate.constants import const
-from isofate.isofate_coupler import IsocalcOptions, isocalc
+from isofate.escape import XUVEscape
+from isofate.isofate_coupler import isocalc
 from isofate.mantle_iron import MantleIronConfig
+from isofate.options import IsocalcOptions
+from isofate.parameters import Parameters
 from isofate.system import Planet, Star, System
 
 
@@ -66,7 +69,7 @@ def test_get_tracked_gas_species_matches_atmodeller_order():
 def test_atmodeller_coupler_single_solve():
     """A single equilibrium solve for a realistic, H2-dominated/reducing composition."""
     Mp = 5.6 * const.Me
-    radius_rocky = Planet(mass=Mp, period=1.0, f_atm=0.0).rocky_radius
+    radius_rocky = Planet(mass=Mp, period=1.0).rocky_radius
     interior_atmosphere = build_atmodeller(Mp, surface_radius=radius_rocky)
 
     results, sol, mantle_iron_state, _initial_guess = AtmodellerCoupler(
@@ -121,20 +124,21 @@ def _toy_system():
     only exists to give isocalc() a small, fast, non-escape-dominated System to run."""
     star = Star(radius=const.Rs, mass=1.989e30, temperature=5000)
     period = star.period_for_semi_major_axis(0.05 * 1.496e11)  # ~0.05 au orbital distance
-    planet = Planet(mass=5.0 * const.Me, period=period, f_atm=0.01)
+    planet = Planet(mass=5.0 * const.Me, period=period)
     return System(star=star, planet=planet)
 
 
 def _toy_isocalc_kwargs(**option_overrides):
     """`option_overrides` are forwarded to `IsocalcOptions`; n_steps/n_atmodeller are kept small
     so this stays a fast, non-escape-dominated test scenario."""
+    options = IsocalcOptions(n_steps=20, n_atmodeller=5, **option_overrides)
+    parameters = Parameters(_toy_system(), XUVEscape(), isocalc_options=options)
     return dict(
-        system=_toy_system(),
+        parameters=parameters,
         F0=500.0,
         time=1e6,
         # isofate_species_abund ordered per isofate.species.SYMBOLS: (H, He, D, O, C, N, S)
         isofate_species_abund=(1e45, 1e44, 1e41, 1.5e45, 1e44, 1e43, 1e43),
-        options=IsocalcOptions(n_steps=20, n_atmodeller=5, **option_overrides),
     )
 
 

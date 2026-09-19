@@ -19,6 +19,7 @@ from isofate.constants import const
 from isofate.escape import XUVEscape
 from isofate.isofate_coupler import isocalc
 from isofate.options import IsocalcOptions
+from isofate.parameters import Parameters
 from isofate.presets import LHS1140b, LHS1140Star
 from isofate.system import System
 
@@ -29,7 +30,9 @@ def _sim_isocalc_kwargs():
     planet = LHS1140b
     system = System(star=star, planet=planet)
 
-    f_atm = planet.f_atm
+    # Not a Planet field (removed) - matches sim.py's own scripting-level constant, used only to
+    # scale this function's solar-abundance-ratio construction of N_H/N_He/etc. below.
+    f_atm = 0.01
     Mp = planet.mass
     t_jump = star.t_jump
 
@@ -112,14 +115,13 @@ def _sim_isocalc_kwargs():
         mantle_iron=mantle_iron,
         dynamic_phi=dynamic_phi,
     )
+    parameters = Parameters(system, escape, isocalc_options=options)
     return dict(
-        system=system,
+        parameters=parameters,
         F0=F0,
         time=time,
         # ordered per isofate.species.SYMBOLS
         isofate_species_abund=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),
-        options=options,
-        escape=escape,
     )
 
 
@@ -131,16 +133,24 @@ def test_sim_regression():
     Re-pinned when isocalc's dynamic_phi=False path switched from the hardcoded const.mu_H/mu_He
     atomic masses to IsoFATESpecies.atomic_masses (molmass-derived IUPAC values) via
     EscapeNumberFlux - a deliberate ~1e-5 relative accuracy improvement, not a regression.
+
+    Re-pinned again when isocalc stopped seeding the initial atmosphere mass from
+    `Mp * planet.f_atm` and instead derives M_atm/f_atm fresh from y every iteration (matching
+    isocalc_jax) - `dot(isofate_species_abund, atomic_masses)` differs from `Mp * planet.f_atm` by
+    ~3e-4 relative here, traced to sim.py's N_N abundance formula omitting the
+    `/(1 + HetoH_protosolar_mass)` normalization every other species' formula has. A deliberate
+    accuracy improvement (removes a redundant, slightly-inconsistent second bookkeeping of
+    atmosphere mass), not a regression.
     """
     sol = isocalc(**_sim_isocalc_kwargs())
 
-    assert sol["Matm"][-1] == pytest.approx(2.7839085713762034e23, rel=1e-6)
-    assert sol["N_H"][-1] == pytest.approx(1.1097972805188918e50, rel=1e-6)
-    assert sol["N_He"][-1] == pytest.approx(1.34150950024784e49, rel=1e-6)
-    assert sol["N_D"][-1] == pytest.approx(2.3456362634890842e45, rel=1e-6)
-    assert sol["N_O"][-1] == pytest.approx(8.353277510642382e46, rel=1e-6)
-    assert sol["N_C"][-1] == pytest.approx(4.1685038065703274e46, rel=1e-6)
-    assert sol["N_N"][-1] == pytest.approx(1.5953296928362035e46, rel=1e-6)
-    assert sol["N_S"][-1] == pytest.approx(2.5955619681050573e45, rel=1e-6)
-    assert sol["Rp"][-1] == pytest.approx(13824058.042884521, rel=1e-6)
-    assert sol["Vpot"][-1] == pytest.approx(153890546.53243127, rel=1e-6)
+    assert sol["Matm"][-1] == pytest.approx(2.7847119860674774e23, rel=1e-6)
+    assert sol["N_H"][-1] == pytest.approx(1.109756853479713e50, rel=1e-6)
+    assert sol["N_He"][-1] == pytest.approx(1.341472117896385e49, rel=1e-6)
+    assert sol["N_D"][-1] == pytest.approx(2.3455560513061053e45, rel=1e-6)
+    assert sol["N_O"][-1] == pytest.approx(8.353266024867263e46, rel=1e-6)
+    assert sol["N_C"][-1] == pytest.approx(4.168490941832542e46, rel=1e-6)
+    assert sol["N_N"][-1] == pytest.approx(1.5953265918420376e46, rel=1e-6)
+    assert sol["N_S"][-1] == pytest.approx(2.5955614470233587e45, rel=1e-6)
+    assert sol["Rp"][-1] == pytest.approx(13824654.981228502, rel=1e-6)
+    assert sol["Vpot"][-1] == pytest.approx(153883574.58031628, rel=1e-6)

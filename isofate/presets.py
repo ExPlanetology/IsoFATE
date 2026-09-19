@@ -113,9 +113,7 @@ TRAPPIST1Star: Star = Star(radius=0.1192 * const.Rs, mass=0.0898 * const.Ms, tem
 # f_atm = 0.00085
 # Mp = 5.6 * const.Me
 # P = 24.74 / const.s2day
-LHS1140b: Planet = Planet(
-    mass=5.6 * const.Me, period=24.74 / const.s2day, f_atm=0.01
-)  # f_atm=0.00085)
+LHS1140b: Planet = Planet(mass=5.6 * const.Me, period=24.74 / const.s2day)
 
 # GJ 3090 b
 # f_atm = 0.03
