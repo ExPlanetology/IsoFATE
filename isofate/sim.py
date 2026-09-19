@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 from isofate.constants import const
 from isofate.escape import XUVEscape
+from isofate.escape_core import EscapeNumberFlux
 
 # from debug_isofate_coupler_v2 import *
 from isofate.isofate_coupler import *
@@ -18,6 +19,7 @@ from isofate.isofate_coupler import *
 # from isofate_coupler_v3_cannon import *
 from isofate.isofunks import *
 from isofate.orbit_params import *
+from isofate.parameters import Parameters
 from isofate.presets import LHS1140b, LHS1140Star
 from isofate.species import DEFAULT_SPECIES
 from isofate.system import Planet, Star, System
@@ -35,7 +37,6 @@ f_atm = planet.f_atm
 Mp = planet.mass
 P = planet.period
 
-a = system.semi_major_axis  # [m]
 Fp = system.insolation  # [W/m2]
 T = system.equilibrium_temperature  # planetary eq temp [K]
 F0 = Fp * 1e-3  # use for M star
@@ -47,7 +48,6 @@ flux_model = "power law"
 stellar_type = "M1"
 # t_sat = 2e8 # XUV saturation time [yr]
 t_sat = t_jump * 1e9  # XUV saturation time [yr]
-d = a  # orbital distance [m]
 time = 5e9  # total simulation time [yr]
 t0 = 1e6  # start time [yr]
 t_pms = 0  # pms phase duration [yr]
@@ -125,7 +125,7 @@ print("F0 =", round(F0, 3), "W/m2")
 print("flux model:", flux_model)
 print("stellar type:", stellar_type)
 print("P =", P * const.s2day, "days")
-print("d =", round(a / const.au2m, 3), "au")
+print("d =", round(system.semi_major_axis / const.au2m, 3), "au")
 print("Fp =", round(Fp, 1), "W/m2")
 print("Teq =", round(T, 1), "K")
 print("time =", time / 1e9, "Gyr")
@@ -133,8 +133,7 @@ print("rad_evol =", rad_evol)
 print("mantle_iron", mantle_iron)
 print("dynamic_phi =", dynamic_phi)
 
-# run simulation (from isofate.py)
-isocalc_start = TIME.time()
+
 escape = XUVEscape(
     eps=eps,
     t0=t0,
@@ -161,14 +160,19 @@ options = IsocalcOptions(
     mantle_iron=mantle_iron,
     dynamic_phi=dynamic_phi,
 )
-sol = isocalc(
-    system,
+
+escape_number_flux: EscapeNumberFlux = EscapeNumberFlux()
+
+parameters = Parameters(system, escape, escape_number_flux, options)
+
+# run simulation (from isofate.py)
+isocalc_start = TIME.time()
+sol = isocalc_jax(
+    parameters,
     F0,
     time,
     # ordered per isofate.species.SYMBOLS
     isofate_species_abund=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),
-    options=options,
-    escape=escape,
 )
 print(f"isocalc runtime: {TIME.time() - isocalc_start:.2f} s")
 

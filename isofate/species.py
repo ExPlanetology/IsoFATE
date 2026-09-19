@@ -179,7 +179,13 @@ class IsoFATESpecies(eqx.Module):
         N_tot: Array = jnp.sum(y)
         safe_N_tot: Array = jnp.where(N_tot > 0, N_tot, 1.0)
 
-        return jnp.where(N_tot > 0, jnp.dot(y, self.atomic_masses) / safe_N_tot, 0.0)
+        return jnp.where(N_tot > 0, self.atmosphere_mass(y) / safe_N_tot, 0.0)
+
+    def atmosphere_mass(self, y: Array) -> Array:
+        """Total atmospheric mass [kg], given per-species abundances `y` [atoms], ordered per
+        `self.species`.
+        """
+        return jnp.dot(y, self.atomic_masses)
 
 
 DEFAULT_SPECIES = IsoFATESpecies()

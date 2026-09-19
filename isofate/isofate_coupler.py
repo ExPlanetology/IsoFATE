@@ -5,9 +5,6 @@
 
 """Main IsoFATE script for coupled model."""
 
-import diffrax
-import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -24,11 +21,13 @@ from isofate.atmodeller_coupler import (
     run_atmodeller_step,
 )
 from isofate.constants import const
+from isofate.engine import _integrate_isocalc_jax
 from isofate.escape import EscapeMechanism, EscapeState, XUVEscape
 from isofate.escape_core import EscapeNumberFlux, Phi_1_2, Phi_minor_species
 from isofate.isofunks import R_atm, R_env
 from isofate.mantle_iron import MantleIronState
 from isofate.options import IsocalcOptions
+from isofate.parameters import Parameters
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
 from isofate.system import Planet, System
 from isofate.utils import gravitational_acceleration
@@ -516,201 +515,11 @@ def isocalc(
     return solutions
 
 
-@eqx.filter_jit
-def _integrate_isocalc_jax(
-    t0_seconds: ArrayLike,
-    t_a: Array,
-    y0: Array,
-    F0: ArrayLike,
-    thermal: bool,
-    t_total: ArrayLike,
-    system: System,
-    escape: EscapeMechanism,
-    escape_number_flux: EscapeNumberFlux,
-) -> tuple[Array, dict[str, Array]]:
-    """The diffrax-solvable core of `isocalc_jax`: an ODE integration over `y` (species
-    abundances) plus the diagnostics back-computed from its saved trajectory. Split out from
-    `isocalc_jax` itself (which also does plain-Python/NumPy setup - atmodeller scaffolding, etc.
-    - not worth tracing) so this can be `eqx.filter_jit`'d: repeated calls (e.g. across an
-    MCMC/optimization loop) then reuse one compiled program instead of dispatching every jnp op
-    individually.
-
-    `M_atm` is not tracked as separate integrated state: with no atmodeller coupling in this
-    simplified case, dM_atm/dt is exactly dot(dy/dt, atomic_masses), so M_atm(t) is always exactly
-    dot(y(t), atomic_masses) - tracking it separately would only ever be an affine restatement of
-    y, and would also inherit whatever mismatch exists between `planet.f_atm`'s implied mass and
-    the actual `isofate_species_abund` total (the two are set independently by the caller and
-    aren't guaranteed to agree - or even be close, for an arbitrary scenario). Deriving M_atm/f_atm
-    purely from y avoids that mismatch: `planet.f_atm` is no longer read for the initial condition
-    at all here - the initial atmosphere mass is `dot(isofate_species_abund, atomic_masses)`.
-
-    For the same reason, the Bondi radius R_B is recomputed from the current (evolving) mu inside
-    `_algebraic`, rather than fixed once from a bootstrap `options.mu` guess before the trajectory
-    exists - there's no "before mu exists" moment to bootstrap, since mu is always computable
-    straight from y.
-
-    `system`/`escape`/`escape_number_flux` are `eqx.Module`s (pytrees) - `filter_jit` already
-    partitions their array leaves (traced) from any non-array config fields (held static)
-    without needing explicit annotations, so they're passed through as-is.
-
-    Args:
-        thermal: A plain Python bool, not a traced array - `eqx.filter_jit` holds non-array
-            arguments static automatically (required here, since `R_env` branches on it with a
-            raw Python `if`). Every other argument here is expected to be an actual array (see
-            `isocalc_jax`'s call site, which wraps its locals in `jnp.asarray` before calling) so
-            that varying them across calls reuses this same compiled program rather than
-            retracing.
-
-    Returns:
-        (y_a, alg_a): the saved trajectory (already inf-filled with the held terminal state past
-        the exhaustion event) and the vmapped `_algebraic` diagnostics for every t_a entry
-        (including the derived `M_atm`/`f_atm`).
-    """
-    n_tot = t_a.shape[0]
-    atomic_masses = escape_number_flux.species.atomic_masses
-    R_H = system.hill_radius  # Hill radius [m]
-    Mp = system.planet.mass
-    T = system.equilibrium_temperature
-    d = system.semi_major_axis
-    Fp = system.insolation
-
-    def _algebraic(t, y):
-        """Everything derivable from (t, y) alone - shared by the vector field and the post-solve
-        diagnostics below, so the physics chain (radius_env -> ... -> Phi) is defined once.
-
-        Clips y to >= 0 before use: the adaptive step-size controller can propose trial steps
-        that briefly overshoot into slightly negative territory near exhaustion (the original
-        discrete loop clipped `y` after every step for the same reason), and a negative M_atm/
-        f_atm would otherwise feed a fractional power (R_env's c2**0.59 term) with a negative
-        base.
-        """
-        y = jnp.maximum(y, 0.0)
-        N_tot = jnp.sum(y)
-        safe_N_tot = jnp.where(N_tot > 0, N_tot, 1.0)
-        mu = escape_number_flux.species.atmosphere_mean_mu(y)
-        x = jnp.where(N_tot > 0, y / safe_N_tot, jnp.zeros_like(y))
-
-        M_atm = jnp.dot(y, atomic_masses)  # y already clipped >= 0 above, so M_atm is too
-        f_atm = M_atm / Mp
-        radius_env = R_env(Mp, f_atm, Fp, t, thermal)
-        radius_atm = R_atm(T, Mp, system.planet.rocky_radius, radius_env, mu)
-        R_B = system.bondi_radius(mu, T)  # recomputed from the current mu, not a fixed bootstrap
-        # was `min(R_B, R_H, radius_p)` in isocalc's plain-Python loop - Python's builtin min() on
-        # a traced value, same class of fix as Fxuv/Phi_1_2/Phi_minor_species earlier this
-        # session.
-        radius_p = jnp.minimum(
-            R_B, jnp.minimum(R_H, system.planet.rocky_radius + radius_atm + radius_env)
-        )
-
-        Vpot = system.gravitational_potential(radius_p)
-        A = 4 * jnp.pi * radius_p**2
-        g = gravitational_acceleration(Mp, radius_p)
-
-        state = EscapeState(
-            radius_p=radius_p,
-            Mp=Mp,
-            T=T,
-            F0=F0,
-            Vpot=Vpot,
-            d=d,
-            A=A,
-            mu=mu,
-            radius_env=radius_env,
-            f_atm=f_atm,
-            t_now=t,
-            t_total=t_total,
-        )
-        phi = escape.compute_mass_flux(state)
-        Phi, phi_c = escape_number_flux.get_number_flux(y, T, g, phi)
-
-        return dict(
-            mu=mu,
-            x=x,
-            M_atm=M_atm,
-            f_atm=f_atm,
-            radius_env=radius_env,
-            radius_p=radius_p,
-            Vpot=Vpot,
-            A=A,
-            phi=phi,
-            phi_c=phi_c,
-            Phi=Phi,
-        )
-
-    def _vector_field(t, y, _args):
-        """RHS of the isocalc ODE system - the only genuine integration state's derivative
-        (dy/dt). Everything else, including M_atm, is recomputed from the solution afterward,
-        below.
-        """
-        alg = _algebraic(t, y)
-        dy_dt = -alg["Phi"] * alg["A"]
-        return dy_dt
-
-    # Exact `M_atm <= 0`/`sum(y) <= 0` makes the ODE's right-hand side effectively singular as the
-    # dominant species' abundance -> 0 (Phi_minor_species' N_2/N_1 term blows up), which stalls
-    # Tsit5's adaptive step-size controller (step size underflows before the exact zero is ever
-    # reached, rather than converging). Firing once M_atm/sum(y) drop below a small-but-nonzero
-    # fraction of their initial values avoids this while still meaning "the atmosphere is gone" to
-    # any reasonable tolerance.
-    sum_y0 = jnp.sum(y0)
-    M_atm0 = jnp.dot(y0, atomic_masses)
-    _exhaustion_fraction = 1e-6
-
-    def _exhausted(t, y, _args, **kwargs):
-        """Event condition: entire atmosphere lost - replaces isocalc's `if M_atm <= 0 or
-        sum(y) <= 0: break`.
-        """
-        M_atm = jnp.dot(y, atomic_masses)
-        return (M_atm <= _exhaustion_fraction * M_atm0) | (
-            jnp.sum(y) <= _exhaustion_fraction * sum_y0
-        )
-
-    term = diffrax.ODETerm(_vector_field)
-    sol = diffrax.diffeqsolve(
-        term,
-        diffrax.Tsit5(),
-        t0=t0_seconds,
-        # Not `t0_seconds + t_total`: t_a's last entry runs one delta_t past that (a pre-existing
-        # quirk of t_a's own formula, shared with isocalc, harmless there since t_a is only a
-        # diagnostic label in the discrete loop) - diffrax requires saveat.ts to lie within
-        # [t0, t1], so t1 is taken directly from t_a instead of re-derived independently.
-        t1=t_a[-1],
-        dt0=None,
-        y0=y0,
-        args=None,
-        stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e3),
-        saveat=diffrax.SaveAt(ts=t_a),
-        event=diffrax.Event(cond_fn=_exhausted),
-        max_steps=100_000,
-    )
-    y_a = sol.ys
-
-    # Entries of t_a at/after the point where the event fired come back as inf (diffrax's
-    # SaveAt(ts=...)+Event interaction - empirically confirmed, not documented behavior). Replace
-    # them by holding the last finite (i.e. last actually-integrated) trajectory value constant,
-    # falling back to the initial condition when no saved entry is finite at all (e.g. a short
-    # exhaustion time relative to the requested output cadence, so every t_a entry postdates it).
-    finite_mask = jnp.all(jnp.isfinite(y_a), axis=1)
-    any_finite = jnp.any(finite_mask)
-    last_finite_idx = jnp.max(jnp.where(finite_mask, jnp.arange(n_tot), -1))
-    last_finite_idx = jnp.maximum(last_finite_idx, 0)
-    y_fallback = jnp.where(any_finite, y_a[last_finite_idx], y0)
-    y_a = jnp.where(finite_mask[:, None], y_a, y_fallback)
-
-    # Back-compute every diagnostic (including the derived M_atm) from the saved trajectory in one
-    # vmapped pass, rather than a per-timestep Python loop.
-    alg_a = jax.vmap(_algebraic)(t_a, y_a)
-
-    return y_a, alg_a
-
-
 def isocalc_jax(
-    system: System,
+    parameters: Parameters,
     F0,
     time=5e9,
     isofate_species_abund: Array = jnp.array([0, 0, 0, 0, 0, 0, 0], dtype=float),
-    options: IsocalcOptions = IsocalcOptions(),
-    escape: EscapeMechanism = XUVEscape(),
 ):
     """
     This is a test
@@ -772,11 +581,19 @@ def isocalc_jax(
     #  - 'Phi_D': D number flux [atoms/s/m2]
     # '''
 
-    # `options.mu`/`planet.f_atm` are NOT read here (unlike isocalc): `_integrate_isocalc_jax`
-    # derives mu/M_atm/f_atm/R_B purely from the evolving y instead of bootstrapping from these -
-    # see that function's docstring for why. Every other IsocalcOptions field is read-only for the
-    # whole run and referenced directly as `options.<field>` below. (`options.mantle_iron`
-    # similarly seeds a local `mantle_iron_state` below, once `interior_atmosphere` is available.)
+    # `parameters` bundles the config that's fixed for the whole run (System, escape mechanism,
+    # EscapeNumberFlux, IsocalcOptions) - unpacked once here so the rest of this function (largely
+    # unchanged from when these were separate arguments) can keep referring to them by these same
+    # local names. `options.mu`/`planet.f_atm` are NOT read here (unlike isocalc):
+    # `_integrate_isocalc_jax` derives mu/M_atm/f_atm/R_B purely from the evolving y instead of
+    # bootstrapping from these - see that function's docstring for why. Every other IsocalcOptions
+    # field is read-only for the whole run and referenced directly as `options.<field>` below.
+    # (`options.mantle_iron` similarly seeds a local `mantle_iron_state` below, once
+    # `interior_atmosphere` is available.)
+    system = parameters.system
+    options = parameters.isocalc_options
+    escape = parameters.escape_mechanism
+    escape_number_flux = parameters.escape_number_flux
 
     # isofate_species_abund is ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N,
     # S) - the same order used throughout this function for y, atomic_masses, and species_names
@@ -792,10 +609,6 @@ def isocalc_jax(
     # below).
     planet: Planet = system.planet
     Mp = planet.mass
-
-    ###_____Initialize physical values_____###
-
-    escape_number_flux = EscapeNumberFlux()
 
     ###_____Initialize timesteps_____###
 
@@ -845,7 +658,7 @@ def isocalc_jax(
     # isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S), same as isofate_species_abund above.
     # The initial atmospheric mass is not seeded from planet.f_atm here (unlike isocalc) - see
     # _integrate_isocalc_jax's docstring for why - it's derived from this y instead.
-    y = np.array(isofate_species_abund, dtype=float)
+    # y = np.array(isofate_species_abund, dtype=float)
     ###_____Initialize arrays_____###
 
     t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t0_seconds  # time array [s]
@@ -866,7 +679,7 @@ def isocalc_jax(
     y_a, alg_a = _integrate_isocalc_jax(
         jnp.asarray(t0_seconds),
         jnp.asarray(t_a),
-        jnp.asarray(y),
+        jnp.asarray(isofate_species_abund),
         jnp.asarray(F0),
         options.thermal,
         jnp.asarray(t_total),
