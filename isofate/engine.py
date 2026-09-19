@@ -17,10 +17,10 @@ import jax.numpy as jnp
 from jax import Array
 from jaxtyping import ArrayLike
 
-from isofate.escape import EscapeMechanism, EscapeState
+from isofate.escape import EscapeState
 from isofate.escape_core import EscapeNumberFlux
 from isofate.isofunks import R_atm, R_env
-from isofate.system import System
+from isofate.parameters import Parameters
 from isofate.utils import gravitational_acceleration
 
 
@@ -29,9 +29,7 @@ def _algebraic(
     y: Array,
     thermal: bool,
     t_total: ArrayLike,
-    system: System,
-    escape: EscapeMechanism,
-    escape_number_flux: EscapeNumberFlux,
+    parameters: Parameters,
 ) -> dict[str, Array]:
     """Everything derivable from (t, y) alone, given the run's fixed quantities - shared by
     `_vector_field` (during integration) and the post-solve vmapped diagnostics in
@@ -66,6 +64,10 @@ def _algebraic(
         thermal: A plain Python bool, not a traced array - see the note above about why binding
             this via `functools.partial` (rather than diffrax's `args`) keeps it safely static.
     """
+    system = parameters.system
+    escape = parameters.escape_mechanism
+    escape_number_flux = parameters.escape_number_flux
+
     atomic_masses = escape_number_flux.species.atomic_masses
     Mp = system.planet.mass
     T = system.equilibrium_temperature
@@ -131,9 +133,7 @@ def _vector_field(
     *,
     thermal: bool,
     t_total: ArrayLike,
-    system: System,
-    escape: EscapeMechanism,
-    escape_number_flux: EscapeNumberFlux,
+    parameters: Parameters,
 ) -> Array:
     """RHS of the isocalc ODE system - the only genuine integration state's derivative (dy/dt).
     Everything else, including M_atm, is recomputed from the solution afterward (see
@@ -144,7 +144,7 @@ def _vector_field(
     `_algebraic`'s docstring for why binding this way, rather than via `args`, is safe) - `args`
     itself is unused (`_integrate_isocalc_jax` passes `args=None` to `diffeqsolve`).
     """
-    alg = _algebraic(t, y, thermal, t_total, system, escape, escape_number_flux)
+    alg = _algebraic(t, y, thermal, t_total, parameters)
     return -alg["Phi"] * alg["A"]
 
 
@@ -185,9 +185,7 @@ def _integrate_isocalc_jax(
     y0: Array,
     thermal: bool,
     t_total: ArrayLike,
-    system: System,
-    escape: EscapeMechanism,
-    escape_number_flux: EscapeNumberFlux,
+    parameters: Parameters,
 ) -> tuple[Array, dict[str, Array]]:
     """The diffrax-solvable core of `isocalc_jax`: an ODE integration over `y` (species
     abundances) plus the diagnostics back-computed from its saved trajectory. Split out from
@@ -200,9 +198,9 @@ def _integrate_isocalc_jax(
     see `_algebraic`'s docstring for the M_atm/R_B design and why `functools.partial` (used below
     to bind them to this call's fixed values) is the safe way to give them that data.
 
-    `system`/`escape`/`escape_number_flux` are `eqx.Module`s (pytrees) - `filter_jit` already
-    partitions their array leaves (traced) from any non-array config fields (held static)
-    without needing explicit annotations, so they're passed through as-is.
+    `parameters` is itself an `eqx.Module` (pytree) - `filter_jit` already partitions its array
+    leaves (traced) from any non-array config fields (held static) without needing explicit
+    annotations, so it's passed through as-is.
 
     Args:
         thermal: A plain Python bool, not a traced array - `eqx.filter_jit` holds non-array
@@ -218,6 +216,7 @@ def _integrate_isocalc_jax(
         (including the derived `M_atm`/`f_atm`).
     """
     n_tot = t_a.shape[0]
+    escape_number_flux = parameters.escape_number_flux
     atomic_masses = escape_number_flux.species.atomic_masses
 
     sum_y0 = jnp.sum(y0)
@@ -228,9 +227,7 @@ def _integrate_isocalc_jax(
         _vector_field,
         thermal=thermal,
         t_total=t_total,
-        system=system,
-        escape=escape,
-        escape_number_flux=escape_number_flux,
+        parameters=parameters,
     )
     exhausted = functools.partial(
         _exhausted,
@@ -275,8 +272,8 @@ def _integrate_isocalc_jax(
     # Back-compute every diagnostic (including the derived M_atm) from the saved trajectory in one
     # vmapped pass, rather than a per-timestep Python loop. Only t/y vary per output point - the
     # rest are shared/broadcast (in_axes=None), matching what closing over them would have done.
-    alg_a = jax.vmap(_algebraic, in_axes=(0, 0, None, None, None, None, None))(
-        t_a, y_a, thermal, t_total, system, escape, escape_number_flux
+    alg_a = jax.vmap(_algebraic, in_axes=(0, 0, None, None, None))(
+        t_a, y_a, thermal, t_total, parameters
     )
 
     return y_a, alg_a

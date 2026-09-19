@@ -101,15 +101,15 @@ def isocalc(
     # EscapeNumberFlux, IsocalcOptions) - unpacked once here so the rest of this function (largely
     # unchanged from when these were separate arguments) can keep referring to them by these same
     # local names, matching isocalc_jax. Every other IsocalcOptions field is read-only for the
-    # whole run and referenced directly as `options.<field>` below. `mu` is the one exception: it
-    # becomes this loop's own time-evolving local state - `options.mu` supplies only its *initial*
-    # value and is never read again. (`options.mantle_iron` similarly seeds a local
+    # whole run and referenced directly as `options.<field>` below. `options.mu`/`mu` are NOT read
+    # here (unlike an earlier version of this function): mu/R_B are derived fresh from the
+    # evolving y every iteration below instead of bootstrapping from `options.mu`, matching
+    # isocalc_jax's `_algebraic` (see engine.py). (`options.mantle_iron` similarly seeds a local
     # `mantle_iron_state` below, once `interior_atmosphere` is available.)
     system = parameters.system
     options = parameters.isocalc_options
     escape = parameters.escape_mechanism
     escape_number_flux = parameters.escape_number_flux
-    mu = options.mu
 
     # isofate_species_abund is ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N,
     # S) - the same order used throughout this function for y, atomic_masses, and species_names
@@ -131,7 +131,6 @@ def isocalc(
     Mp = planet.mass
 
     ###_____Initialize physical values_____###
-    R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
     R_H = system.hill_radius  # Hill radius [m]
 
     ###_____Initialize timesteps_____###
@@ -258,6 +257,7 @@ def isocalc(
         # time-variable average atomic mass
         N_tot = np.sum(y)
         mu = escape_number_flux.species.atmosphere_mean_mu(y)
+        R_B = system.bondi_radius(mu, T)  # recomputed from the current mu, not a fixed bootstrap
 
         if options.rad_evol == False:
             radius_env = 0
@@ -584,19 +584,16 @@ def isocalc_jax(
     #  - 'Phi_D': D number flux [atoms/s/m2]
     # '''
 
-    # `parameters` bundles the config that's fixed for the whole run (System, escape mechanism,
-    # EscapeNumberFlux, IsocalcOptions) - unpacked once here so the rest of this function (largely
-    # unchanged from when these were separate arguments) can keep referring to them by these same
-    # local names. `options.mu`/`planet.f_atm` are NOT read here (unlike isocalc):
-    # `_integrate_isocalc_jax` derives mu/M_atm/f_atm/R_B purely from the evolving y instead of
-    # bootstrapping from these - see that function's docstring for why. Every other IsocalcOptions
-    # field is read-only for the whole run and referenced directly as `options.<field>` below.
-    # (`options.mantle_iron` similarly seeds a local `mantle_iron_state` below, once
-    # `interior_atmosphere` is available.)
+    # `system`/`options` are unpacked here since they're also read directly below (`system.planet`,
+    # `options.<field>`); `escape`/`escape_number_flux` are not - `parameters` itself is passed
+    # straight through to `_integrate_isocalc_jax`, which pulls them off internally.
+    # `options.mu`/`planet.f_atm` are NOT read here (unlike isocalc): `_integrate_isocalc_jax`
+    # derives mu/M_atm/f_atm/R_B purely from the evolving y instead of bootstrapping from these -
+    # see that function's docstring for why. Every other IsocalcOptions field is read-only for the
+    # whole run and referenced directly as `options.<field>` below. (`options.mantle_iron`
+    # similarly seeds a local `mantle_iron_state` below, once `interior_atmosphere` is available.)
     system = parameters.system
     options = parameters.isocalc_options
-    escape = parameters.escape_mechanism
-    escape_number_flux = parameters.escape_number_flux
 
     # isofate_species_abund is ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N,
     # S) - the same order used throughout this function for y, atomic_masses, and species_names
@@ -683,9 +680,7 @@ def isocalc_jax(
         jnp.asarray(isofate_species_abund),
         options.thermal,
         jnp.asarray(t_total),
-        system,
-        escape,
-        escape_number_flux,
+        parameters,
     )
     Matm_a = alg_a["M_atm"]
     fatm_a = alg_a["f_atm"]

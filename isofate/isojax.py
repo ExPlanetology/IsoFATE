@@ -7,6 +7,7 @@
 
 import diffrax
 import jax.numpy as jnp
+from jax import Array
 from jax.typing import ArrayLike
 
 from isofate.constants import const
@@ -17,7 +18,7 @@ def _atmosphere_descent_vector_field(
     r: ArrayLike,
     y: tuple[ArrayLike, ArrayLike],
     args: tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike, ArrayLike],
-) -> tuple[ArrayLike, ArrayLike]:
+) -> tuple[ArrayLike, Array]:
     """RHS of the atmosphere-descent ODE system.
 
     Integrated downward in `r` (diffrax's independent/"time" variable here) from the planetary
@@ -56,7 +57,7 @@ def _atmosphere_descent_vector_field(
     g: ArrayLike = gravitational_acceleration(Mc, r)
 
     dp_dr: ArrayLike = -1 * g * rho
-    dmatm_dr: ArrayLike = -4 * jnp.pi * jnp.square(r) * rho
+    dmatm_dr: Array = -4 * jnp.pi * jnp.square(r) * rho
 
     return dp_dr, dmatm_dr
 
