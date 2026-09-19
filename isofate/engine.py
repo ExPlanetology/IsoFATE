@@ -27,7 +27,6 @@ from isofate.utils import gravitational_acceleration
 def _algebraic(
     t: ArrayLike,
     y: Array,
-    F0: ArrayLike,
     thermal: bool,
     t_total: ArrayLike,
     system: System,
@@ -98,7 +97,6 @@ def _algebraic(
         radius_p=radius_p,
         Mp=Mp,
         T=T,
-        F0=F0,
         Vpot=Vpot,
         d=d,
         A=A,
@@ -131,7 +129,6 @@ def _vector_field(
     y: Array,
     _args,
     *,
-    F0: ArrayLike,
     thermal: bool,
     t_total: ArrayLike,
     system: System,
@@ -147,7 +144,7 @@ def _vector_field(
     `_algebraic`'s docstring for why binding this way, rather than via `args`, is safe) - `args`
     itself is unused (`_integrate_isocalc_jax` passes `args=None` to `diffeqsolve`).
     """
-    alg = _algebraic(t, y, F0, thermal, t_total, system, escape, escape_number_flux)
+    alg = _algebraic(t, y, thermal, t_total, system, escape, escape_number_flux)
     return -alg["Phi"] * alg["A"]
 
 
@@ -186,7 +183,6 @@ def _integrate_isocalc_jax(
     t0_seconds: ArrayLike,
     t_a: Array,
     y0: Array,
-    F0: ArrayLike,
     thermal: bool,
     t_total: ArrayLike,
     system: System,
@@ -230,7 +226,6 @@ def _integrate_isocalc_jax(
 
     vector_field = functools.partial(
         _vector_field,
-        F0=F0,
         thermal=thermal,
         t_total=t_total,
         system=system,
@@ -280,8 +275,8 @@ def _integrate_isocalc_jax(
     # Back-compute every diagnostic (including the derived M_atm) from the saved trajectory in one
     # vmapped pass, rather than a per-timestep Python loop. Only t/y vary per output point - the
     # rest are shared/broadcast (in_axes=None), matching what closing over them would have done.
-    alg_a = jax.vmap(_algebraic, in_axes=(0, 0, None, None, None, None, None, None))(
-        t_a, y_a, F0, thermal, t_total, system, escape, escape_number_flux
+    alg_a = jax.vmap(_algebraic, in_axes=(0, 0, None, None, None, None, None))(
+        t_a, y_a, thermal, t_total, system, escape, escape_number_flux
     )
 
     return y_a, alg_a

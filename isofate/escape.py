@@ -12,6 +12,7 @@ atmospheric mass flux [kg/m2/s]. `isocalc()` (isofate_coupler.py) is constructed
 the old `options.mechanism`/`options.RR` string dispatch.
 """
 
+import dataclasses
 from abc import abstractmethod
 
 import equinox as eqx
@@ -38,8 +39,6 @@ class EscapeState(eqx.Module):
     """Planet mass [kg]."""
     T: ArrayLike
     """Equilibrium temperature [K]."""
-    F0: ArrayLike
-    """Initial incident XUV flux [W/m2]."""
     Vpot: ArrayLike
     """Gravitational potential at the outer layer [J/kg]."""
     d: ArrayLike
@@ -354,6 +353,9 @@ class XUVEscape(EscapeMechanism):
     """XUV-driven hydrodynamic escape, optionally capped by radiation-recombination limiting.
 
     Args:
+        F0: Initial (main-sequence/saturated) incident XUV flux [W/m2] - fixed for the whole run,
+            unlike `EscapeState`'s per-timestep fields, so it lives here rather than there (like
+            every other `Fxuv` shape parameter below).
         eps: Heat transfer efficiency [ndim].
         t0: Reference start time for the XUV power-law flux model [yr]. Independent of
             `IsocalcOptions.t0` (isocalc's own simulation-start-time knob), even though they
@@ -366,6 +368,8 @@ class XUVEscape(EscapeMechanism):
             flux (`phi_RR`), taking the min of the two (Wordsworth et al. 2018 prescription).
     """
 
+    _: dataclasses.KW_ONLY
+    F0: ArrayLike
     eps: ArrayLike = 0.15
     t0: ArrayLike = 1e6
     t_sat: ArrayLike = 5e8
@@ -385,7 +389,7 @@ class XUVEscape(EscapeMechanism):
             state.t_now,
             state.Vpot,
             state.d,
-            state.F0,
+            self.F0,
             eps=self.eps,
             t0=self.t0,
             t_sat=self.t_sat,
@@ -405,7 +409,7 @@ class XUVEscape(EscapeMechanism):
             state.Mp,
             state.T,
             state.t_now,
-            state.F0,
+            self.F0,
             t0=self.t0,
             t_sat=self.t_sat,
             beta=self.beta,

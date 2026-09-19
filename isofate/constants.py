@@ -10,6 +10,15 @@ from atmodeller.sci_utils import GAS_CONSTANT, earth
 from atmodeller.sci_utils import constants as _constants
 
 
+# NOTE: Re is deliberately NOT sourced from atmodeller.sci_utils.earth: earth.radius (6.371e6 m,
+# the mean/volumetric Earth radius) differs from Re (6.378e6 m, the equatorial radius) by ~0.1% -
+# a real convention difference, not just precision - and Re feeds directly into R_rocky's Lopez &
+# Fortney 2014 mass-radius scaling relation (isofunks.py), which is pinned to the equatorial-radius
+# convention specifically ("Re not in paper, typo"). Swapping it shifts escape-flux results by
+# ~0.1% (confirmed: breaks tests/test_escape.py's CPMLEscape/CombinedEscape regression pins).
+# Me *is* sourced from earth.mass - atmodeller's earth.mass is now equally precise (5.9722e24 kg).
+
+
 class PhysicalConstants(eqx.Module):
     inv_cm2m: float = 100  # convert inverse cm to inverse m
     avogadro: float = _constants.Avogadro  # Avogadro's number [particles/mole]
@@ -26,7 +35,7 @@ class PhysicalConstants(eqx.Module):
     G: float = _constants.gravitational_constant  # [m3/kg/s2]
     h: float = _constants.h  # [J s]
     c: float = _constants.c  # [m/s]
-    Re: float = earth.radius  # Earth radius [m]
+    Re: float = 6.378e6  # Earth radius [m]
     Me: float = earth.mass  # Earth mass [kg]
     Fe: float = 1366  # Earth bolometric flux [W/m2]
     Ms: float = 1.98847e30  # Solar mass [kg]

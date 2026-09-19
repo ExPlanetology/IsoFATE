@@ -34,7 +34,6 @@ from isofate.utils import gravitational_acceleration
 
 def isocalc(
     parameters: Parameters,
-    F0,
     time=5e9,
     isofate_species_abund: ArrayLike = (0, 0, 0, 0, 0, 0, 0),
 ):
@@ -118,9 +117,7 @@ def isocalc(
     N_H, N_He, N_D, N_O, N_C, N_N, N_S = isofate_species_abund
 
     # d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere below), so
-    # they're read from `system` once, here. F0 is deliberately NOT derived from System: it's a
-    # modeling choice (e.g. F0 = Fp*1e-3 "for M stars"), not a strict derived quantity, so the
-    # caller must still supply it directly. `system.star.mass` is no longer cached separately -
+    # they're read from `system` once, here. `system.star.mass` is no longer cached separately -
     # `system.tidal_reduction_factor(Rp)` reads it directly (see below).
     planet: Planet = system.planet
     d: ArrayLike = system.semi_major_axis
@@ -282,7 +279,6 @@ def isocalc(
             radius_p=radius_p,
             Mp=Mp,
             T=T,
-            F0=F0,
             Vpot=Vpot,
             d=d,
             A=A,
@@ -525,7 +521,6 @@ def isocalc(
 
 def isocalc_jax(
     parameters: Parameters,
-    F0,
     time=5e9,
     isofate_species_abund: Array = jnp.array([0, 0, 0, 0, 0, 0, 0], dtype=float),
 ):
@@ -610,9 +605,7 @@ def isocalc_jax(
 
     # Only planet.mass is read here, to seed build_atmodeller below (Mp never changes over the
     # run). `_integrate_isocalc_jax` re-derives T/d/Fp/Mp from `system` itself (already one of its
-    # arguments), so they don't need to be threaded through separately. F0 is deliberately NOT
-    # derived from System: it's a modeling choice (e.g. F0 = Fp*1e-3 "for M stars"), not a strict
-    # derived quantity, so the caller must still supply it directly. `system.star.mass` is no
+    # arguments), so they don't need to be threaded through separately. `system.star.mass` is no
     # longer cached separately - `system.tidal_reduction_factor(Rp)` reads it directly (see
     # below).
     planet: Planet = system.planet
@@ -688,7 +681,6 @@ def isocalc_jax(
         jnp.asarray(t0_seconds),
         jnp.asarray(t_a),
         jnp.asarray(isofate_species_abund),
-        jnp.asarray(F0),
         options.thermal,
         jnp.asarray(t_total),
         system,

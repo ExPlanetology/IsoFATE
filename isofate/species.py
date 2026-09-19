@@ -99,6 +99,7 @@ class BinaryDiffusionCoefficients(eqx.Module):
             temperature.
         """
         i, j = self._symbol_index[species1], self._symbol_index[species2]
+
         return self._prefactor[i, j] * jnp.power(temperature, self._exponent[i, j])
 
 
@@ -159,11 +160,11 @@ class IsoFATESpecies(eqx.Module):
         [J/mol/K] which would require molar masses [kg/mol].
 
         Args:
-            temperature: Temperature [K].
-            gravity: Gravitational acceleration [m/s2].
+            temperature: Temperature [K]
+            gravity: Gravitational acceleration [m/s2]
 
         Returns:
-            Scale height [m] for each species, ordered per `self.species`.
+            Scale height [m] for each species, ordered per `self.species`
         """
         return constants.Boltzmann * temperature / (self.atomic_masses * gravity)
 
@@ -175,6 +176,12 @@ class IsoFATESpecies(eqx.Module):
         this keeps the value finite even when a caller only conditionally uses it (e.g. near-total
         atmospheric exhaustion in isocalc_jax), so a discarded branch can't corrupt a gradient
         through the selecting `jnp.where`.
+
+        Args:
+            y: Per-species abundances `y` [atoms], ordered per `self.species`.
+
+        Returns:
+            Mean atmospheric particle mass [kg]
         """
         N_tot: Array = jnp.sum(y)
         safe_N_tot: Array = jnp.where(N_tot > 0, N_tot, 1.0)
@@ -182,10 +189,15 @@ class IsoFATESpecies(eqx.Module):
         return jnp.where(N_tot > 0, self.atmosphere_mass(y) / safe_N_tot, 0.0)
 
     def atmosphere_mass(self, y: Array) -> Array:
-        """Total atmospheric mass [kg], given per-species abundances `y` [atoms], ordered per
-        `self.species`.
+        """Total atmospheric mass [kg].
+
+        Args:
+            y: Per-species abundances `y` [atoms], ordered per `self.species`
+
+        Returns:
+            Total atmospheric mass [kg]
         """
         return jnp.dot(y, self.atomic_masses)
 
 
-DEFAULT_SPECIES = IsoFATESpecies()
+DEFAULT_SPECIES: IsoFATESpecies = IsoFATESpecies()

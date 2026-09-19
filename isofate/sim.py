@@ -140,6 +140,7 @@ print("dynamic_phi =", dynamic_phi)
 
 
 escape = XUVEscape(
+    F0=F0,
     eps=eps,
     t0=t0,
     t_sat=t_sat,
@@ -168,13 +169,14 @@ options = IsocalcOptions(
 
 escape_number_flux: EscapeNumberFlux = EscapeNumberFlux()
 
-parameters = Parameters(system, escape, escape_number_flux, options)
+parameters = Parameters(
+    system, escape_mechanism=escape, escape_number_flux=escape_number_flux, isocalc_options=options
+)
 
 # run simulation (from isofate.py)
 isocalc_start = TIME.time()
 sol = isocalc_jax(
     parameters,
-    F0,
     time,
     # ordered per isofate.species.SYMBOLS
     isofate_species_abund=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),
