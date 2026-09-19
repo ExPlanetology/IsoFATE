@@ -18,6 +18,7 @@ import equinox as eqx
 import numpy as np
 from jaxtyping import ArrayLike
 
+from isofate import override
 from isofate.constants import const
 from isofate.isofunks import R_rocky
 from isofate.utils import gravitational_acceleration
@@ -363,6 +364,7 @@ class XUVEscape(EscapeMechanism):
     stellar_type: str = "M1"
     RR: bool = True
 
+    @override
     def compute_mass_flux(self, state: EscapeState) -> ArrayLike:
         phi_energy_limited = phi_E(
             state.t_now,
@@ -413,6 +415,7 @@ class CPMLEscape(EscapeMechanism):
     eps: ArrayLike = 0.15
     rho_rcb: ArrayLike = 1.0
 
+    @override
     def compute_mass_flux(self, state: EscapeState) -> ArrayLike:
         return phiE_CP(
             state.T,
@@ -429,6 +432,7 @@ class CPMLEscape(EscapeMechanism):
 class PhiKillEscape(EscapeMechanism):
     """Forces removal of the entire atmosphere by the end of the run. No tuning constants."""
 
+    @override
     def compute_mass_flux(self, state: EscapeState) -> ArrayLike:
         return phi_kill(state.Mp * state.f_atm, state.radius_p, state.t_total - state.t_now)
 
@@ -440,5 +444,6 @@ class CombinedEscape(EscapeMechanism):
 
     components: tuple[EscapeMechanism, ...]
 
+    @override
     def compute_mass_flux(self, state: EscapeState) -> ArrayLike:
         return sum(component.compute_mass_flux(state) for component in self.components)

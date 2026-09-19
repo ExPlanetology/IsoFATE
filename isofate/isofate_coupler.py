@@ -769,17 +769,18 @@ def isocalc_jax(
         N_tot = np.sum(y)
         mu = np.dot(y, atomic_masses) / N_tot
 
-        if options.rad_evol == False:
-            radius_env = 0
-            radius_atm = 0
-            radius_p = planet.rocky_radius
-        else:
-            radius_env = R_env(Mp, f_atm, Fp, t_a[n], options.thermal)
-            radius_atm = R_atm(T, Mp, planet.rocky_radius, radius_env, mu)
-            radius_p = planet.rocky_radius + radius_atm + radius_env
-            # limits Rp to the min of Bondi/Hill/Lopez+Fortney radius; plain min() avoids numpy's
-            # array-construction/dispatch overhead on a 3-scalar comparison run every timestep
-            radius_p = min(R_B, R_H, radius_p)
+        # TODO: Will add back eventually, once JAX refactor is working for the simpler case
+        # if options.rad_evol == False:
+        #    radius_env = 0
+        #    radius_atm = 0
+        #    radius_p = planet.rocky_radius
+        # else:
+        radius_env = R_env(Mp, f_atm, Fp, t_a[n], options.thermal)
+        radius_atm = R_atm(T, Mp, planet.rocky_radius, radius_env, mu)
+        radius_p = planet.rocky_radius + radius_atm + radius_env
+        # limits Rp to the min of Bondi/Hill/Lopez+Fortney radius; plain min() avoids numpy's
+        # array-construction/dispatch overhead on a 3-scalar comparison run every timestep
+        radius_p = min(R_B, R_H, radius_p)
 
         Vpot = system.gravitational_potential(radius_p)
         A = 4 * np.pi * radius_p**2
