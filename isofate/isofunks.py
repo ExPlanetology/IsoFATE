@@ -348,12 +348,13 @@ def F0_kill(Mp, Rp, M_atm, age, eps=0.15):
     return 40 * Vpot * phi / eps - 2 * C
 
 
-def b_H2_HD(T):
-    """
-    Input: T, temperature [K]
-    Output: Binary diffusion coefficient for H2 in HD from Genda 2008 [molecules/m/s]
-    """
-    return 4.48e19 * T**0.75
+# NOTE: Moved to Binary Diffusion Coefficient class
+# def b_H2_HD(T):
+#     """
+#     Input: T, temperature [K]
+#     Output: Binary diffusion coefficient for H2 in HD from Genda 2008 [molecules/m/s]
+#     """
+#     return 4.48e19 * T**0.75
 
 
 # NOTE: phi_RR moved to isofate.escape.
@@ -368,56 +369,57 @@ def phi_RMC(t, F0, t_sat, Rp):
     return phi
 
 
-def Rp_prim(Mp, f_atm, Fp, t0, T, mu, M_star, d):
-    """
-    Calculates primordial planet radius
-    Takes minimum of Lopez/Fortney 2014 calculation, Hill radius, Bondi radius
-    Inputs:
-     - Mp: planet mass [kg]
-     - f_atm: atm mass fraction [ndim]
-     - Fp: bolometric incident planetary flux [W/m2]
-     - t0: simulation start time [s]
-     - T: planet eq temp [K]
-     - M_star: stellar mass [kg]
-     - d: orbital distance [m]
-    Output: planet radius [m]
-    """
-    r_core = R_rocky(Mp)
-    r_env = R_env(Mp, f_atm, Fp, t0)
-    r_atm = R_atm(T, Mp, r_core, r_env, mu)
-    R_LF = r_core + r_env + r_atm
-    R_B = R_Bondi(Mp, mu, T)
-    R_H = R_Hill(Mp, M_star, d)
-    if type(R_LF) != "int":
-        Rp = np.zeros(len(R_LF))
-        for i in range(len(R_LF)):
-            Rp[i] = np.min([R_LF[i], R_B[i], R_H[i]])
-    else:
-        Rp = np.min([R_LF, R_B, R_H])
-    return Rp
+# NOTE: Unused in the code base
+# def Rp_prim(Mp, f_atm, Fp, t0, T, mu, M_star, d):
+#     """
+#     Calculates primordial planet radius
+#     Takes minimum of Lopez/Fortney 2014 calculation, Hill radius, Bondi radius
+#     Inputs:
+#      - Mp: planet mass [kg]
+#      - f_atm: atm mass fraction [ndim]
+#      - Fp: bolometric incident planetary flux [W/m2]
+#      - t0: simulation start time [s]
+#      - T: planet eq temp [K]
+#      - M_star: stellar mass [kg]
+#      - d: orbital distance [m]
+#     Output: planet radius [m]
+#     """
+#     r_core = R_rocky(Mp)
+#     r_env = R_env(Mp, f_atm, Fp, t0)
+#     r_atm = R_atm(T, Mp, r_core, r_env, mu)
+#     R_LF = r_core + r_env + r_atm
+#     R_B = R_Bondi(Mp, mu, T)
+#     R_H = R_Hill(Mp, M_star, d)
+#     if type(R_LF) != "int":
+#         Rp = np.zeros(len(R_LF))
+#         for i in range(len(R_LF)):
+#             Rp[i] = np.min([R_LF[i], R_B[i], R_H[i]])
+#     else:
+#         Rp = np.min([R_LF, R_B, R_H])
+#     return Rp
 
+# NOTE: Unused in the code base
+# def epsilon(Mp, Rp):
+#     v_esc = np.sqrt(2 * const.G * Mp / Rp)
+#     eps = 0.1 * (v_esc / 15e3) ** (-2)
+#     return eps
 
-def epsilon(Mp, Rp):
-    v_esc = np.sqrt(2 * const.G * Mp / Rp)
-    eps = 0.1 * (v_esc / 15e3) ** (-2)
-    return eps
-
-
-def radius_valley(P, Rp, upper, lower):
-    """
-    Checks if planet falls in the "fractionation valley," near the radius valley
-    Inputs:
-     - P: orbital period [days]
-     - Rp: planetary radius [Earth radii]
-     - upper: tuple or array with upper[0] = slopes and upper[1] = intercept for upper limit of valley
-     - lower: tuple or array with lower[0] = slopes and lower[1] = intercept for lower limit of valley
-    """
-    if Rp < 10 ** (upper[0] * np.log10(P) + upper[1]) and Rp > 10 ** (
-        lower[0] * np.log10(P) + lower[1]
-    ):
-        return True
-    else:
-        return False
+# NOTE: Unused in the code base
+# def radius_valley(P, Rp, upper, lower):
+#     """
+#     Checks if planet falls in the "fractionation valley," near the radius valley
+#     Inputs:
+#      - P: orbital period [days]
+#      - Rp: planetary radius [Earth radii]
+#      - upper: tuple or array with upper[0] = slopes and upper[1] = intercept for upper limit of valley
+#      - lower: tuple or array with lower[0] = slopes and lower[1] = intercept for lower limit of valley
+#     """
+#     if Rp < 10 ** (upper[0] * np.log10(P) + upper[1]) and Rp > 10 ** (
+#         lower[0] * np.log10(P) + lower[1]
+#     ):
+#         return True
+#     else:
+#         return False
 
 
 def Johnson_reduction(eps, F_xuv, Rp, Vpot):
@@ -492,7 +494,7 @@ def f_atm_pred2_alt(Mc, P, T_star, M_star, R_star, distribution=False, sigma_fra
 
 def f_atm_pred3(Mc, Teq):
     """
-    Predicts f_atm after disk dispersal\outer layer blow-off from planet core mass and Teq based on
+    Predicts f_atm after disk dispersal/outer layer blow-off from planet core mass and Teq based on
     models of gas accretion, boil off and disk dispersal from Ginzburg et al 2016 (eq 24)
     Input: planet core mass [kg], equilibrium temperature [K]
     Output: atmopsheric mass fraction [ndim]
@@ -549,29 +551,30 @@ def T_surf(Teq, Mp, fatm, R=const.kb / const.mu_H2, cp=14514, Peq=1e4):
     return Ts
 
 
-def SpecHeatCap(T):
-    if T < 1000:
-        A = 33.066178
-        B = -11.363417
-        C = 11.432816
-        D = -2.772874
-        E = -0.158558
-    elif 1000 <= T < 2500:
-        A = 18.563083
-        B = 12.257357
-        C = -2.859786
-        D = 0.268238
-        E = 1.977990
-    elif 2500 <= T <= 6000:
-        A = 43.413560
-        B = -4.293079
-        C = 1.272428
-        D = -0.096876
-        E = -20.533862
-    elif T > 6000:
-        return 42
-    t = T / 1000
-    return A + B * t + C * t**2 + D * t**3 + E / t**2
+# NOTE: Unused in the code base
+# def SpecHeatCap(T):
+#     if T < 1000:
+#         A = 33.066178
+#         B = -11.363417
+#         C = 11.432816
+#         D = -2.772874
+#         E = -0.158558
+#     elif 1000 <= T < 2500:
+#         A = 18.563083
+#         B = 12.257357
+#         C = -2.859786
+#         D = 0.268238
+#         E = 1.977990
+#     elif 2500 <= T <= 6000:
+#         A = 43.413560
+#         B = -4.293079
+#         C = 1.272428
+#         D = -0.096876
+#         E = -20.533862
+#     elif T > 6000:
+#         return 42
+#     t = T / 1000
+#     return A + B * t + C * t**2 + D * t**3 + E / t**2
 
 
 def MeltFraction(Mp, T):
@@ -606,38 +609,38 @@ def MeltFraction(Mp, T):
     return _MELT_FRACTION_INTERPOLATOR((Mp / const.Me, T))
 
 
-def TSM(Rp, Teq, Mp, Rstar, m_J, scale_factor=1.26):
-    """
-    Calculates transmission spectroscopy metric from Kepmton et al 2018
-    Inputs:
-        - Rp: planet radius [Rearth]
-        - Teq: eq temp assuming zero albedo
-        - Mp: planet mass [Mearth]
-        - Rstar: stellar radius [Rsun]
-        - m_J: J-band mag [ndim]
-    Output: TSM score [ndim]
-    """
-    return scale_factor * Rp**3 * Teq * 10 ** (-m_J / 5) / (Mp * Rstar**2)
+# NOTE: Unused in the code base
+# def TSM(Rp, Teq, Mp, Rstar, m_J, scale_factor=1.26):
+#     """
+#     Calculates transmission spectroscopy metric from Kepmton et al 2018
+#     Inputs:
+#         - Rp: planet radius [Rearth]
+#         - Teq: eq temp assuming zero albedo
+#         - Mp: planet mass [Mearth]
+#         - Rstar: stellar radius [Rsun]
+#         - m_J: J-band mag [ndim]
+#     Output: TSM score [ndim]
+#     """
+#     return scale_factor * Rp**3 * Teq * 10 ** (-m_J / 5) / (Mp * Rstar**2)
 
 
 #####_____ANALYTIC SOLUTIONS_____#####
 
 # for phi < phi_c
 
-
-def x2_subcrit(x2_0, tau, t):
-    return x2_0 / (1 - t / tau)
-
+# NOTE: Unused in the code base
+# def x2_subcrit(x2_0, tau, t):
+#     return x2_0 / (1 - t / tau)
 
 # for phi > phi_c
 
-
-def x2_supercrit(x2_0, Mp, Rp, T, phi_1, tau, t):
-    # phi_1 must be in particles/m2/s
-    m1 = const.M_H2 / const.avogadro  # kg/particle
-    m2 = const.M_HD / const.avogadro  # kg/particle
-    b = 4.48e19 * T**0.75  # [molecules/m/s] from Genda 2008 for H2 in HD
-    g = const.G * Mp / Rp**2  # N/kg
-    gamma = (m2 - m1) * b * g / (const.kb * T * phi_1)  # ndim
-    print(gamma)
-    return x2_0 / (1 - (t / tau)) ** gamma
+# NOTE: Unused in the code base
+# def x2_supercrit(x2_0, Mp, Rp, T, phi_1, tau, t):
+#     # phi_1 must be in particles/m2/s
+#     m1 = const.M_H2 / const.avogadro  # kg/particle
+#     m2 = const.M_HD / const.avogadro  # kg/particle
+#     b = 4.48e19 * T**0.75  # [molecules/m/s] from Genda 2008 for H2 in HD
+#     g = const.G * Mp / Rp**2  # N/kg
+#     gamma = (m2 - m1) * b * g / (const.kb * T * phi_1)  # ndim
+#     print(gamma)
+#     return x2_0 / (1 - (t / tau)) ** gamma
