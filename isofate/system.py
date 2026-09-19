@@ -13,7 +13,6 @@ from jax.typing import ArrayLike
 
 from isofate.constants import const
 from isofate.isofunks import R_Bondi
-from isofate.orbit_params import Luminosity
 
 
 class Star(eqx.Module):
@@ -50,7 +49,9 @@ class Star(eqx.Module):
         if self._luminosity is not None:
             return self._luminosity
         else:
-            return Luminosity(self.radius, self.temperature)
+            return (
+                4 * jnp.pi * jnp.square(self.radius) * const.sbc * jnp.power(self.temperature, 4)
+            )
 
     @property
     def t_jump(self) -> Array:
@@ -87,7 +88,7 @@ class Planet(eqx.Module):
 
     mass: Array
     period: Array
-    f_atm: Array
+    f_atm: Array  # TODO: remove eventually
     albedo: Array
     _rocky_radius: Array | None = None
 
@@ -95,20 +96,15 @@ class Planet(eqx.Module):
         self,
         mass: ArrayLike,
         period: ArrayLike,
-        f_atm: ArrayLike,
+        f_atm: ArrayLike,  # TODO: remove eventually
         albedo: ArrayLike = 0.0,
         rocky_radius: ArrayLike | None = None,
     ):
         self.mass = as_j64(mass)
         self.period = as_j64(period)
-        self.f_atm = as_j64(f_atm)
+        self.f_atm = as_j64(f_atm)  # TODO: remove eventually
         self.albedo = as_j64(albedo)
         self._rocky_radius = as_j64(rocky_radius) if rocky_radius is not None else None
-
-    @property
-    def atmosphere_mass(self) -> Array:
-        """Initial atmospheric mass [kg]."""
-        return self.mass * self.f_atm
 
     @property
     def has_fixed_radius(self) -> bool:
