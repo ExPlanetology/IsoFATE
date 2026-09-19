@@ -222,7 +222,7 @@ def phi_E(
     stellar_type="M1",
 ):
     """
-    Calculates energy-limited mass flux for XUV-friven hydrodynamic escape
+    Calculates energy-limited mass flux for XUV-driven hydrodynamic escape
     Adapted from Wordsworth et al. 2018
 
     Inputs:
