@@ -18,6 +18,7 @@ from isofate.isofate_coupler import *
 # from isofate_coupler_v3 import *
 # from isofate_coupler_v3_cannon import *
 from isofate.isofunks import *
+from isofate.options import IsocalcOptions
 from isofate.orbit_params import *
 from isofate.parameters import Parameters
 from isofate.presets import LHS1140b, LHS1140Star
