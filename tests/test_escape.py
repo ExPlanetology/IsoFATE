@@ -28,11 +28,12 @@ from isofate.escape import (
     phi_RR,
 )
 
+F0 = 500.0
+
 STATE = EscapeState(
     radius_p=6.5e6,
     Mp=5e24,
     T=900.0,
-    F0=500.0,
     Vpot=5e7,
     d=7.5e9,
     A=5.3e14,
@@ -45,8 +46,10 @@ STATE = EscapeState(
 
 
 def test_xuv_escape_matches_old_mechanism_dispatch():
-    assert XUVEscape(RR=True).compute_mass_flux(STATE) == pytest.approx(1.6720024065164486e-08)
-    assert XUVEscape(RR=False).compute_mass_flux(STATE) == pytest.approx(3.75e-07)
+    assert XUVEscape(F0=F0, RR=True).compute_mass_flux(STATE) == pytest.approx(
+        1.6720024065164486e-08
+    )
+    assert XUVEscape(F0=F0, RR=False).compute_mass_flux(STATE) == pytest.approx(3.75e-07)
 
 
 def test_cpml_escape_matches_old_mechanism_dispatch():
@@ -58,7 +61,7 @@ def test_phi_kill_escape_matches_old_mechanism_dispatch():
 
 
 def test_combined_escape_matches_old_xuv_plus_cpml_dispatch():
-    combined = CombinedEscape((XUVEscape(RR=True), CPMLEscape()))
+    combined = CombinedEscape((XUVEscape(F0=F0, RR=True), CPMLEscape()))
     assert combined.compute_mass_flux(STATE) == pytest.approx(2.3450505719285714e-07)
 
 
@@ -66,7 +69,7 @@ def test_combined_escape_sums_components():
     """Direct test of the composition-over-inheritance design: CombinedEscape's result must
     equal the sum of its components' individually-computed results, not just match a pinned
     number."""
-    xuv = XUVEscape(RR=True)
+    xuv = XUVEscape(F0=F0, RR=True)
     cpml = CPMLEscape()
     combined = CombinedEscape((xuv, cpml))
     expected = xuv.compute_mass_flux(STATE) + cpml.compute_mass_flux(STATE)
@@ -74,18 +77,18 @@ def test_combined_escape_sums_components():
 
 
 def test_xuv_escape_wraps_phi_e_and_phi_rr():
-    escape = XUVEscape(RR=True)
-    phi_energy_limited = phi_E(STATE.t_now, STATE.Vpot, STATE.d, STATE.F0, eps=escape.eps, t0=escape.t0)
+    escape = XUVEscape(F0=F0, RR=True)
+    phi_energy_limited = phi_E(STATE.t_now, STATE.Vpot, STATE.d, F0, eps=escape.eps, t0=escape.t0)
     phi_recombination_limited = phi_RR(
-        STATE.radius_p, STATE.Mp, STATE.T, STATE.t_now, STATE.F0, t0=escape.t0
+        STATE.radius_p, STATE.Mp, STATE.T, STATE.t_now, F0, t0=escape.t0
     )
     assert escape.compute_mass_flux(STATE) == pytest.approx(
         min(phi_recombination_limited, phi_energy_limited)
     )
 
-    escape_no_rr = XUVEscape(RR=False)
+    escape_no_rr = XUVEscape(F0=F0, RR=False)
     assert escape_no_rr.compute_mass_flux(STATE) == pytest.approx(
-        phi_E(STATE.t_now, STATE.Vpot, STATE.d, STATE.F0, eps=escape_no_rr.eps, t0=escape_no_rr.t0)
+        phi_E(STATE.t_now, STATE.Vpot, STATE.d, F0, eps=escape_no_rr.eps, t0=escape_no_rr.t0)
     )
 
 

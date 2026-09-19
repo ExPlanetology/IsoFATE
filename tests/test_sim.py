@@ -93,6 +93,7 @@ def _sim_isocalc_kwargs(n_steps=int(1e5)):
     ) / (N_H + N_He + N_D + N_O + N_C + N_N + N_S)
 
     escape = XUVEscape(
+        F0=F0,
         eps=eps,
         t0=t0,
         t_sat=t_sat,
@@ -118,10 +119,9 @@ def _sim_isocalc_kwargs(n_steps=int(1e5)):
         mantle_iron=mantle_iron,
         dynamic_phi=dynamic_phi,
     )
-    parameters = Parameters(system, escape, isocalc_options=options)
+    parameters = Parameters(system, escape_mechanism=escape, isocalc_options=options)
     return dict(
         parameters=parameters,
-        F0=F0,
         time=time,
         # ordered per isofate.species.SYMBOLS
         isofate_species_abund=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),
@@ -164,7 +164,7 @@ def test_isocalc_isocalc_jax_cross_check():
     M_atm/f_atm fresh from y (see isocalc's and _integrate_isocalc_jax's docstrings), so the only
     remaining difference is the integration scheme itself - isocalc's fixed-step Euler loop vs.
     isocalc_jax's adaptive Tsit5 (diffrax). They also now share the exact same call signature
-    (`parameters`, `F0`, `time`, `isofate_species_abund`), so the same kwargs work for both.
+    (`parameters`, `time`, `isofate_species_abund`), so the same kwargs work for both.
 
     Uses n_steps=2000 rather than test_sim_regression's full 1e5 - at 1e5 the two agree to
     ~2e-5 relative (verified by hand), but that isocalc run alone takes ~5 minutes; this only

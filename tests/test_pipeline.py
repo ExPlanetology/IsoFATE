@@ -3,8 +3,9 @@ interactive/plotting driver this is derived from).
 
 These pin the current (atmodeller v2preview) behavior of AtmodellerCoupler/isocalc so future
 refactoring has something concrete to check against. isocalc() now requires a `system=System(...)`
-argument (Mstar/d/T/Fp are derived from it; only F0 stays a separate, independent input - see
-isofate_coupler.py). The toy scenario below was re-cross-checked, by hand, against
+argument (Mstar/d/T/Fp are derived from it; F0 lives on the `XUVEscape` mechanism instead, since
+it's an XUV-specific tuning constant - see isofate.escape). The toy scenario below was
+re-cross-checked, by hand, against
 ../IsoFATE_main running the pre-v2 atmodeller API (0.9.1) with the equivalent Mp/f_atm/Mstar/F0/
 Fp/T/d passed directly: the single-solve values agree to ~1e-4 relative, and the short isocalc()
 run agrees to ~1e-4 relative (small residual differences are expected from atmodeller's own
@@ -132,10 +133,11 @@ def _toy_isocalc_kwargs(**option_overrides):
     """`option_overrides` are forwarded to `IsocalcOptions`; n_steps/n_atmodeller are kept small
     so this stays a fast, non-escape-dominated test scenario."""
     options = IsocalcOptions(n_steps=20, n_atmodeller=5, **option_overrides)
-    parameters = Parameters(_toy_system(), XUVEscape(), isocalc_options=options)
+    parameters = Parameters(
+        _toy_system(), escape_mechanism=XUVEscape(F0=500.0), isocalc_options=options
+    )
     return dict(
         parameters=parameters,
-        F0=500.0,
         time=1e6,
         # isofate_species_abund ordered per isofate.species.SYMBOLS: (H, He, D, O, C, N, S)
         isofate_species_abund=(1e45, 1e44, 1e41, 1.5e45, 1e44, 1e43, 1e43),
