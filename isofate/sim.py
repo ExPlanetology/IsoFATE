@@ -10,8 +10,6 @@ import matplotlib.pyplot as plt
 
 from isofate.constants import const
 from isofate.escape import XUVEscape
-from isofate.mantle_iron import MantleIronConfig
-from isofate.species import DEFAULT_SPECIES
 
 # from debug_isofate_coupler_v2 import *
 from isofate.isofate_coupler import *
@@ -21,6 +19,7 @@ from isofate.isofate_coupler import *
 from isofate.isofunks import *
 from isofate.orbit_params import *
 from isofate.presets import LHS1140b, LHS1140Star
+from isofate.species import DEFAULT_SPECIES
 from isofate.system import Planet, Star, System
 
 # LHS 1140 / LHS 1140 b
@@ -59,14 +58,16 @@ rad_evol = True
 n_steps = int(1e5)
 # Collin starts with 1e3
 # For 1e4 the run-time is reasonable.
-n_atmodeller = int(1e2)  # <-- FIXME: set much smaller Atmodeller runs slow (1e2)
+# TODO: Dan turned off to refactor without Atmodeller to start with.  Then we'll add it back in.
+n_atmodeller = 0  # int(1e2)  # <-- FIXME: set much smaller Atmodeller runs slow (1e2)
 thermal = True
 M_atm = Mp * f_atm  # initial atmospheric mass [kg]
 melt_fraction_override = False
 save_molecules = False
 # mantle_iron = MantleIronConfig(reaction_type="static", fe_mass_fraction=0.1)
 mantle_iron = None
-dynamic_phi = True
+# FIXME: Add this back in after refactor
+dynamic_phi = False
 OtoH_enhancement = 1
 OtoH_enhanced = const.OtoH_protosolar * OtoH_enhancement
 OtoH_enhanced_mass = OtoH_enhanced * (const.mu_O / const.mu_H)

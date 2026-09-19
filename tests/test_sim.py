@@ -1,0 +1,141 @@
+# SPDX-FileCopyrightText: 2026 Collin Cherubim <collinc@uchicago.edu>
+# SPDX-FileCopyrightText: 2026 Dan J. Bower <dbower@eaps.ethz.ch>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""Regression anchor for isofate/sim.py's driver scenario (LHS 1140 b), pinned separately from
+tests/test_pipeline.py's synthetic toy scenario. sim.py itself can't be imported directly (it's a
+plotting script with top-level side effects, including a blocking `plt.show()`), so this
+reconstructs its isocalc() inputs directly - kept in sync with sim.py by hand.
+
+n_atmodeller=0 and dynamic_phi=False here match sim.py's current values (temporarily simplified
+while isocalc is decoupled from Atmodeller/refactored towards a JAX driver - see the FIXME/TODO
+comments in sim.py); update both together if sim.py's parameters change.
+"""
+
+import pytest
+
+from isofate.constants import const
+from isofate.escape import XUVEscape
+from isofate.isofate_coupler import isocalc
+from isofate.options import IsocalcOptions
+from isofate.presets import LHS1140b, LHS1140Star
+from isofate.system import System
+
+
+def _sim_isocalc_kwargs():
+    """Reconstructs isofate/sim.py's isocalc() call, as of the current version of that script."""
+    star = LHS1140Star
+    planet = LHS1140b
+    system = System(star=star, planet=planet)
+
+    f_atm = planet.f_atm
+    Mp = planet.mass
+    t_jump = star.t_jump
+
+    Fp = system.insolation
+    F0 = Fp * 1e-3  # use for M star
+    F_final = 0.17  # LHS 1140; 0.170 for GJ 699 MUSCLES
+    flux_model = "power law"
+    stellar_type = "M1"
+    t_sat = t_jump * 1e9  # XUV saturation time [yr]
+    time = 5e9  # total simulation time [yr]
+    t0 = 1e6  # start time [yr]
+    t_pms = 0  # pms phase duration [yr]
+    step_fn = True
+    RR = True
+    eps = 0.15
+    rad_evol = True
+    n_steps = int(1e5)
+    n_atmodeller = 0
+    thermal = True
+    melt_fraction_override = False
+    save_molecules = False
+    mantle_iron = None
+    dynamic_phi = False
+
+    M_atm = Mp * f_atm  # initial atmospheric mass [kg]
+    OtoH_enhanced_mass = const.OtoH_protosolar * (const.mu_O / const.mu_H)
+
+    N_He = (const.HetoH_protosolar_mass / (1 + const.HetoH_protosolar_mass)) * M_atm / const.mu_He
+    N_H = (
+        (
+            1
+            - const.DtoH_solar_mass
+            - OtoH_enhanced_mass
+            - const.CtoH_protosolar_mass
+            - const.StoH_protosolar_mass
+            - const.NtoH_protosolar_mass
+        )
+        * M_atm
+        / (1 + const.HetoH_protosolar_mass)
+        / const.mu_H
+    )
+    N_D = const.DtoH_solar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_D
+    N_O = OtoH_enhanced_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_O
+    N_C = const.CtoH_protosolar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_C
+    N_N = const.NtoH_protosolar_mass * M_atm / const.mu_N
+    N_S = const.StoH_protosolar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_S
+    mu_avg = (
+        N_H * const.mu_H
+        + N_He * const.mu_He
+        + N_D * const.mu_D
+        + N_O * const.mu_O
+        + N_C * const.mu_C
+        + N_N * const.mu_N
+        + N_S * const.mu_S
+    ) / (N_H + N_He + N_D + N_O + N_C + N_N + N_S)
+
+    escape = XUVEscape(
+        eps=eps,
+        t0=t0,
+        t_sat=t_sat,
+        beta=-1.23,
+        step_fn=step_fn,
+        F_final=F_final,
+        t_pms=t_pms,
+        pms_factor=1e2,
+        flux_model=flux_model,
+        activity="medium",
+        stellar_type=stellar_type,
+        RR=RR,
+    )
+    options = IsocalcOptions(
+        rad_evol=rad_evol,
+        melt_fraction_override=melt_fraction_override,
+        mu=mu_avg,
+        n_steps=n_steps,
+        t0=t0,
+        thermal=thermal,
+        n_atmodeller=n_atmodeller,
+        save_molecules=save_molecules,
+        mantle_iron=mantle_iron,
+        dynamic_phi=dynamic_phi,
+    )
+    return dict(
+        system=system,
+        F0=F0,
+        time=time,
+        # ordered per isofate.species.SYMBOLS
+        isofate_species_abund=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),
+        options=options,
+        escape=escape,
+    )
+
+
+def test_sim_regression():
+    """Pins isofate/sim.py's current driver scenario end to end - not cross-checked against an
+    independent reference (unlike test_pipeline.py's toy scenario), just a regression tripwire for
+    this specific, real-world (LHS 1140 b) case that the test suite otherwise doesn't cover."""
+    sol = isocalc(**_sim_isocalc_kwargs())
+
+    assert sol["Matm"][-1] == pytest.approx(2.7839313702828883e23, rel=1e-6)
+    assert sol["N_H"][-1] == pytest.approx(1.1098113616916483e50, rel=1e-6)
+    assert sol["N_He"][-1] == pytest.approx(1.3415083254038444e49, rel=1e-6)
+    assert sol["N_D"][-1] == pytest.approx(2.345661029428426e45, rel=1e-6)
+    assert sol["N_O"][-1] == pytest.approx(8.353279365174638e46, rel=1e-6)
+    assert sol["N_C"][-1] == pytest.approx(4.168506176565804e46, rel=1e-6)
+    assert sol["N_N"][-1] == pytest.approx(1.5953302209242322e46, rel=1e-6)
+    assert sol["N_S"][-1] == pytest.approx(2.595562037680371e45, rel=1e-6)
+    assert sol["Rp"][-1] == pytest.approx(13824077.899767563, rel=1e-6)
+    assert sol["Vpot"][-1] == pytest.approx(153890314.60392717, rel=1e-6)
