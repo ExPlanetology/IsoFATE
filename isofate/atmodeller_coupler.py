@@ -26,7 +26,7 @@ from isofate.constants import const
 from isofate.isofunks import *
 from isofate.isojax import make_atmosphere_descent_jax
 from isofate.orbit_params import *
-from isofate.species import SYMBOLS
+from isofate.species import DEFAULT_SPECIES, SYMBOLS
 
 solubility_models = get_solubility_models()
 
@@ -581,10 +581,18 @@ def run_atmodeller_step(
     y[5] = atmod_results["N_N_atm"]
     y[6] = atmod_results["N_S_atm"]
 
+    # Derived from y (mass-conservation identity: the gas phase's total mass is exactly the sum
+    # of its constituent atoms' masses) rather than atmodeller's own `sol["gas"]["phase"]["mass"]`
+    # - that value is computed before the H/D disaggregation above, so it treats the aggregated
+    # H+D count as pure H (one atomic mass) instead of the correct per-isotope split. The
+    # difference is the D/H mass fraction (~2e-5, protosolar) - negligible, but this version is
+    # exact rather than an approximation.
+    M_atm = float(np.dot(y, DEFAULT_SPECIES.atomic_masses))
+
     return AtmodellerStepResult(
         y=y,
         isofate_species_abund_int=isofate_species_abund_int,
-        M_atm=atmod_results["M_atm"],
+        M_atm=M_atm,
         T_surf_analytic=atmod_results["T_surface"],
         T_surf_atmod=atmod_results["T_surface_atmod"],
         mantle_iron_state=mantle_iron_state,
