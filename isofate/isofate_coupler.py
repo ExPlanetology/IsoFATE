@@ -528,7 +528,6 @@ def _integrate_isocalc_jax(
     d: ArrayLike,
     Fp: ArrayLike,
     R_B: ArrayLike,
-    R_H: ArrayLike,
     thermal: bool,
     t_total: ArrayLike,
     system: System,
@@ -560,6 +559,7 @@ def _integrate_isocalc_jax(
     """
     n_tot = t_a.shape[0]
     atomic_masses = escape_number_flux.species.atomic_masses
+    R_H = system.hill_radius  # Hill radius [m]
 
     def _algebraic(t, y, M_atm):
         """Everything derivable from (t, y, M_atm) alone - shared by the vector field and the
@@ -770,7 +770,7 @@ def isocalc_jax(
     # isofate_species_abund is ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N,
     # S) - the same order used throughout this function for y, atomic_masses, and species_names
     # below.
-    N_H, N_He, N_D, N_O, N_C, N_N, N_S = isofate_species_abund
+    N_H, _, N_D, _, _, _, _ = isofate_species_abund
 
     # d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere below), so
     # they're read from `system` once, here. F0 is deliberately NOT derived from System: it's a
@@ -793,7 +793,6 @@ def isocalc_jax(
 
     escape_number_flux = EscapeNumberFlux(DEFAULT_BINARY_DIFFUSION, DEFAULT_SPECIES)
     R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
-    R_H = system.hill_radius  # Hill radius [m]
 
     ###_____Initialize timesteps_____###
 
@@ -872,7 +871,6 @@ def isocalc_jax(
         jnp.asarray(d),
         jnp.asarray(Fp),
         jnp.asarray(R_B),
-        jnp.asarray(R_H),
         options.thermal,
         jnp.asarray(t_total),
         system,
