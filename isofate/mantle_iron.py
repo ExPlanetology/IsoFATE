@@ -9,14 +9,13 @@ user-facing, fixed-for-the-run choice; `MantleIronState` is the evolving per-tim
 rebuilt via `dataclasses.replace` (never mutated in place).
 """
 
-from dataclasses import dataclass
 from typing import Literal
 
+import equinox as eqx
 from jaxtyping import ArrayLike
 
 
-@dataclass(frozen=True)
-class MantleIronConfig:
+class MantleIronConfig(eqx.Module):
     """User-facing choice of which Fe reservoir reacts with atmospheric O2, and how much.
 
     Args:
@@ -30,8 +29,7 @@ class MantleIronConfig:
     fe_mass_fraction: float
 
 
-@dataclass(frozen=True)
-class MantleIronState:
+class MantleIronState(eqx.Module):
     """Evolving mantle-Fe-O2 reaction state.
 
     Args:
@@ -42,16 +40,18 @@ class MantleIronState:
     """
 
     config: MantleIronConfig
-    mass_Fe: float
-    mass_Fe2: float
+    mass_Fe: ArrayLike
+    mass_Fe2: ArrayLike
 
     @property
-    def x_Fe2(self) -> float:
+    def x_Fe2(self) -> ArrayLike:
         """Fraction of mass_Fe that remains Fe2+."""
+        # FIXME: Switch logic is not JAX compliant
         return self.mass_Fe2 / self.mass_Fe if self.mass_Fe > 0 else 0.0
 
     @classmethod
     def initial(cls, config: MantleIronConfig, mantle_mass: ArrayLike) -> "MantleIronState":
         """Seeds the initial state: all reacting Fe starts as Fe2+."""
-        mass_Fe = mantle_mass * config.fe_mass_fraction
+        mass_Fe: ArrayLike = mantle_mass * config.fe_mass_fraction
+
         return cls(config=config, mass_Fe=mass_Fe, mass_Fe2=mass_Fe)

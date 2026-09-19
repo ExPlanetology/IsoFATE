@@ -10,16 +10,14 @@ subclass instances instead (see `isofate/escape.py`), passed to `isocalc` as a s
 `escape` argument.
 """
 
-from dataclasses import dataclass
-
+import equinox as eqx
 from jaxtyping import ArrayLike
 
 from isofate.constants import const
 from isofate.mantle_iron import MantleIronConfig
 
 
-@dataclass
-class IsocalcOptions:
+class IsocalcOptions(eqx.Module):
     """Mode switches and tuning constants for `isocalc`, fixed for the whole run.
 
     These are numerical/modeling choices, as opposed to `isocalc`'s other arguments (`system`,

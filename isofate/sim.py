@@ -65,6 +65,7 @@ M_atm = Mp * f_atm  # initial atmospheric mass [kg]
 melt_fraction_override = False
 save_molecules = False
 # mantle_iron = MantleIronConfig(reaction_type="static", fe_mass_fraction=0.1)
+# FIXME: Also None for refactor and simplicity at this stage. Add back in after refactor.
 mantle_iron = None
 # FIXME: Add this back in after refactor
 dynamic_phi = False

@@ -12,9 +12,9 @@ atmospheric mass flux [kg/m2/s]. `isocalc()` (isofate_coupler.py) is constructed
 the old `options.mechanism`/`options.RR` string dispatch.
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from abc import abstractmethod
 
+import equinox as eqx
 import numpy as np
 from jaxtyping import ArrayLike
 
@@ -23,8 +23,7 @@ from isofate.isofunks import R_rocky
 from isofate.utils import gravitational_acceleration
 
 
-@dataclass(frozen=True)
-class EscapeState:
+class EscapeState(eqx.Module):
     """Per-timestep physical state handed to `EscapeMechanism.compute_mass_flux`.
 
     Config constants (eps, t0, rho_rcb, ...) are NOT here - they live on the
@@ -57,7 +56,7 @@ class EscapeState:
     """Total simulation time [s]."""
 
 
-class EscapeMechanism(ABC):
+class EscapeMechanism(eqx.Module):
     """Base class for atmospheric-escape mechanisms."""
 
     @abstractmethod
@@ -335,7 +334,6 @@ def phi_RR(
 # ---- concrete EscapeMechanism subclasses -------------------------------------------------------
 
 
-@dataclass(frozen=True)
 class XUVEscape(EscapeMechanism):
     """XUV-driven hydrodynamic escape, optionally capped by radiation-recombination limiting.
 
@@ -402,7 +400,6 @@ class XUVEscape(EscapeMechanism):
         return min(phi_recombination_limited, phi_energy_limited)
 
 
-@dataclass(frozen=True)
 class CPMLEscape(EscapeMechanism):
     """Core-powered mass loss (Gupta & Schlichting 2020).
 
@@ -429,7 +426,6 @@ class CPMLEscape(EscapeMechanism):
         )
 
 
-@dataclass(frozen=True)
 class PhiKillEscape(EscapeMechanism):
     """Forces removal of the entire atmosphere by the end of the run. No tuning constants."""
 
@@ -437,7 +433,6 @@ class PhiKillEscape(EscapeMechanism):
         return phi_kill(state.Mp * state.f_atm, state.radius_p, state.t_total - state.t_now)
 
 
-@dataclass(frozen=True)
 class CombinedEscape(EscapeMechanism):
     """Sums the mass flux of several component mechanisms, e.g. "XUV+CPML" ==
     `CombinedEscape((XUVEscape(...), CPMLEscape(...)))`.

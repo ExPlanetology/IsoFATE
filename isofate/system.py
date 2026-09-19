@@ -5,8 +5,7 @@
 
 """Star and Planet parameter objects for defining simulation scenarios."""
 
-from dataclasses import dataclass
-
+import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
@@ -15,8 +14,7 @@ from isofate.isofunks import R_Bondi, R_Hill
 from isofate.orbit_params import EqTemp, Insolation, Luminosity, SemiMajor
 
 
-@dataclass
-class Star:
+class Star(eqx.Module):
     """A host star.
 
     Args:
@@ -68,8 +66,7 @@ class Star:
         return (a**3 * 4 * np.pi**2 / const.G / self.mass) ** 0.5
 
 
-@dataclass
-class Planet:
+class Planet(eqx.Module):
     """A planet.
 
     NOTE: A potential refactor is to use the atmodeller Planet class more directly.
@@ -127,8 +124,7 @@ class Planet:
         return const.Re * (self.mass / const.Me) ** 0.25
 
 
-@dataclass
-class System:
+class System(eqx.Module):
     """A planet orbiting a star.
 
     Groups the quantities that genuinely depend on both bodies (or the orbit between them), as
@@ -165,7 +161,7 @@ class System:
         """Hill radius [m]."""
         return R_Hill(self.planet.mass, self.star.mass, self.semi_major_axis)
 
-    def bondi_radius(self, mu: ArrayLike, T: ArrayLike | None = None) -> ArrayLike:
+    def bondi_radius(self, mu: ArrayLike, temperature: ArrayLike | None = None) -> ArrayLike:
         """Bondi radius [m].
 
         Args:
@@ -176,7 +172,11 @@ class System:
         Returns:
             Bondi radius [m]
         """
-        return R_Bondi(self.planet.mass, mu, T if T is not None else self.equilibrium_temperature)
+        _temperature: ArrayLike = (
+            temperature if temperature is not None else self.equilibrium_temperature
+        )
+
+        return R_Bondi(self.planet.mass, mu, _temperature)
 
     def tidal_reduction_factor(
         self, radius: ArrayLike | None = None, floor: ArrayLike = 0.01
@@ -217,6 +217,6 @@ class System:
             Gravitational potential [J/kg]
         """
         _radius: ArrayLike = radius if radius is not None else self.planet.rocky_radius
-        K = self.tidal_reduction_factor(_radius, floor)
+        K: ArrayLike = self.tidal_reduction_factor(_radius, floor)
 
         return K * const.G * self.planet.mass / _radius
