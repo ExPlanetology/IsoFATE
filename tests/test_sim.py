@@ -126,16 +126,21 @@ def _sim_isocalc_kwargs():
 def test_sim_regression():
     """Pins isofate/sim.py's current driver scenario end to end - not cross-checked against an
     independent reference (unlike test_pipeline.py's toy scenario), just a regression tripwire for
-    this specific, real-world (LHS 1140 b) case that the test suite otherwise doesn't cover."""
+    this specific, real-world (LHS 1140 b) case that the test suite otherwise doesn't cover.
+
+    Re-pinned when isocalc's dynamic_phi=False path switched from the hardcoded const.mu_H/mu_He
+    atomic masses to IsoFATESpecies.atomic_masses (molmass-derived IUPAC values) via
+    EscapeNumberFlux - a deliberate ~1e-5 relative accuracy improvement, not a regression.
+    """
     sol = isocalc(**_sim_isocalc_kwargs())
 
-    assert sol["Matm"][-1] == pytest.approx(2.7839313702828883e23, rel=1e-6)
-    assert sol["N_H"][-1] == pytest.approx(1.1098113616916483e50, rel=1e-6)
-    assert sol["N_He"][-1] == pytest.approx(1.3415083254038444e49, rel=1e-6)
-    assert sol["N_D"][-1] == pytest.approx(2.345661029428426e45, rel=1e-6)
-    assert sol["N_O"][-1] == pytest.approx(8.353279365174638e46, rel=1e-6)
-    assert sol["N_C"][-1] == pytest.approx(4.168506176565804e46, rel=1e-6)
-    assert sol["N_N"][-1] == pytest.approx(1.5953302209242322e46, rel=1e-6)
-    assert sol["N_S"][-1] == pytest.approx(2.595562037680371e45, rel=1e-6)
-    assert sol["Rp"][-1] == pytest.approx(13824077.899767563, rel=1e-6)
-    assert sol["Vpot"][-1] == pytest.approx(153890314.60392717, rel=1e-6)
+    assert sol["Matm"][-1] == pytest.approx(2.7839085713762034e23, rel=1e-6)
+    assert sol["N_H"][-1] == pytest.approx(1.1097972805188918e50, rel=1e-6)
+    assert sol["N_He"][-1] == pytest.approx(1.34150950024784e49, rel=1e-6)
+    assert sol["N_D"][-1] == pytest.approx(2.3456362634890842e45, rel=1e-6)
+    assert sol["N_O"][-1] == pytest.approx(8.353277510642382e46, rel=1e-6)
+    assert sol["N_C"][-1] == pytest.approx(4.1685038065703274e46, rel=1e-6)
+    assert sol["N_N"][-1] == pytest.approx(1.5953296928362035e46, rel=1e-6)
+    assert sol["N_S"][-1] == pytest.approx(2.5955619681050573e45, rel=1e-6)
+    assert sol["Rp"][-1] == pytest.approx(13824058.042884521, rel=1e-6)
+    assert sol["Vpot"][-1] == pytest.approx(153890546.53243127, rel=1e-6)

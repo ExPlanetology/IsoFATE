@@ -10,9 +10,9 @@ and their binary diffusion coefficients, used throughout isocalc()/isofunks.py i
 site hand-typing its own copy.
 """
 
-from dataclasses import dataclass, field
 from typing import ClassVar
 
+import equinox as eqx
 import numpy as np
 from atmodeller.jax_utils import NpBool, NpFloat
 from atmodeller.sci_utils import constants, unit_conversion
@@ -22,8 +22,7 @@ from molmass import Formula
 SYMBOLS: tuple[str, ...] = ("H", "He", "D", "O", "C", "N", "S")
 
 
-@dataclass
-class BinaryDiffusionCoefficients:
+class BinaryDiffusionCoefficients(eqx.Module):
     """Temperature-dependent binary diffusion coefficients, each of the form
     b = prefactor * T**exponent [molecules/m/s].
 
@@ -57,9 +56,9 @@ class BinaryDiffusionCoefficients:
 
     symbols: tuple[str, ...] = SYMBOLS
     default_pair: tuple[str, str] = ("H", "He")
-    _symbol_index: dict[str, int] = field(init=False, repr=False)
-    _prefactor: NpFloat = field(init=False, repr=False)
-    _exponent: NpFloat = field(init=False, repr=False)
+    _symbol_index: dict[str, int] = eqx.field(init=False, repr=False)
+    _prefactor: NpFloat = eqx.field(init=False, repr=False)
+    _exponent: NpFloat = eqx.field(init=False, repr=False)
 
     def __post_init__(self):
         self.symbols = tuple(self.symbols)
@@ -104,8 +103,7 @@ class BinaryDiffusionCoefficients:
 DEFAULT_BINARY_DIFFUSION: BinaryDiffusionCoefficients = BinaryDiffusionCoefficients()
 
 
-@dataclass
-class IsoFATESpecies:
+class IsoFATESpecies(eqx.Module):
     """IsoFATE species container.
 
     Atomic masses [kg/atom] are computed once at construction from `molmass` (IUPAC standard
@@ -127,11 +125,12 @@ class IsoFATESpecies:
     """
 
     species: tuple[str, ...] = SYMBOLS
-    binary_diffusion: BinaryDiffusionCoefficients = field(
+    binary_diffusion: BinaryDiffusionCoefficients = eqx.field(
         default_factory=lambda: DEFAULT_BINARY_DIFFUSION
     )
-    atomic_masses: NpFloat = field(init=False)
-    mass_by_symbol: dict[str, float] = field(init=False)
+    atomic_masses: NpFloat = eqx.field(init=False)
+    mass_by_symbol: dict[str, float] = eqx.field(init=False)
+    _symbol_index: dict[str, int] = eqx.field(init=False, repr=False)
 
     def __post_init__(self):
         self.species = tuple(self.species)
@@ -142,6 +141,13 @@ class IsoFATESpecies:
             ]
         )
         self.mass_by_symbol = dict(zip(self.species, self.atomic_masses.tolist()))
+        self._symbol_index = {symbol: i for i, symbol in enumerate(self.species)}
+
+    def index(self, symbol: str) -> int:
+        """Index of `symbol` within `self.species` (and thus `self.atomic_masses` and
+        `scale_heights()`'s output, which share that ordering).
+        """
+        return self._symbol_index[symbol]
 
     def scale_heights(self, temperature: ArrayLike, gravity: ArrayLike) -> ArrayLike:
         """Atmospheric scale height for each species at a given temperature and gravity.

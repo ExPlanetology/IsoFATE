@@ -22,21 +22,14 @@ from isofate.atmodeller_coupler import (
 )
 from isofate.constants import const
 from isofate.escape import EscapeMechanism, EscapeState, XUVEscape
+from isofate.escape_core import EscapeNumberFlux, Phi_1_2, Phi_minor_species
 from isofate.isofunks import (
-    Phi_1,
-    Phi_2,
-    Phi_C_Z90,
-    Phi_D_Z90,
-    Phi_minor_species,
-    Phi_N_Z90,
-    Phi_O_Z90,
-    Phi_S_Z90,
     R_atm,
     R_env,
 )
 from isofate.mantle_iron import MantleIronState
 from isofate.options import IsocalcOptions
-from isofate.species import DEFAULT_SPECIES, SYMBOLS
+from isofate.species import DEFAULT_BINARY_DIFFUSION, DEFAULT_SPECIES, SYMBOLS
 from isofate.system import Planet, System
 from isofate.utils import gravitational_acceleration
 
@@ -140,7 +133,7 @@ def isocalc(
 
     ###_____Initialize physical values_____###
 
-    b = DEFAULT_SPECIES.binary_diffusion.get("H", "He", T)
+    escape_number_flux = EscapeNumberFlux(DEFAULT_BINARY_DIFFUSION, DEFAULT_SPECIES)
     R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
     R_H = system.hill_radius  # Hill radius [m]
 
@@ -297,32 +290,11 @@ def isocalc(
 
         mass_loss = phi * A * delta_t
         g = gravitational_acceleration(Mp, radius_p)
-        # Ordered per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
-        H_H, H_He, H_D, H_O, H_C, H_N, H_S = DEFAULT_SPECIES.scale_heights(T, g)
 
         x = y / N_tot  # molar concentration per species [ndim]
 
         if options.dynamic_phi == False:
-            if y[0] + y[1] == 0:
-                X1 = 0
-                X2 = 0
-            else:
-                X1 = y[0] / (y[0] + y[1])
-                X2 = y[1] / (y[0] + y[1])
-            MU = X1 * const.mu_H + X2 * const.mu_He
-            Phi_H, phi_c = Phi_1(
-                phi, b, H_H, H_He, const.mu_H, const.mu_He, X1, X2, MU, output=1
-            )  # H number flux [atoms/s/m2]
-            Phi_He = Phi_2(
-                phi, b, H_H, H_He, const.mu_H, const.mu_He, X1, X2, MU
-            )  # He number flux [atoms/s/m2]
-            Phi_D = Phi_D_Z90(Phi_H, Phi_He, H_H, H_D, H_He, *y, T)  # D number flux [atoms/s/m2]
-            Phi_O = Phi_O_Z90(Phi_H, Phi_He, H_H, H_O, H_He, *y, T)  # O number flux [atoms/s/m2]
-            Phi_C = Phi_C_Z90(Phi_H, Phi_He, H_H, H_C, H_He, *y, T)  # C number flux [atoms/s/m2]
-            Phi_N = Phi_N_Z90(Phi_H, Phi_He, H_H, H_N, H_He, *y, T)  # N number flux [atoms/s/m2]
-            Phi_S = Phi_S_Z90(Phi_H, Phi_He, H_H, H_S, H_He, *y, T)  # S number flux [atoms/s/m2]
-            # Ordered per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
-            Phi = np.array([Phi_H, Phi_He, Phi_D, Phi_O, Phi_C, Phi_N, Phi_S])
+            Phi, phi_c = escape_number_flux.get_number_flux(y, T, g, phi)
 
         elif options.dynamic_phi == True:
             N_values = y  # ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
@@ -372,8 +344,7 @@ def isocalc(
             b = DEFAULT_SPECIES.binary_diffusion.get(light_name, heavy_name, T)
 
             # Calculate escape fluxes for the two dominant species
-            Phi_1_calc, phi_c = Phi_1(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU, output=1)
-            Phi_2_calc = Phi_2(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU)
+            Phi_1_calc, Phi_2_calc, phi_c = Phi_1_2(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU)
 
             # Assign fluxes to correct species based on light/heavy dominant indices - ordered
             # per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
@@ -644,7 +615,7 @@ def isocalc_jax(
 
     ###_____Initialize physical values_____###
 
-    b = DEFAULT_SPECIES.binary_diffusion.get("H", "He", T)
+    escape_number_flux = EscapeNumberFlux(DEFAULT_BINARY_DIFFUSION, DEFAULT_SPECIES)
     R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
     R_H = system.hill_radius  # Hill radius [m]
 
@@ -804,32 +775,11 @@ def isocalc_jax(
 
         mass_loss = phi * A * delta_t
         g = gravitational_acceleration(Mp, radius_p)
-        # Ordered per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
-        H_H, H_He, H_D, H_O, H_C, H_N, H_S = DEFAULT_SPECIES.scale_heights(T, g)
 
         x = y / N_tot  # molar concentration per species [ndim]
 
         if options.dynamic_phi == False:
-            if y[0] + y[1] == 0:
-                X1 = 0
-                X2 = 0
-            else:
-                X1 = y[0] / (y[0] + y[1])
-                X2 = y[1] / (y[0] + y[1])
-            MU = X1 * const.mu_H + X2 * const.mu_He
-            Phi_H, phi_c = Phi_1(
-                phi, b, H_H, H_He, const.mu_H, const.mu_He, X1, X2, MU, output=1
-            )  # H number flux [atoms/s/m2]
-            Phi_He = Phi_2(
-                phi, b, H_H, H_He, const.mu_H, const.mu_He, X1, X2, MU
-            )  # He number flux [atoms/s/m2]
-            Phi_D = Phi_D_Z90(Phi_H, Phi_He, H_H, H_D, H_He, *y, T)  # D number flux [atoms/s/m2]
-            Phi_O = Phi_O_Z90(Phi_H, Phi_He, H_H, H_O, H_He, *y, T)  # O number flux [atoms/s/m2]
-            Phi_C = Phi_C_Z90(Phi_H, Phi_He, H_H, H_C, H_He, *y, T)  # C number flux [atoms/s/m2]
-            Phi_N = Phi_N_Z90(Phi_H, Phi_He, H_H, H_N, H_He, *y, T)  # N number flux [atoms/s/m2]
-            Phi_S = Phi_S_Z90(Phi_H, Phi_He, H_H, H_S, H_He, *y, T)  # S number flux [atoms/s/m2]
-            # Ordered per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
-            Phi = np.array([Phi_H, Phi_He, Phi_D, Phi_O, Phi_C, Phi_N, Phi_S])
+            Phi, phi_c = escape_number_flux.get_number_flux(y, T, g, phi)
 
         # TODO: Will add back eventually, once JAX refactor is working for the simpler case
         # elif options.dynamic_phi == True:
@@ -880,8 +830,7 @@ def isocalc_jax(
         #     b = DEFAULT_SPECIES.binary_diffusion.get(light_name, heavy_name, T)
 
         #     # Calculate escape fluxes for the two dominant species
-        #     Phi_1_calc, phi_c = Phi_1(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU, output=1)
-        #     Phi_2_calc = Phi_2(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU)
+        #     Phi_1_calc, Phi_2_calc, phi_c = Phi_1_2(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU)
 
         #     # Assign fluxes to correct species based on light/heavy dominant indices - ordered
         #     # per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
