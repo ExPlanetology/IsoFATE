@@ -58,9 +58,9 @@ class BinaryDiffusionCoefficients(eqx.Module):
 
     symbols: tuple[str, ...] = SYMBOLS
     default_pair: tuple[str, str] = ("H", "He")
-    _symbol_index: dict[str, int] = eqx.field(init=False, repr=False)
-    _prefactor: NpFloat = eqx.field(init=False, repr=False)
-    _exponent: NpFloat = eqx.field(init=False, repr=False)
+    _symbol_index: dict[str, int] = eqx.field(init=False)
+    _prefactor: NpFloat = eqx.field(init=False)
+    _exponent: NpFloat = eqx.field(init=False)
 
     def __post_init__(self):
         self.symbols = tuple(self.symbols)
@@ -83,7 +83,7 @@ class BinaryDiffusionCoefficients(eqx.Module):
         self._prefactor[undefined] = default_prefactor
         self._exponent[undefined] = default_exponent
 
-    def get(self, species1: str, species2: str, temperature: ArrayLike) -> float:
+    def get(self, species1: str, species2: str, temperature: ArrayLike) -> Array:
         """Binary diffusion coefficient between two species at temperature T [K].
 
         Symmetric in species order (b(species1, species2) == b(species2, species1)); pairs not
@@ -99,7 +99,7 @@ class BinaryDiffusionCoefficients(eqx.Module):
             temperature.
         """
         i, j = self._symbol_index[species1], self._symbol_index[species2]
-        return self._prefactor[i, j] * temperature ** self._exponent[i, j]
+        return self._prefactor[i, j] * jnp.power(temperature, self._exponent[i, j])
 
 
 DEFAULT_BINARY_DIFFUSION: BinaryDiffusionCoefficients = BinaryDiffusionCoefficients()
