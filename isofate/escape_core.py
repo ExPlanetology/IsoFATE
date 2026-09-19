@@ -85,6 +85,9 @@ def Phi_D_GC23(Phi_H, Phi_He, H_H, H_D, H_He, N_H, N_He, N_D, T):
     Calculates number flux of deuterium for simultaneous calculation of H/He/D escape
     From Gu & Chen 2023
 
+    Not currently plugged into the Phi calc - an alternate/experimental formulation kept for
+    reference.
+
     Inputs:
         - Phi_i: number flux [particles/m2/s]
         - H_i: scale height [m]
@@ -171,23 +174,20 @@ def Phi_minor_species(
     Calculates number flux for minor species using correct Zahnle et al. 1990 formulation
 
     Inputs:
-        - Phi_1: number flux of lightest dominant species [atoms/s/m2]
-        - Phi_2: number flux of heaviest dominant species [atoms/s/m2]
-        - H_1: scale height of lightest dominant species [m]
-        - H_2: scale height of heaviest dominant species [m]
-        - H_minor: scale height of minor species [m]
-        - N_values: list [N_H, N_He, N_D, N_O, N_C, N_N, N_S] - current abundances
-        - T: temperature [K]
-        - minor_species_idx: index (0-4) of the minor species being calculated
-        - light_dominant_idx: index of lightest dominant species (species 1)
-        - heavy_dominant_idx: index of heaviest dominant species (species 2)
-        - binary_diffusion: Binary diffusion coefficient lookup to use.
+        - Phi_1: number flux of lightest dominant species [atoms/s/m2] - traced
+        - Phi_2: number flux of heaviest dominant species [atoms/s/m2] - traced
+        - H_1: scale height of lightest dominant species [m] - traced
+        - H_2: scale height of heaviest dominant species [m] - traced
+        - H_minor: scale height of minor species [m] - traced
+        - N_values: list [N_H, N_He, N_D, N_O, N_C, N_N, N_S] - current abundances - traced
+        - T: temperature [K] - traced
+        - minor_species_idx: index (0-4) of the minor species being calculated - static
+        - light_dominant_idx: index of lightest dominant species (species 1) - static
+        - heavy_dominant_idx: index of heaviest dominant species (species 2) - static
+        - binary_diffusion: Binary diffusion coefficient lookup to use - static.
         - species_symbols: Symbols that `minor_species_idx`/`light_dominant_idx`/
-          `heavy_dominant_idx` index into.
+          `heavy_dominant_idx` index into - static.
     """
-    if sum(N_values) == 0:
-        return 0
-
     minor_name = species_symbols[minor_species_idx]
     light_name = species_symbols[light_dominant_idx]  # species 1
     heavy_name = species_symbols[heavy_dominant_idx]  # species 2
@@ -197,30 +197,44 @@ def Phi_minor_species(
     b_2_minor = binary_diffusion.get(heavy_name, minor_name, T)  # b between species 2 and minor
     b_1_2 = binary_diffusion.get(light_name, heavy_name, T)  # b between species 1 and 2
 
-    alpha_2 = b_1_minor / b_1_2 if b_1_2 != 0 else 1  # b_1_minor/b_1_2
-    alpha_3 = b_1_minor / b_2_minor if b_2_minor != 0 else 1  # b_1_minor/b_2_minor
+    # b_1_2/b_2_minor are essentially never exactly zero in practice (BinaryDiffusionCoefficients
+    # always returns prefactor*T**exponent with a positive prefactor), but both are traced (depend
+    # on T), so the zero-guards are resolved via jnp.where rather than a plain Python ternary.
+    safe_b_1_2 = jnp.where(b_1_2 == 0, 1.0, b_1_2)
+    safe_b_2_minor = jnp.where(b_2_minor == 0, 1.0, b_2_minor)
+    alpha_2 = jnp.where(b_1_2 == 0, 1.0, b_1_minor / safe_b_1_2)  # b_1_minor/b_1_2
+    alpha_3 = jnp.where(b_2_minor == 0, 1.0, b_1_minor / safe_b_2_minor)  # b_1_minor/b_2_minor
+
     Phi_DL_minor = b_1_minor * (1 / H_minor - 1 / H_1)
     Phi_DL_2 = b_1_2 * (1 / H_2 - 1 / H_1)
 
     N_1 = N_values[light_dominant_idx]  # lightest dominant species
     N_2 = N_values[heavy_dominant_idx]  # heaviest dominant species
     N_minor = N_values[minor_species_idx]
+    N_total = sum(N_values)
 
-    if N_1 == 0:
-        return 0
-
-    f_2 = N_2 / N_1  # N_2/N_1 (heavy/light dominant)
-    f_minor = N_minor / N_1  # N_minor/N_1
+    # Guard N_1/N_total before dividing so the discarded branches never compute 0/0.
+    safe_N_1 = jnp.where(N_1 == 0, 1.0, N_1)
+    f_2 = N_2 / safe_N_1  # N_2/N_1 (heavy/light dominant)
+    f_minor = N_minor / safe_N_1  # N_minor/N_1
 
     # Calculate molar fraction of species 2 in total atmosphere
-    N_total = sum(N_values)
-    x_2 = N_2 / N_total if N_total > 0 else 0
+    safe_N_total = jnp.where(N_total > 0, N_total, 1.0)
+    x_2 = jnp.where(N_total > 0, N_2 / safe_N_total, 0.0)
 
     # Zahnle et al. 1990 formulation
     num = Phi_1 - Phi_DL_minor + alpha_2 * Phi_DL_2 * x_2 + alpha_3 * Phi_2
     denom = 1 + alpha_3 * f_2
 
-    return max(0, f_minor * num / denom)
+    result = jnp.maximum(0.0, f_minor * num / denom)
+    result = jnp.where(N_1 == 0, 0.0, result)
+    # NOTE: sum(N_values) == 0 implies N_1 == 0 too, since N_1 is one of N_total's non-negative
+    # summands - this guard may be redundant with the N_1==0 guard above. Kept for now, matching
+    # the original two-guard structure exactly; a future refactor could potentially drop it if
+    # the function is confirmed to handle N_total==0 self-consistently via N_1==0 alone.
+    result = jnp.where(N_total == 0, 0.0, result)
+
+    return result
 
 
 class EscapeNumberFlux(eqx.Module):

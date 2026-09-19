@@ -23,10 +23,7 @@ from isofate.atmodeller_coupler import (
 from isofate.constants import const
 from isofate.escape import EscapeMechanism, EscapeState, XUVEscape
 from isofate.escape_core import EscapeNumberFlux, Phi_1_2, Phi_minor_species
-from isofate.isofunks import (
-    R_atm,
-    R_env,
-)
+from isofate.isofunks import R_atm, R_env
 from isofate.mantle_iron import MantleIronState
 from isofate.options import IsocalcOptions
 from isofate.species import DEFAULT_BINARY_DIFFUSION, DEFAULT_SPECIES, SYMBOLS
