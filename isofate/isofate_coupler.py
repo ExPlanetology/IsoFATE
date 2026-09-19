@@ -254,7 +254,7 @@ def isocalc(
 
         # time-variable average atomic mass
         N_tot = np.sum(y)
-        mu = np.dot(y, atomic_masses) / N_tot
+        mu = escape_number_flux.species.atmosphere_mean_mu(y)
 
         if options.rad_evol == False:
             radius_env = 0
@@ -576,7 +576,7 @@ def _integrate_isocalc_jax(
         M_atm = jnp.maximum(M_atm, 0.0)
         N_tot = jnp.sum(y)
         safe_N_tot = jnp.where(N_tot > 0, N_tot, 1.0)
-        mu = jnp.dot(y, atomic_masses) / safe_N_tot
+        mu = escape_number_flux.species.atmosphere_mean_mu(y)
         x = jnp.where(N_tot > 0, y / safe_N_tot, jnp.zeros_like(y))
 
         f_atm = M_atm / Mp
@@ -696,7 +696,7 @@ def isocalc_jax(
     system: System,
     F0,
     time=5e9,
-    isofate_species_abund: Array = jnp.array([0, 0, 0, 0, 0, 0, 0]),
+    isofate_species_abund: Array = jnp.array([0, 0, 0, 0, 0, 0, 0], dtype=float),
     options: IsocalcOptions = IsocalcOptions(),
     escape: EscapeMechanism = XUVEscape(),
 ):

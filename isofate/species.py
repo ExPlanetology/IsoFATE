@@ -13,9 +13,11 @@ site hand-typing its own copy.
 from typing import ClassVar
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 from atmodeller.jax_utils import NpBool, NpFloat
 from atmodeller.sci_utils import constants, unit_conversion
+from jax import Array
 from jax.typing import ArrayLike
 from molmass import Formula
 
@@ -164,6 +166,20 @@ class IsoFATESpecies(eqx.Module):
             Scale height [m] for each species, ordered per `self.species`.
         """
         return constants.Boltzmann * temperature / (self.atomic_masses * gravity)
+
+    def atmosphere_mean_mu(self, y: Array) -> Array:
+        """Mean atmospheric particle mass [kg], given per-species abundances `y` [atoms],
+        ordered per `self.species`.
+
+        Returns 0 when the total abundance is zero, rather than letting 0/0 propagate as NaN -
+        this keeps the value finite even when a caller only conditionally uses it (e.g. near-total
+        atmospheric exhaustion in isocalc_jax), so a discarded branch can't corrupt a gradient
+        through the selecting `jnp.where`.
+        """
+        N_tot: Array = jnp.sum(y)
+        safe_N_tot: Array = jnp.where(N_tot > 0, N_tot, 1.0)
+
+        return jnp.where(N_tot > 0, jnp.dot(y, self.atomic_masses) / safe_N_tot, 0.0)
 
 
 DEFAULT_SPECIES = IsoFATESpecies()
