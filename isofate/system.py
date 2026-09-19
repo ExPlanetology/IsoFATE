@@ -172,5 +172,51 @@ class System:
             mu: Mean atmospheric particle mass [kg] - time-evolving, must be supplied by the
                 caller (see the class docstring).
             T: Temperature [K]. Defaults to `equilibrium_temperature` if not given.
+
+        Returns:
+            Bondi radius [m]
         """
         return R_Bondi(self.planet.mass, mu, T if T is not None else self.equilibrium_temperature)
+
+    def tidal_reduction_factor(
+        self, radius: ArrayLike | None = None, floor: ArrayLike = 0.01
+    ) -> ArrayLike:
+        """Gravitational potential reduction factor due to stellar tidal forces (Erkaev et al.
+        2007).
+
+        Args:
+            radius: Planet radius [m]. Defaults to `planet.rocky_radius` if not given; pass the
+                current total (rocky + envelope) radius explicitly when it's time-evolving (see
+                the class docstring).
+            floor: Minimum value returned. Defaults to `0.01`.
+
+        Returns:
+            Gravitational potential reduction factor [ndim]
+        """
+        _radius: ArrayLike = radius if radius is not None else self.planet.rocky_radius
+
+        delta: ArrayLike = self.planet.mass / self.star.mass
+        lam: ArrayLike = self.semi_major_axis / _radius
+        zeta: ArrayLike = lam * (delta / 3) ** (1 / 3)
+        V_reduction: ArrayLike = 1 - 3 / 2 / zeta + 1 / 2 / zeta**3
+
+        return max(V_reduction, floor)  # pyright: ignore[reportArgumentType]
+
+    def gravitational_potential(
+        self, radius: ArrayLike | None = None, floor: ArrayLike = 0.01
+    ) -> ArrayLike:
+        """Gravitational potential at the outer layer [J/kg], reduced by `tidal_reduction_factor`.
+
+        Args:
+            radius: Planet radius [m]. Defaults to `planet.rocky_radius` if not given; pass the
+                current total (rocky + envelope) radius explicitly when it's time-evolving (see
+                the class docstring).
+            floor: Minimum `tidal_reduction_factor` value used. Defaults to `0.01`.
+
+        Returns:
+            Gravitational potential [J/kg]
+        """
+        _radius: ArrayLike = radius if radius is not None else self.planet.rocky_radius
+        K = self.tidal_reduction_factor(_radius, floor)
+
+        return K * const.G * self.planet.mass / _radius

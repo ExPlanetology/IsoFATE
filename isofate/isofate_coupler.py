@@ -31,7 +31,6 @@ from isofate.isofunks import (
     Phi_S_Z90,
     R_atm,
     R_env,
-    V_reduction,
 )
 from isofate.mantle_iron import MantleIronState
 from isofate.options import IsocalcOptions
@@ -120,12 +119,12 @@ def isocalc(
     # below.
     N_H, N_He, N_D, N_O, N_C, N_N, N_S = isofate_species_abund
 
-    # Mstar, d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere
-    # below), so they're read from `system` once, here. F0 is deliberately NOT derived from
-    # System: it's a modeling choice (e.g. F0 = Fp*1e-3 "for M stars"), not a strict derived
-    # quantity, so the caller must still supply it directly.
+    # d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere below), so
+    # they're read from `system` once, here. F0 is deliberately NOT derived from System: it's a
+    # modeling choice (e.g. F0 = Fp*1e-3 "for M stars"), not a strict derived quantity, so the
+    # caller must still supply it directly. `system.star.mass` is no longer cached separately -
+    # `system.tidal_reduction_factor(Rp)` reads it directly (see below).
     planet: Planet = system.planet
-    Mstar: ArrayLike = system.star.mass
     d: ArrayLike = system.semi_major_axis
     T: ArrayLike = system.equilibrium_temperature
     Fp: ArrayLike = system.insolation
@@ -234,10 +233,7 @@ def isocalc(
             fatm_a[n:] = 0  # f_atm #fatm_a[n-1]
             Renv_a[n:] = 0  # radius_env #Renv_a[n-1]
             Rp_a[n:] = planet.rocky_radius
-            K = np.max(
-                [V_reduction(Mp, Mstar, d, planet.rocky_radius), 0.01]
-            )  # grav potential reduction factor due to stellar tidal forces
-            Vpot_a[n:] = K * const.G * Mp / planet.rocky_radius
+            Vpot_a[n:] = system.grav_potential()
 
             phi_a[n:] = 0
             Mloss_a[n:] = 0
@@ -277,9 +273,7 @@ def isocalc(
             # array-construction/dispatch overhead on a 3-scalar comparison run every timestep
             radius_p = min(R_B, R_H, radius_p)
 
-        # grav potential reduction factor due to stellar tidal forces
-        K = max(V_reduction(Mp, Mstar, d, radius_p), 0.01)
-        Vpot = K * const.G * Mp / radius_p
+        Vpot = system.gravitational_potential(radius_p)
         A = 4 * np.pi * radius_p**2
 
         # sets mass flux [kg/m2/s]
