@@ -14,6 +14,7 @@ from jaxtyping import ArrayLike
 
 from isofate.species import (
     DEFAULT_BINARY_DIFFUSION,
+    DEFAULT_SPECIES,
     SYMBOLS,
     BinaryDiffusionCoefficients,
     IsoFATESpecies,
@@ -242,10 +243,14 @@ class EscapeNumberFlux(eqx.Module):
 
     H and He are always treated as the light/heavy diffusive pair (Phi_1_2); every other tracked
     species is treated as a minor/trace species relative to that pair (Phi_minor_species).
+
+    Args:
+        binary_diffusion: Binary diffusion coefficient table (defaults to `DEFAULT_BINARY_DIFFUSION`)
+        species: Tracked-species registry (defaults to `DEFAULT_SPECIES`)
     """
 
-    binary_diffusion: BinaryDiffusionCoefficients
-    species: IsoFATESpecies
+    binary_diffusion: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
+    species: IsoFATESpecies = DEFAULT_SPECIES
 
     def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike):
         """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux.

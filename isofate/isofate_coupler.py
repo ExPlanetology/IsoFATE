@@ -29,7 +29,7 @@ from isofate.escape_core import EscapeNumberFlux, Phi_1_2, Phi_minor_species
 from isofate.isofunks import R_atm, R_env
 from isofate.mantle_iron import MantleIronState
 from isofate.options import IsocalcOptions
-from isofate.species import DEFAULT_BINARY_DIFFUSION, DEFAULT_SPECIES, SYMBOLS
+from isofate.species import DEFAULT_SPECIES, SYMBOLS
 from isofate.system import Planet, System
 from isofate.utils import gravitational_acceleration
 
@@ -133,7 +133,7 @@ def isocalc(
 
     ###_____Initialize physical values_____###
 
-    escape_number_flux = EscapeNumberFlux(DEFAULT_BINARY_DIFFUSION, DEFAULT_SPECIES)
+    escape_number_flux = EscapeNumberFlux()
     R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
     R_H = system.hill_radius  # Hill radius [m]
 
@@ -522,11 +522,7 @@ def _integrate_isocalc_jax(
     t_a: Array,
     y0: Array,
     M_atm0: ArrayLike,
-    Mp: ArrayLike,
-    T: ArrayLike,
     F0: ArrayLike,
-    d: ArrayLike,
-    Fp: ArrayLike,
     R_B: ArrayLike,
     thermal: bool,
     t_total: ArrayLike,
@@ -560,6 +556,10 @@ def _integrate_isocalc_jax(
     n_tot = t_a.shape[0]
     atomic_masses = escape_number_flux.species.atomic_masses
     R_H = system.hill_radius  # Hill radius [m]
+    Mp = system.planet.mass
+    T = system.equilibrium_temperature
+    d = system.semi_major_axis
+    Fp = system.insolation
 
     def _algebraic(t, y, M_atm):
         """Everything derivable from (t, y, M_atm) alone - shared by the vector field and the
@@ -772,15 +772,15 @@ def isocalc_jax(
     # below.
     N_H, _, N_D, _, _, _, _ = isofate_species_abund
 
-    # d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere below), so
-    # they're read from `system` once, here. F0 is deliberately NOT derived from System: it's a
-    # modeling choice (e.g. F0 = Fp*1e-3 "for M stars"), not a strict derived quantity, so the
-    # caller must still supply it directly. `system.star.mass` is no longer cached separately -
+    # T is confirmed fixed for the whole run (never reassigned below), so it's read from
+    # `system` once, here, to seed R_B - `_integrate_isocalc_jax` re-derives T/d/Fp/Mp from
+    # `system` itself (already one of its arguments), so they don't need to be threaded through
+    # separately. F0 is deliberately NOT derived from System: it's a modeling choice (e.g. F0 =
+    # Fp*1e-3 "for M stars"), not a strict derived quantity, so the caller must still supply it
+    # directly. `system.star.mass` is no longer cached separately -
     # `system.tidal_reduction_factor(Rp)` reads it directly (see below).
     planet: Planet = system.planet
-    d: ArrayLike = system.semi_major_axis
     T: ArrayLike = system.equilibrium_temperature
-    Fp: ArrayLike = system.insolation
 
     # Only planet.mass and planet.f_atm are ever read, and only here, once, to seed the
     # *initial* conditions: Mp never changes over the run, but f_atm is immediately reassigned
@@ -791,7 +791,7 @@ def isocalc_jax(
 
     ###_____Initialize physical values_____###
 
-    escape_number_flux = EscapeNumberFlux(DEFAULT_BINARY_DIFFUSION, DEFAULT_SPECIES)
+    escape_number_flux = EscapeNumberFlux()
     R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
 
     ###_____Initialize timesteps_____###
@@ -865,11 +865,7 @@ def isocalc_jax(
         jnp.asarray(t_a),
         jnp.asarray(y),
         jnp.asarray(M_atm),
-        jnp.asarray(Mp),
-        jnp.asarray(T),
         jnp.asarray(F0),
-        jnp.asarray(d),
-        jnp.asarray(Fp),
         jnp.asarray(R_B),
         options.thermal,
         jnp.asarray(t_total),
