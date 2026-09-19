@@ -719,25 +719,6 @@ def b_H2_HD(T):
     return 4.48e19 * T**0.75
 
 
-def V_reduction(Mp, Ms, a, Rp):
-    """
-    Planetary gravitational reduction factor due to stellar tidal forces
-    Erkaev et al 2007
-    Inputs:
-     - Mp: planet mass [kg]
-     - Ms: stellar mass [kg]
-     - a: orbital distance [m]
-     - Rp: planet radius [m]
-    Output: Grav potential reduction factor
-    """
-
-    delta = Mp / Ms
-    lam = a / Rp
-    zeta = lam * (delta / 3) ** (1 / 3)
-    K = 1 - 3 / 2 / zeta + 1 / 2 / zeta**3
-    return K
-
-
 # NOTE: phi_RR moved to isofate.escape.
 
 
