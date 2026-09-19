@@ -42,6 +42,7 @@ class BinaryDiffusionCoefficients(eqx.Module):
     """
 
     # (species1, species2, prefactor, exponent, source)
+    # [molecules/m/s]
     COEFFICIENTS: ClassVar[tuple[tuple[str, str, float, float, str], ...]] = (
         ("H", "D", 7.183e19, 0.728, "Genda & Ikoma 2008, D in H (not measured directly)"),
         ("H", "He", 1.04e20, 0.732, "Mason & Marrero 1970 (and Hu, Seager, Yung 2015), H in He"),
@@ -54,6 +55,8 @@ class BinaryDiffusionCoefficients(eqx.Module):
         ("He", "N", 2.65e19, 0.75, "Approximated from He-O (Genda/Ikoma 2008 Appendix C)"),
         ("H", "S", 4.73e19, 0.75, "Approximated from H-O (Genda/Ikoma 2008 Appendix C)"),
         ("He", "S", 2.48e19, 0.75, "Approximated from He-O (Genda/Ikoma 2008 Appendix C)"),
+        # TODO: Currently breaks the code if species are not in SYMBOLS
+        # ("H2", "HD", 4.48e19, 0.75, "Genda 2008, H2-HD"),
     )
 
     symbols: tuple[str, ...] = SYMBOLS
