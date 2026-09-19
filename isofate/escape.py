@@ -223,12 +223,15 @@ def phi_E(
 
     Output: mass flux [kg/m2/s]
     """
+    # NOTE: I think this is the default branch that is currently being tripped for simple tests.
     if flux_model == "power law":
         return eps * Fxuv(t, F0, t0, t_sat, beta, step_fn, F_final, t_pms, pms_factor) / (4 * Vpot)
-    elif flux_model == "phoenix":
-        return eps * Fxuv_hazmat(t, d, activity) / (4 * Vpot)
-    elif flux_model == "Johnstone":
-        return eps * Fxuv_Johnstone(t, d, stellar_type)
+    # FIXME: Will probably break JAX.  To refactor.
+    # elif flux_model == "phoenix":
+    #    return eps * Fxuv_hazmat(t, d, activity) / (4 * Vpot)
+    # FIXME: This will break JAX.  Data must be loaded outside of the JAX-traced function.
+    # elif flux_model == "Johnstone":
+    #    return eps * Fxuv_Johnstone(t, d, stellar_type)
 
 
 def phiE_CP(Teq, Mp, rho_rcb, eps, Vpot, area, mu, R_env):
