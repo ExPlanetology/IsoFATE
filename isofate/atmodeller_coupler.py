@@ -20,11 +20,10 @@ from atmodeller.sci_utils import earth
 from atmodeller.solubility import get_solubility_models
 from jax.typing import ArrayLike
 
-from isofate.mantle_iron import MantleIronState
-
 from isofate.constants import const
 from isofate.isofunks import *
 from isofate.isojax import make_atmosphere_descent_jax
+from isofate.mantle_iron import MantleIronState
 from isofate.orbit_params import *
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
 
@@ -217,6 +216,7 @@ def _update_solve_extract_narrow(
     return sol, output.solution, output.multi_attempt_solution.success
 
 
+# NOTE: Rebuilding the whole Atmodeller on a new class atmodeller_coupler_new.py
 def build_atmodeller(
     planet_mass: ArrayLike,
     *,
