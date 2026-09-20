@@ -22,7 +22,6 @@ from jax.scipy.interpolate import RegularGridInterpolator
 from jax.typing import ArrayLike
 
 from isofate.constants import const
-from isofate.isofunks import R_Bondi
 
 DATA_DIRECTORY: Traversable = importlib.resources.files(f"{__package__}.data")
 """Data directory"""
@@ -237,20 +236,3 @@ class System(eqx.Module):
         )
 
         return hill_radius
-
-    def bondi_radius(self, mu: ArrayLike, temperature: ArrayLike | None = None) -> Array:
-        """Bondi radius [m].
-
-        Args:
-            mu: Mean atmospheric particle mass [kg] - time-evolving, must be supplied by the
-                caller (see the class docstring).
-            T: Temperature [K]. Defaults to `equilibrium_temperature` if not given.
-
-        Returns:
-            Bondi radius [m]
-        """
-        _temperature: ArrayLike = (
-            temperature if temperature is not None else self.equilibrium_temperature
-        )
-
-        return jnp.asarray(R_Bondi(self.planet.mass, mu, _temperature))

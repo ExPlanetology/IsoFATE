@@ -9,6 +9,7 @@ import time as TIME
 import matplotlib.pyplot as plt
 
 from isofate.constants import const
+from isofate.engine import bondi_radius
 from isofate.escape.mechanisms import XUVEscape
 
 # from debug_isofate_coupler_v2 import *
@@ -320,7 +321,7 @@ r_env = R_env(Mp, f_atm, Fp, t0)
 r_atm = R_atm(T, Mp, r_core, r_env, mu)
 Rp = r_core + r_env + r_atm
 # Rp = r_core
-R_B = system.bondi_radius(mu, T)  # Bondi radius [m]
+R_B = bondi_radius(Mp, mu, T)  # Bondi radius [m]
 R_H = system.hill_radius  # Hill radius [m]
 # Rp = r_core  # use this if rad_evol = False for analytics to match isofate; r_core already
 # reflects planet's own fixed-radius override, if any (see Planet.rocky_radius)

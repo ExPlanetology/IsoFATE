@@ -21,7 +21,7 @@ from isofate.atmodeller_coupler import (
     run_atmodeller_step,
 )
 from isofate.constants import const
-from isofate.engine import _algebraic, _integrate_isocalc_jax, gravitational_potential
+from isofate.engine import _algebraic, _integrate_isocalc_jax, bondi_radius, gravitational_potential
 from isofate.escape.mechanisms import EscapeState
 from isofate.escape.fractionation import Phi_1_2, Phi_minor_species
 from isofate.isofunks import R_atm, R_env
@@ -256,7 +256,7 @@ def isocalc(
         # time-variable average atomic mass
         N_tot = np.sum(y)
         mu = escape_number_flux.species.atmosphere_mean_mu(y)
-        R_B = system.bondi_radius(mu, T)  # recomputed from the current mu, not a fixed bootstrap
+        R_B = bondi_radius(Mp, mu, T)  # recomputed from the current mu, not a fixed bootstrap
 
         if options.rad_evol == False:
             radius_env = 0
