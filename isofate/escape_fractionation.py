@@ -8,12 +8,15 @@
 `isocalc`'s `dynamic_phi` branches (isofate_coupler.py).
 """
 
+from abc import abstractmethod
+
 import equinox as eqx
+import jax
 import jax.numpy as jnp
-import numpy as np
 from jax import Array
 from jaxtyping import ArrayLike
 
+from isofate import override
 from isofate.species import (
     DEFAULT_BINARY_DIFFUSION,
     DEFAULT_SPECIES,
@@ -21,10 +24,13 @@ from isofate.species import (
     BinaryDiffusionCoefficients,
     IsoFATESpecies,
 )
+from isofate.utils import safe_divide
 
 # Number flux of light and heavy species
 
 
+# TODO: Original function still being used by non-JAX branch. Will be removed once the JAX branch
+# is fully swapped in and tested.
 def Phi_1_2(
     phi: ArrayLike,
     b: ArrayLike,
@@ -156,6 +162,7 @@ def Phi_D_Z90_mod2(Phi_H, Phi_He, H_H, H_D, H_He, N_H, N_He, N_D, T):
     return max(0, f_D * num / denom)
 
 
+# TODO: Eventually this can be removed once the JAX version is fully swapped in
 def Phi_minor_species(
     Phi_1,
     Phi_2,
@@ -236,14 +243,10 @@ def Phi_minor_species(
     return result
 
 
-class EscapeNumberFlux(eqx.Module):
-    """Bundles a BinaryDiffusionCoefficients table and an IsoFATESpecies registry to compute the
-    per-species escape number flux in one call, given the current abundances and physical state.
-
-    H and He are always treated as the light/heavy diffusive pair (Phi_1_2); every other tracked
-    species is treated as a minor/trace species relative to that pair (Phi_minor_species).
-
-    In the original IsoFATE codebase, this corresponds to the ``dynamic_phi==False`` branch.
+class EscapeNumberFluxBase(eqx.Module):
+    """Shared fields and minor-species flux helper for `EscapeNumberFlux`/
+    `EscapeNumberFluxDynamic` - the two differ only in how they pick the dominant light/heavy
+    pair (always H/He vs. whichever two species are currently most abundant).
 
     Args:
         binary_diffusion: Binary diffusion coefficient table (defaults to `DEFAULT_BINARY_DIFFUSION`)
@@ -253,6 +256,204 @@ class EscapeNumberFlux(eqx.Module):
     species: IsoFATESpecies = DEFAULT_SPECIES
     binary_diffusion: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
 
+    @abstractmethod
+    def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike) -> Array:
+        """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux."""
+
+    def _phi_1_2(
+        self,
+        phi: ArrayLike,
+        b: ArrayLike,
+        H1: ArrayLike,
+        H2: ArrayLike,
+        m1: ArrayLike,
+        m2: ArrayLike,
+        x1: ArrayLike,
+        x2: ArrayLike,
+        mu: ArrayLike,
+    ):
+        """Calculates the number flux for both the light and heavy species in a binary gas mixture
+        undergoing escape, together with the critical mass flux.
+
+        Adapted from Wordsworth et al. 2018. Merges the former separate Phi_1/Phi_2 functions -
+        every call site called them as a pair with identical arguments, so this computes their
+        shared phi_c/mu==0/phi<phi_c logic once instead of twice.
+
+        Args:
+            phi: mass flux [kg/m2/s]
+            b: binary diffusion coefficient [particles/m/s]
+            H1/H2: scale heights of light/heavy species [m]
+            m1/m2: molecular mass of light/heavy species [kg/particle]
+            x1/x2: molar concentration of light/heavy species (x1=mol_1/mol_tot) [ndim]
+            mu: average atmospheric atomic mass [kg/particle]
+
+        Returns:
+            number flux of light species [particles/m2/s], number flux of heavy species
+            [particles/m2/s], critical mass flux [kg/s/m2]
+        """
+        # critical mass flux [kg/s/m2]
+        phi_c = b * x1 * (m2 - m1) / H1  # pyright: ignore[reportOperatorIssue]
+
+        phi1_below_critical: ArrayLike = phi / m1
+        phi2_below_critical: ArrayLike = 0.0
+        phi1_above_critical: ArrayLike = safe_divide(x1 * phi + x1 * x2 * (m2 - m1) * b / H2, mu)  # pyright: ignore[reportOperatorIssue]
+        phi2_above_critical: ArrayLike = safe_divide(x2 * phi + x1 * x2 * (m1 - m2) * b / H1, mu)  # pyright: ignore[reportOperatorIssue]
+
+        below_critical: Array = phi < phi_c
+        phi1: Array = jnp.where(below_critical, phi1_below_critical, phi1_above_critical)
+        phi2: Array = jnp.where(below_critical, phi2_below_critical, phi2_above_critical)
+
+        phi1 = jnp.where(mu == 0, 0.0, phi1)
+        phi2 = jnp.where(mu == 0, 0.0, phi2)
+
+        return phi1, phi2, phi_c
+
+    def _phi_minor_species(
+        self,
+        phi_1: ArrayLike,
+        phi_2: ArrayLike,
+        h_1: ArrayLike,
+        h_2: ArrayLike,
+        scale_heights: ArrayLike,
+        n_values: ArrayLike,
+        t: ArrayLike,
+        mask_light: ArrayLike,
+        mask_heavy: ArrayLike,
+    ) -> Array:
+        """Vectorized counterpart of `Phi_minor_species`: computes the minor-species number flux
+        for every tracked species at once (ordered per `self.binary_diffusion`'s `symbols`), given
+        the dominant light/heavy pair as one-hot masks rather than static indices/symbols -
+        trace-safe whether the masks are compile-time constants (`EscapeNumberFlux`'s always-H/He
+        case) or data-dependent (`EscapeNumberFluxDynamic`'s runtime-selected pair).
+
+        Entries at the two dominant positions are not meaningful (the caller overwrites them using
+        the same masks) but are computed anyway, since avoiding a branch there is the point of
+        vectorizing.
+
+        Args:
+            phi_1: number flux of lightest dominant species [atoms/s/m2]
+            phi_2: number flux of heaviest dominant species [atoms/s/m2]
+            h_1: scale height of lightest dominant species [m]
+            h_2: scale height of heaviest dominant species [m]
+            scale_heights: scale height of every tracked species [m], ordered per
+                `self.binary_diffusion`'s `symbols`
+            n_values: current abundances, ordered per `self.binary_diffusion`'s `symbols`
+            t: temperature [K]
+            mask_light: one-hot vector selecting the lightest dominant species (species 1)
+            mask_heavy: one-hot vector selecting the heaviest dominant species (species 2)
+        """
+        b_1_row = self.binary_diffusion.get_row_by_mask(mask_light, t)  # b(light, k) for every k
+        b_2_row = self.binary_diffusion.get_row_by_mask(mask_heavy, t)  # b(heavy, k) for every k
+        b_1_2 = mask_heavy @ b_1_row  # b(light, heavy), consistent with b_1_row
+
+        alpha_2_row = safe_divide(b_1_row, b_1_2, fallback=1.0)  # b_1_minor/b_1_2
+        alpha_3_row = safe_divide(b_1_row, b_2_row, fallback=1.0)  # b_1_minor/b_2_minor
+
+        phi_dl_row = b_1_row * (1 / scale_heights - 1 / h_1)
+        phi_dl_2 = b_1_2 * (1 / h_2 - 1 / h_1)
+
+        n_1 = mask_light @ n_values  # lightest dominant species
+        n_2 = mask_heavy @ n_values  # heaviest dominant species
+        n_total = jnp.sum(n_values)
+
+        f_2 = safe_divide(n_2, n_1)  # n_2/n_1 (heavy/light dominant)
+        f_minor_row = safe_divide(n_values, n_1)  # n_minor/n_1, for every species
+
+        # Calculate molar fraction of species 2 in total atmosphere
+        x_2 = safe_divide(n_2, n_total)
+
+        # Zahnle et al. 1990 formulation
+        num_row = phi_1 - phi_dl_row + alpha_2_row * phi_dl_2 * x_2 + alpha_3_row * phi_2
+        denom_row = 1 + alpha_3_row * f_2
+
+        result_row = jnp.maximum(0.0, f_minor_row * num_row / denom_row)
+        result_row = jnp.where(n_1 == 0, 0.0, result_row)
+        result_row = jnp.where(n_total == 0, 0.0, result_row)
+
+        return result_row
+
+
+class EscapeNumberFlux(EscapeNumberFluxBase):
+    """Bundles a BinaryDiffusionCoefficients table and an IsoFATESpecies registry to compute the
+    per-species escape number flux in one call, given the current abundances and physical state.
+
+    H and He are always treated as the light/heavy diffusive pair (Phi_1_2); every other tracked
+    species is treated as a minor/trace species relative to that pair
+    (`_phi_minor_species`).
+
+    In the original IsoFATE codebase, this corresponds to the ``dynamic_phi==False`` branch.
+    """
+
+    @override
+    def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike) -> Array:
+        """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux.
+
+        Args:
+            y: Current abundances [atoms], ordered per `self.species.species` - traced.
+            T: Temperature [K] - traced.
+            g: Gravitational acceleration [m/s2] - traced.
+            phi: Total escape mass flux [kg/m2/s] (from the EscapeMechanism) - traced.
+
+        Returns:
+            Phi (number flux [atoms/s/m2] for each species, ordered per `self.species.species`),
+            phi_c (critical mass flux [kg/s/m2], from `_phi_1_2`).
+        """
+        n_species = len(self.species.species)
+        H_idx = self.species.index("H")
+        He_idx = self.species.index("He")
+        mask_H = jax.nn.one_hot(H_idx, n_species)
+        mask_He = jax.nn.one_hot(He_idx, n_species)
+
+        H = self.species.scale_heights(T, g)  # ordered per self.species.species
+        mu_H = self.species.atomic_masses[H_idx]
+        mu_He = self.species.atomic_masses[He_idx]
+
+        y = jnp.asarray(y)
+
+        y_H, y_He = y[H_idx], y[He_idx]
+        y_HHe_total = y_H + y_He
+        X1 = safe_divide(y_H, y_HHe_total)
+        X2 = safe_divide(y_He, y_HHe_total)
+        MU = X1 * mu_H + X2 * mu_He
+        b_H_He = self.binary_diffusion.get_by_mask(mask_H, mask_He, T)
+
+        Phi_H, Phi_He, phi_c = self._phi_1_2(
+            phi, b_H_He, H[H_idx], H[He_idx], mu_H, mu_He, X1, X2, MU
+        )
+
+        Phi_minor_all = self._phi_minor_species(
+            Phi_H,
+            Phi_He,
+            H[H_idx],
+            H[He_idx],
+            H,
+            y,
+            T,
+            mask_H,
+            mask_He,
+        )
+        not_dominant = 1.0 - mask_H - mask_He
+        Phi = mask_H * Phi_H + mask_He * Phi_He + not_dominant * Phi_minor_all
+
+        return Phi, phi_c
+
+
+class EscapeNumberFluxDynamic(EscapeNumberFluxBase):
+    """Like `EscapeNumberFlux`, but picks whichever two species are currently most abundant as
+    the dominant light/heavy diffusive pair (Phi_1_2), instead of always using H/He - every other
+    tracked species is still treated as a minor/trace species relative to that pair
+    (`_phi_minor_species`).
+
+    In the original IsoFATE codebase, this corresponds to the ``dynamic_phi==True`` branch.
+
+    Selecting the dominant pair here is inherently data-dependent (it depends on the current
+    abundances `y`), so - unlike `EscapeNumberFlux`'s always-static H/He indices - the pair is
+    represented as one-hot masks derived from `jax.lax.top_k`/`jnp.where` rather than Python-level
+    indices, making this trace-safe (`jax.jit`/`eqx.filter_jit`) despite the dominant pair being
+    data-dependent.
+    """
+
+    @override
     def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike):
         """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux.
 
@@ -264,177 +465,56 @@ class EscapeNumberFlux(eqx.Module):
 
         Returns:
             Phi (number flux [atoms/s/m2] for each species, ordered per `self.species.species`),
-            phi_c (critical mass flux [kg/s/m2], from Phi_1_2).
+            phi_c (critical mass flux [kg/s/m2], from `_phi_1_2`).
         """
-        symbols = self.species.species
-        H_idx = self.species.index("H")
-        He_idx = self.species.index("He")
-
-        H = self.species.scale_heights(T, g)  # ordered per symbols
-        mu_H = self.species.atomic_masses[H_idx]
-        mu_He = self.species.atomic_masses[He_idx]
-
-        # y_H + y_He == 0 is traced (depends on the evolving abundances), so its guard is
-        # resolved via jnp.where rather than a plain Python if - same pattern as Phi_1_2/
-        # Phi_minor_species: guard the denominator before dividing so the discarded branch never
-        # computes 0/0.
-        y_H, y_He = y[H_idx], y[He_idx]
-        y_HHe_total = y_H + y_He
-        safe_y_HHe_total = jnp.where(y_HHe_total == 0, 1.0, y_HHe_total)
-        X1 = jnp.where(y_HHe_total == 0, 0.0, y_H / safe_y_HHe_total)
-        X2 = jnp.where(y_HHe_total == 0, 0.0, y_He / safe_y_HHe_total)
-        MU = X1 * mu_H + X2 * mu_He
-        b_H_He = self.binary_diffusion.get("H", "He", T)
-
-        Phi_H, Phi_He, phi_c = Phi_1_2(phi, b_H_He, H[H_idx], H[He_idx], mu_H, mu_He, X1, X2, MU)
-
-        # H_idx/He_idx/i are all static (Python-int indices fixed by species order, never
-        # data-dependent), so building a plain list and stacking at the end is trace-safe -
-        # unlike a `Phi = np.zeros(...); Phi[idx] = ...` mutation, which doesn't work on JAX's
-        # immutable arrays once phi/y/T are traced.
-        values = [None] * len(symbols)
-        values[H_idx] = Phi_H
-        values[He_idx] = Phi_He
-        for i in range(len(symbols)):
-            if i in (H_idx, He_idx):
-                continue
-            values[i] = self._minor_species_flux(Phi_H, Phi_He, H, y, T, i, H_idx, He_idx)
-        Phi = jnp.stack(values)
-
-        return Phi, phi_c
-
-    def _minor_species_flux(self, Phi_H, Phi_He, H, y, T, minor_idx, H_idx, He_idx):
-        """Thin, self-bound wrapper over the module-level Phi_minor_species."""
-        return Phi_minor_species(
-            Phi_H,
-            Phi_He,
-            H[H_idx],
-            H[He_idx],
-            H[minor_idx],
-            y,
-            T,
-            minor_species_idx=minor_idx,
-            light_dominant_idx=H_idx,
-            heavy_dominant_idx=He_idx,
-            binary_diffusion=self.binary_diffusion,
-            species_symbols=self.species.species,
-        )
-
-
-# TODO: Work in progress.  This is the dynamic_phi=True branch
-class EscapeNumberFluxDynamic(eqx.Module):
-    """Like `EscapeNumberFlux`, but picks whichever two species are currently most abundant as
-    the dominant light/heavy diffusive pair (Phi_1_2), instead of always using H/He - every other
-    tracked species is still treated as a minor/trace species relative to that pair
-    (Phi_minor_species).
-
-    In the original IsoFATE codebase, this corresponds to the ``dynamic_phi==True`` branch.
-
-    NumPy-only: NOT safe to call from a jitted/traced context (`jax.jit`/`eqx.filter_jit`), unlike
-    `EscapeNumberFlux`. Selecting the dominant pair here is inherently data-dependent (it depends
-    on the current abundances `y`), so - unlike `EscapeNumberFlux`'s always-static H/He indices -
-    this uses plain Python `sort()`/`if`/`for` control flow and in-place NumPy array assignment at
-    a data-dependent index, neither of which tolerate JAX tracers. Calling this with traced
-    `y`/`T`/`g`/`phi` will raise.
-
-    Args:
-        binary_diffusion: Binary diffusion coefficient table (defaults to `DEFAULT_BINARY_DIFFUSION`)
-        species: Tracked-species registry (defaults to `DEFAULT_SPECIES`)
-    """
-
-    species: IsoFATESpecies = DEFAULT_SPECIES
-    binary_diffusion: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
-
-    def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike):
-        """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux.
-
-        Args:
-            y: Current abundances [atoms], ordered per `self.species.species` - concrete NumPy,
-                not traced (see class docstring).
-            T: Temperature [K] - concrete, not traced.
-            g: Gravitational acceleration [m/s2] - concrete, not traced.
-            phi: Total escape mass flux [kg/m2/s] (from the EscapeMechanism) - concrete, not
-                traced.
-
-        Returns:
-            Phi (number flux [atoms/s/m2] for each species, ordered per `self.species.species`),
-            phi_c (critical mass flux [kg/s/m2], from Phi_1_2).
-        """
-        symbols = self.species.species
-        n_species = len(symbols)
+        n_species = len(self.species.species)
         atomic_masses = self.species.atomic_masses
-
-        N_values = y  # ordered per self.species.species
-        abundances_with_idx = [(i, N_values[i]) for i in range(n_species)]
-        abundances_with_idx.sort(key=lambda item: item[1], reverse=True)
-
-        most_abundant_idx = abundances_with_idx[0][0]
-        second_most_abundant_idx = abundances_with_idx[1][0]
-
-        # Get masses and scale heights for the two most abundant species
         scale_heights = self.species.scale_heights(T, g)
+        N_values = jnp.asarray(y)
 
-        mass_most = atomic_masses[most_abundant_idx]
-        mass_second = atomic_masses[second_most_abundant_idx]
-        H_most = scale_heights[most_abundant_idx]
-        H_second = scale_heights[second_most_abundant_idx]
+        _, top2_idx = jax.lax.top_k(N_values, 2)
+        mask_most = jax.nn.one_hot(top2_idx[0], n_species)
+        mask_second = jax.nn.one_hot(top2_idx[1], n_species)
 
-        # Determine which is lighter (species 1) and heavier (species 2) by MASS
-        if mass_most <= mass_second:
-            light_dominant_idx = most_abundant_idx  # species 1 (lighter)
-            heavy_dominant_idx = second_most_abundant_idx  # species 2 (heavier)
-            mass_1 = mass_most
-            mass_2 = mass_second
-            H_1 = H_most
-            H_2 = H_second
-        else:
-            light_dominant_idx = second_most_abundant_idx  # species 1 (lighter)
-            heavy_dominant_idx = most_abundant_idx  # species 2 (heavier)
-            mass_1 = mass_second
-            mass_2 = mass_most
-            H_1 = H_second
-            H_2 = H_most
+        mass_most = mask_most @ atomic_masses
+        mass_second = mask_second @ atomic_masses
 
-        # Calculate molar fractions for the two dominant species
-        N1 = N_values[light_dominant_idx]  # lightest dominant (species 1)
-        N2 = N_values[heavy_dominant_idx]  # heaviest dominant (species 2)
+        # Determine which is lighter (species 1) and heavier (species 2) by MASS - resolved via
+        # jnp.where (mass_most/mass_second are traced) rather than a plain Python if.
+        most_is_lighter = mass_most <= mass_second
+        mask_light = jnp.where(most_is_lighter, mask_most, mask_second)
+        mask_heavy = jnp.where(most_is_lighter, mask_second, mask_most)
+
+        mass_1 = mask_light @ atomic_masses
+        mass_2 = mask_heavy @ atomic_masses
+        H_1 = mask_light @ scale_heights
+        H_2 = mask_heavy @ scale_heights
+        N1 = mask_light @ N_values  # lightest dominant (species 1)
+        N2 = mask_heavy @ N_values  # heaviest dominant (species 2)
+
         N_tot_binary = N1 + N2
-
-        X1 = N1 / N_tot_binary  # molar fraction of species 1 in binary mixture
-        X2 = N2 / N_tot_binary  # molar fraction of species 2 in binary mixture
+        X1 = safe_divide(N1, N_tot_binary)
+        X2 = safe_divide(N2, N_tot_binary)
         MU = X1 * mass_1 + X2 * mass_2
 
         # Calculate binary diffusion coefficient between the two dominant species
-        light_name = symbols[light_dominant_idx]  # species 1
-        heavy_name = symbols[heavy_dominant_idx]  # species 2
-
-        b = self.binary_diffusion.get(light_name, heavy_name, T)
+        b = self.binary_diffusion.get_by_mask(mask_light, mask_heavy, T)
 
         # Calculate escape fluxes for the two dominant species
-        Phi_1_calc, Phi_2_calc, phi_c = Phi_1_2(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU)
+        Phi_1_calc, Phi_2_calc, phi_c = self._phi_1_2(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU)
 
-        # Assign fluxes to correct species based on light/heavy dominant indices - ordered
-        # per self.species.species
-        Phi = np.zeros(n_species)
-        Phi[light_dominant_idx] = Phi_1_calc
-        Phi[heavy_dominant_idx] = Phi_2_calc
-
-        # Calculate fluxes for remaining species using corrected generalized function
-        for i in range(n_species):
-            if i != light_dominant_idx and i != heavy_dominant_idx:
-                Phi[i] = Phi_minor_species(
-                    Phi_1_calc,
-                    Phi_2_calc,
-                    H_1,
-                    H_2,
-                    scale_heights[i],
-                    N_values,
-                    T,
-                    i,
-                    light_dominant_idx,
-                    heavy_dominant_idx,
-                    binary_diffusion=self.binary_diffusion,
-                    species_symbols=symbols,
-                )
+        Phi_minor_all = self._phi_minor_species(
+            Phi_1_calc,
+            Phi_2_calc,
+            H_1,
+            H_2,
+            scale_heights,
+            N_values,
+            T,
+            mask_light,
+            mask_heavy,
+        )
+        not_dominant = 1.0 - mask_light - mask_heavy
+        Phi = mask_light * Phi_1_calc + mask_heavy * Phi_2_calc + not_dominant * Phi_minor_all
 
         return Phi, phi_c

@@ -105,6 +105,33 @@ class BinaryDiffusionCoefficients(eqx.Module):
 
         return self._prefactor[i, j] * jnp.power(temperature, self._exponent[i, j])
 
+    def get_row_by_mask(self, mask: ArrayLike, temperature: ArrayLike) -> Array:
+        """Binary diffusion coefficients between the species selected by the one-hot `mask` (over
+        `self.symbols`) and every other tracked species, at temperature T [K].
+
+        The vectorized counterpart of `get()`: lets the selected species be data-dependent (a mask
+        produced at runtime, e.g. from `jax.nn.one_hot` on a `jax.lax.top_k` result, or a static
+        one-hot constant) instead of a symbol string known at trace time.
+
+        Args:
+            mask: One-hot vector selecting a species, ordered per `self.symbols`.
+            temperature: Temperature [K] at which to evaluate the coefficients.
+
+        Returns:
+            Binary diffusion coefficients [molecules/m/s] between the selected species and every
+            species in `self.symbols`, in that order.
+        """
+        prefactor_row = jnp.dot(jnp.asarray(self._prefactor).T, mask)
+        exponent_row = jnp.dot(jnp.asarray(self._exponent).T, mask)
+        return prefactor_row * jnp.power(temperature, exponent_row)
+
+    def get_by_mask(self, mask1: ArrayLike, mask2: ArrayLike, temperature: ArrayLike) -> Array:
+        """Binary diffusion coefficient between the two species selected by one-hot masks
+        `mask1`/`mask2` (over `self.symbols`) at temperature T [K] - the mask-based counterpart of
+        `get()`.
+        """
+        return jnp.dot(self.get_row_by_mask(mask1, temperature), jnp.asarray(mask2))
+
 
 DEFAULT_BINARY_DIFFUSION: BinaryDiffusionCoefficients = BinaryDiffusionCoefficients()
 
