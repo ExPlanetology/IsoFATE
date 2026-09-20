@@ -179,7 +179,7 @@ class IsoFATESpecies(eqx.Module):
         """
         return self._symbol_index[symbol]
 
-    def scale_heights(self, temperature: ArrayLike, gravity: ArrayLike) -> ArrayLike:
+    def scale_heights(self, temperature: ArrayLike, gravity: ArrayLike) -> Array:
         """Atmospheric scale height for each species at a given temperature and gravity.
 
         H = k_B * T / (m * g), the per-particle form of the ideal-gas scale height - `k_B`
@@ -193,7 +193,7 @@ class IsoFATESpecies(eqx.Module):
         Returns:
             Scale height [m] for each species, ordered per `self.species`
         """
-        return constants.Boltzmann * temperature / (self.atomic_masses * gravity)
+        return jnp.asarray(constants.Boltzmann * temperature / (self.atomic_masses * gravity))
 
     def atmosphere_mean_mu(self, y: Array) -> Array:
         """Mean atmospheric particle mass [kg], given per-species abundances `y` [atoms],

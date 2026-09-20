@@ -167,7 +167,9 @@ class EscapeNumberFluxBase(eqx.Module):
     binary_diffusion: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
 
     @abstractmethod
-    def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike) -> Array:
+    def get_number_flux(
+        self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike
+    ) -> tuple[Array, Array]:
         """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux."""
 
     def _phi_1_2(
@@ -181,7 +183,7 @@ class EscapeNumberFluxBase(eqx.Module):
         x1: ArrayLike,
         x2: ArrayLike,
         mu: ArrayLike,
-    ):
+    ) -> tuple[Array, Array, Array]:
         """Calculates the number flux for both the light and heavy species in a binary gas mixture
         undergoing escape, together with the critical mass flux.
 
@@ -202,14 +204,14 @@ class EscapeNumberFluxBase(eqx.Module):
             [particles/m2/s], critical mass flux [kg/s/m2]
         """
         # critical mass flux [kg/s/m2]
-        phi_c = b * x1 * (m2 - m1) / H1  # pyright: ignore[reportOperatorIssue]
+        phi_c: Array = b * x1 * (m2 - m1) / H1  # pyright: ignore[reportOperatorIssue, reportAssignmentType]
 
         phi1_below_critical: ArrayLike = phi / m1
         phi2_below_critical: ArrayLike = 0.0
         phi1_above_critical: ArrayLike = safe_divide(x1 * phi + x1 * x2 * (m2 - m1) * b / H2, mu)  # pyright: ignore[reportOperatorIssue]
         phi2_above_critical: ArrayLike = safe_divide(x2 * phi + x1 * x2 * (m1 - m2) * b / H1, mu)  # pyright: ignore[reportOperatorIssue]
 
-        below_critical: Array = phi < phi_c
+        below_critical: Array = phi < phi_c  # pyright: ignore[reportOperatorIssue, reportAssignmentType]
         phi1: Array = jnp.where(below_critical, phi1_below_critical, phi1_above_critical)
         phi2: Array = jnp.where(below_critical, phi2_below_critical, phi2_above_critical)
 
@@ -225,7 +227,7 @@ class EscapeNumberFluxBase(eqx.Module):
         h_1: ArrayLike,
         h_2: ArrayLike,
         scale_heights: ArrayLike,
-        n_values: ArrayLike,
+        n_values: Array,
         t: ArrayLike,
         mask_light: ArrayLike,
         mask_heavy: ArrayLike,
@@ -295,7 +297,9 @@ class EscapeNumberFlux(EscapeNumberFluxBase):
     """
 
     @override
-    def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike) -> Array:
+    def get_number_flux(
+        self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike
+    ) -> tuple[Array, Array]:
         """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux.
 
         Args:
@@ -364,7 +368,9 @@ class EscapeNumberFluxDynamic(EscapeNumberFluxBase):
     """
 
     @override
-    def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike):
+    def get_number_flux(
+        self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike
+    ) -> tuple[Array, Array]:
         """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux.
 
         Args:
