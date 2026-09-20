@@ -6,6 +6,7 @@
 """Small shared calculations used across isofate's plain and JAX implementations."""
 
 import jax.numpy as jnp
+from jax import Array
 from jax.typing import ArrayLike
 
 from isofate.constants import const
@@ -24,7 +25,7 @@ def gravitational_acceleration(mass: ArrayLike, radius: ArrayLike) -> ArrayLike:
     return const.G * mass / radius**2
 
 
-def safe_divide(numerator: ArrayLike, denominator: ArrayLike, fallback: ArrayLike = 0.0) -> ArrayLike:
+def safe_divide(numerator: ArrayLike, denominator: ArrayLike, fallback: ArrayLike = 0.0) -> Array:
     """Elementwise `numerator / denominator`, substituting `fallback` wherever `denominator` is
     exactly zero.
 
