@@ -64,14 +64,10 @@ def Phi_1_2(
     # critical mass flux [kg/s/m2]
     phi_c = b * x1 * (m2 - m1) / H1  # pyright: ignore[reportOperatorIssue]
 
-    # mu is guarded before dividing so the discarded mu==0 branch never computes a 0/0 division,
-    # which would otherwise corrupt jax.grad through the jnp.where even though it's never selected.
-    safe_mu: Array = jnp.where(mu == 0, 1.0, mu)
-
     phi1_below_critical: ArrayLike = phi / m1
     phi2_below_critical: ArrayLike = 0.0
-    phi1_above_critical: ArrayLike = (x1 * phi + x1 * x2 * (m2 - m1) * b / H2) / safe_mu  # pyright: ignore[reportOperatorIssue]
-    phi2_above_critical: ArrayLike = (x2 * phi + x1 * x2 * (m1 - m2) * b / H1) / safe_mu  # pyright: ignore[reportOperatorIssue]
+    phi1_above_critical: ArrayLike = safe_divide(x1 * phi + x1 * x2 * (m2 - m1) * b / H2, mu)  # pyright: ignore[reportOperatorIssue]
+    phi2_above_critical: ArrayLike = safe_divide(x2 * phi + x1 * x2 * (m1 - m2) * b / H1, mu)  # pyright: ignore[reportOperatorIssue]
 
     below_critical: Array = phi < phi_c
     phi1: Array = jnp.where(below_critical, phi1_below_critical, phi1_above_critical)
@@ -205,11 +201,9 @@ def Phi_minor_species(
 
     # b_1_2/b_2_minor are essentially never exactly zero in practice (BinaryDiffusionCoefficients
     # always returns prefactor*T**exponent with a positive prefactor), but both are traced (depend
-    # on T), so the zero-guards are resolved via jnp.where rather than a plain Python ternary.
-    safe_b_1_2 = jnp.where(b_1_2 == 0, 1.0, b_1_2)
-    safe_b_2_minor = jnp.where(b_2_minor == 0, 1.0, b_2_minor)
-    alpha_2 = jnp.where(b_1_2 == 0, 1.0, b_1_minor / safe_b_1_2)  # b_1_minor/b_1_2
-    alpha_3 = jnp.where(b_2_minor == 0, 1.0, b_1_minor / safe_b_2_minor)  # b_1_minor/b_2_minor
+    # on T), so the zero-guards are resolved via safe_divide rather than a plain Python ternary.
+    alpha_2 = safe_divide(b_1_minor, b_1_2, fallback=1.0)  # b_1_minor/b_1_2
+    alpha_3 = safe_divide(b_1_minor, b_2_minor, fallback=1.0)  # b_1_minor/b_2_minor
 
     Phi_DL_minor = b_1_minor * (1 / H_minor - 1 / H_1)
     Phi_DL_2 = b_1_2 * (1 / H_2 - 1 / H_1)
@@ -219,14 +213,11 @@ def Phi_minor_species(
     N_minor = N_values[minor_species_idx]
     N_total = sum(N_values)
 
-    # Guard N_1/N_total before dividing so the discarded branches never compute 0/0.
-    safe_N_1 = jnp.where(N_1 == 0, 1.0, N_1)
-    f_2 = N_2 / safe_N_1  # N_2/N_1 (heavy/light dominant)
-    f_minor = N_minor / safe_N_1  # N_minor/N_1
+    f_2 = safe_divide(N_2, N_1)  # N_2/N_1 (heavy/light dominant)
+    f_minor = safe_divide(N_minor, N_1)  # N_minor/N_1
 
     # Calculate molar fraction of species 2 in total atmosphere
-    safe_N_total = jnp.where(N_total > 0, N_total, 1.0)
-    x_2 = jnp.where(N_total > 0, N_2 / safe_N_total, 0.0)
+    x_2 = safe_divide(N_2, N_total)
 
     # Zahnle et al. 1990 formulation
     num = Phi_1 - Phi_DL_minor + alpha_2 * Phi_DL_2 * x_2 + alpha_3 * Phi_2

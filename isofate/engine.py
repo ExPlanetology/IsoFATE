@@ -18,7 +18,7 @@ from jax import Array
 from jaxtyping import ArrayLike
 
 from isofate.escape import EscapeState
-from isofate.escape_fractionation import EscapeNumberFlux
+from isofate.escape_fractionation import EscapeNumberFluxBase
 from isofate.isofunks import R_atm, R_env
 from isofate.parameters import Parameters
 from isofate.utils import gravitational_acceleration
@@ -153,7 +153,7 @@ def _exhausted(
     y: Array,
     _args,
     *,
-    escape_number_flux: EscapeNumberFlux,
+    escape_number_flux: EscapeNumberFluxBase,
     M_atm0: ArrayLike,
     sum_y0: ArrayLike,
     exhaustion_fraction: ArrayLike,

@@ -11,7 +11,7 @@ import equinox as eqx
 from jaxtyping import ArrayLike
 
 from isofate.escape import EscapeMechanism
-from isofate.escape_fractionation import EscapeNumberFlux
+from isofate.escape_fractionation import EscapeNumberFlux, EscapeNumberFluxBase
 from isofate.mantle_iron import MantleIronConfig
 from isofate.species import (
     DEFAULT_BINARY_DIFFUSION,
@@ -66,5 +66,5 @@ class Parameters(eqx.Module):
     _: dataclasses.KW_ONLY
     isofate_species: IsoFATESpecies = DEFAULT_SPECIES
     binary_diffusion_coefficients: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
-    escape_number_flux: EscapeNumberFlux = EscapeNumberFlux()
+    escape_number_flux: EscapeNumberFluxBase = EscapeNumberFlux()
     isocalc_options: IsocalcOptions = IsocalcOptions()
