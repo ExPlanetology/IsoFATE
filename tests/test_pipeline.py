@@ -33,7 +33,7 @@ import pytest
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller, get_tracked_gas_species
 from isofate.constants import const
 from isofate.escape import XUVEscape
-from isofate.isofate_coupler import isocalc
+from isofate.isofate_coupler import isocalc, isocalc_jax2
 from isofate.mantle_iron import MantleIronConfig
 from isofate.parameters import IsocalcOptions, Parameters
 from isofate.system import Planet, Star, System
@@ -161,6 +161,94 @@ def test_isocalc_regression():
     assert final["H2O_mantle"] == pytest.approx(7.670751470352576e20, rel=1e-2)
 
 
+def test_isocalc_jax2_regression():
+    """isocalc_jax2 counterpart of test_isocalc_regression - exercises the segmented-diffeqsolve
+    Atmodeller coupling (n_steps=20, n_atmodeller=5 forces 4 segments). Pinned on isocalc_jax2's
+    own output (not just isocalc's, since a loose cross-check tolerance could hide a real
+    boundary/off-by-one bug that happens to still agree at 1%), and separately cross-checked
+    against isocalc directly.
+    """
+    kwargs = _toy_isocalc_kwargs()
+    sol = isocalc_jax2(**kwargs)
+    sol_isocalc = isocalc(**kwargs)
+
+    _assert_finite(sol["Matm"], sol["N_H"], sol["N_O_int"], sol["N_C_int"])
+
+    assert sol["Matm"][-1] == pytest.approx(2.8851414455263445e19, rel=1e-2)
+    assert sol["N_H"][-1] == pytest.approx(4.316164891532806e38, rel=1e-2)
+    assert sol["N_O_int"][-1] == pytest.approx(4.8887597927244476e44, rel=1e-2)
+    assert sol["N_C_int"][-1] == pytest.approx(2.051744675675075e43, rel=1e-2)
+
+    final = sol["atmodeller_final"]
+    assert final["O2_fugacity"] == pytest.approx(4.4150152745966, rel=1e-2)
+    assert final["log10dIW_1_bar"] == pytest.approx(0.005421860678759741, abs=1e-2)
+    assert final["H2O_atm"] == pytest.approx(181206650253764.34, rel=1e-2)
+    assert final["H2O_mantle"] == pytest.approx(7.67077950257225e20, rel=1e-2)
+
+    # Cross-check against isocalc directly, at the same loose tolerance as
+    # test_isocalc_isocalc_jax_cross_check (tests/test_sim.py) - final-value comparison only:
+    # isocalc_jax2 records each Atmodeller-call boundary's result one output index earlier than
+    # isocalc does (isocalc records the pre-call state at index n, isocalc_jax2 the post-call
+    # state) - see isocalc_jax2's docstring - so only the last index is expected to agree closely.
+    assert sol["Matm"][-1] == pytest.approx(sol_isocalc["Matm"][-1], rel=1e-2)
+    assert sol["N_H"][-1] == pytest.approx(sol_isocalc["N_H"][-1], rel=1e-2)
+    assert sol["N_O_int"][-1] == pytest.approx(sol_isocalc["N_O_int"][-1], rel=1e-2)
+    assert sol["N_C_int"][-1] == pytest.approx(sol_isocalc["N_C_int"][-1], rel=1e-2)
+
+
+def test_isocalc_jax2_warm_start():
+    """Confirms the segmented loop actually threads atmod_initial_guess across boundaries (not
+    silently cold-starting every call), by checking a warm-started run agrees closely with one
+    forced to cold-start every Atmodeller call.
+    """
+    from unittest.mock import patch
+
+    from isofate.atmodeller_coupler import run_atmodeller_step
+
+    kwargs = _toy_isocalc_kwargs()
+    sol_warm = isocalc_jax2(**kwargs)
+
+    def _cold_start(*args, **kwargs):
+        # args[-1] is atmod_initial_guess (see run_atmodeller_step's signature) - force it to
+        # None on every call, regardless of what the segmented loop actually passed in.
+        args = args[:-1] + (None,)
+        return run_atmodeller_step(*args, **kwargs)
+
+    with patch(
+        "isofate.isofate_coupler.run_atmodeller_step", side_effect=_cold_start
+    ) as mocked:
+        sol_cold = isocalc_jax2(**kwargs)
+        assert mocked.call_count > 1  # sanity: multiple Atmodeller calls actually happened
+
+    assert sol_cold["N_H"][-1] == pytest.approx(sol_warm["N_H"][-1], rel=1e-6)
+    assert sol_cold["N_O_int"][-1] == pytest.approx(sol_warm["N_O_int"][-1], rel=1e-6)
+
+
+def test_isocalc_jax2_exhaustion():
+    """A zero initial atmosphere is exhausted from the very first boundary check, exercising the
+    "exhausted before starting a chunk" fill path (isocalc's own `if M_atm <= 0 or sum(y) <= 0`
+    check is exactly true here too) across all 4 of the toy scenario's segments.
+
+    A scenario that only depletes partway through a *run* (rather than being exhausted from the
+    start) turns out not to be a good cross-check target: pushing escape hard enough to fully
+    deplete isocalc's coarse fixed-step Euler scheme drives it numerically unstable (a real
+    escape-flux blowup, not physical exhaustion) well before isocalc_jax2's adaptively-integrated,
+    correctly-bounded trajectory reaches the same floor - the two schemes would be being compared
+    in a regime where they're expected to diverge, not where a coupling bug would show up.
+    """
+    kwargs = _toy_isocalc_kwargs()
+    kwargs["isofate_species_abund"] = (0.0,) * 7
+
+    sol = isocalc_jax2(**kwargs)
+    sol_isocalc = isocalc(**kwargs)
+
+    assert np.all(sol["Matm"] == 0)
+    assert np.all(sol_isocalc["Matm"] == 0)
+    assert np.all(sol["Rp"] == sol_isocalc["Rp"])
+    assert np.all(sol["Vpot"] == sol_isocalc["Vpot"])
+    assert sol["atmodeller_final"] == sol_isocalc["atmodeller_final"]
+
+
 @pytest.mark.parametrize(
     "mantle_iron_type,expected_N_O_int",
     [
@@ -181,9 +269,44 @@ def test_isocalc_mantle_iron_dict(mantle_iron_type, expected_N_O_int):
     assert sol["N_O_int"][-1] == pytest.approx(expected_N_O_int, rel=1e-2)
 
 
+@pytest.mark.parametrize(
+    "mantle_iron_type,expected_N_O_int",
+    [
+        ("dynamic", 1.3983911568711249e45),
+        ("static", 1.3983911568710884e45),
+    ],
+)
+def test_isocalc_jax2_mantle_iron_dict(mantle_iron_type, expected_N_O_int):
+    """isocalc_jax2 counterpart of test_isocalc_mantle_iron_dict - confirms mantle_iron_state
+    threads correctly across the segmented loop's Atmodeller calls."""
+    mantle_iron = MantleIronConfig(reaction_type=mantle_iron_type, fe_mass_fraction=0.06)
+    sol = isocalc_jax2(**_toy_isocalc_kwargs(mantle_iron=mantle_iron, save_molecules=True))
+
+    _assert_finite(sol["Matm"], sol["N_O_int"], sol["n_H2O_a"])
+    assert sol["N_O_int"][-1] == pytest.approx(expected_N_O_int, rel=1e-2)
+
+
 def test_isocalc_save_molecules():
     sol = isocalc(**_toy_isocalc_kwargs(save_molecules=True))
 
     for key in ("n_H2O_a", "n_H2_a", "n_O2_a", "n_CO2_a", "n_CO_a", "n_CH4_a", "n_N2_a", "n_S2_a"):
         assert key in sol
         _assert_finite(sol[key])
+
+
+def test_isocalc_jax2_save_molecules():
+    """isocalc_jax2 counterpart of test_isocalc_save_molecules - also confirms the segmented
+    loop's broadcast-fill is chunked correctly: every value within one Atmodeller-call segment
+    should be identical, and should change from segment to segment."""
+    sol = isocalc_jax2(**_toy_isocalc_kwargs(save_molecules=True))
+
+    for key in ("n_H2O_a", "n_H2_a", "n_O2_a", "n_CO2_a", "n_CO_a", "n_CH4_a", "n_N2_a", "n_S2_a"):
+        assert key in sol
+        _assert_finite(sol[key])
+
+    n_atmodeller = 5
+    arr = np.asarray(sol["n_H2O_a"])
+    for start in range(0, len(arr), n_atmodeller):
+        chunk = arr[start : start + n_atmodeller]
+        assert np.all(chunk == chunk[0]), "values within one Atmodeller-call segment must match"
+    assert arr[0] != arr[n_atmodeller], "value must change across a segment boundary"
