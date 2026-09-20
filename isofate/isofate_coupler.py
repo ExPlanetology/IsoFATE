@@ -892,7 +892,13 @@ def isocalc_jax2(
     ###_____Initialize timesteps_____###
 
     n_tot = options.n_steps  # timesteps
-    t0_seconds = options.t0 / const.s2yr  # simulation start time [s]
+    # np.asarray (not a bare Python float): the segment loop below passes this as `t0_chunk` on
+    # its first iteration and `t_a[b - 1]` (a numpy-array-derived scalar) on every later one - a
+    # bare Python float there is "weak-typed" once jnp.asarray'd, while an array-derived scalar
+    # isn't, and _integrate_isocalc_jax (eqx.filter_jit) treats those as different abstract types,
+    # forcing a second, otherwise-unnecessary trace/compile for the first segment alone. Matching
+    # the type here up front keeps every segment on the one compiled program.
+    t0_seconds = np.asarray(options.t0 / const.s2yr)  # simulation start time [s]
     # Named t_total (not the bare `t` isocalc uses) - `t` here would collide with diffrax's own
     # integration-time parameter name in the vector field/postprocessing closures below.
     t_total = time / const.s2yr - t0_seconds  # total simulation time [s]

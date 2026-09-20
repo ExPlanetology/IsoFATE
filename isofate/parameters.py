@@ -10,8 +10,8 @@ import dataclasses
 import equinox as eqx
 from jaxtyping import ArrayLike
 
-from isofate.escape.mechanisms import EscapeMechanism
 from isofate.escape.fractionation import EscapeNumberFlux, EscapeNumberFluxBase
+from isofate.escape.mechanisms import EscapeMechanism
 from isofate.mantle_iron import MantleIronConfig
 from isofate.species import (
     DEFAULT_BINARY_DIFFUSION,
@@ -48,6 +48,7 @@ class IsocalcOptions(eqx.Module):
     """
 
     rad_evol: bool = True
+    # TODO: This can be removed once the JAX version is swapped in for the original isocalc.
     melt_fraction_override: ArrayLike | bool = False
     n_steps: int = int(1e5)
     t0: ArrayLike = 1e6

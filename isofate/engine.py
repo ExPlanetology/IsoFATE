@@ -17,8 +17,8 @@ import jax.numpy as jnp
 from jax import Array
 from jaxtyping import ArrayLike
 
-from isofate.escape.mechanisms import EscapeState
 from isofate.escape.fractionation import EscapeNumberFluxBase
+from isofate.escape.mechanisms import EscapeState
 from isofate.isofunks import R_atm, R_env
 from isofate.parameters import Parameters
 from isofate.utils import gravitational_acceleration
@@ -269,6 +269,7 @@ def _integrate_isocalc_jax(
     y_fallback = jnp.where(any_finite, y_a[last_finite_idx], y0)
     y_a = jnp.where(finite_mask[:, None], y_a, y_fallback)
 
+    # TODO: Should be done outside the time loop
     # Back-compute every diagnostic (including the derived M_atm) from the saved trajectory in one
     # vmapped pass, rather than a per-timestep Python loop. Only t/y vary per output point - the
     # rest are shared/broadcast (in_axes=None), matching what closing over them would have done.
