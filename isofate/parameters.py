@@ -10,8 +10,8 @@ import dataclasses
 import equinox as eqx
 from jaxtyping import ArrayLike
 
-from isofate.escape import EscapeMechanism
-from isofate.escape_fractionation import EscapeNumberFlux, EscapeNumberFluxBase
+from isofate.escape.mechanisms import EscapeMechanism
+from isofate.escape.fractionation import EscapeNumberFlux, EscapeNumberFluxBase
 from isofate.mantle_iron import MantleIronConfig
 from isofate.species import (
     DEFAULT_BINARY_DIFFUSION,
