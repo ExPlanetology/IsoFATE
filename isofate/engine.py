@@ -17,11 +17,125 @@ import jax.numpy as jnp
 from jax import Array
 from jaxtyping import ArrayLike
 
+from isofate.constants import const
 from isofate.escape.fractionation import EscapeNumberFluxBase
 from isofate.escape.mechanisms import EscapeState
-from isofate.isofunks import R_atm, R_env
 from isofate.parameters import Parameters
+from isofate.system import Planet, System
 from isofate.utils import gravitational_acceleration
+
+
+def convective_envelope_thickness(
+    planet: Planet, f_env, Fp, age, thermal: bool = True
+) -> ArrayLike:
+    """Radial thickness contributed by the convective portion of the H/He envelope (down to the
+    radiative-convective boundary), one of the three additive terms making up the total planet
+    radius: R_p = R_rocky + convective_envelope_thickness + radiative_atmosphere_thickness.
+
+    Adapted from Lopez & Fortney 2014.
+
+    Args:
+        planet: Planet parameters - `planet.mass` [kg] is read from it.
+        f_env: envelope mass fraction [ndim]
+        Fp: incident bolometric flux [W/m2]
+        age: age [s]
+        thermal: toggles radius dependence on thermal evolution [True/False]
+
+    Returns:
+        Thickness contribution of the convective envelope [m]
+    """
+    c1 = planet.mass / const.Me  # Me = Earth mass [kg]
+    # FIXME: Collin to clarify the magic number below
+    c2 = f_env / 0.05
+    c3 = Fp / const.Fe  # Fe = Earth incident bolometric flux [W/m2]
+    if thermal:
+        # FIXME: Collin to clarify the magic number below
+        c4 = age * const.s2yr / 5e9
+    else:
+        c4 = 1
+
+    return 2.06 * const.Re * c1 ** (-0.21) * c2 ** (0.59) * c3 ** (0.044) * c4 ** (-0.18)
+
+
+def radiative_atmosphere_thickness(Teq, planet: Planet, envelope_thickness, mu) -> ArrayLike:
+    """Radial thickness contributed by the radiative outer atmosphere above the
+    radiative-convective boundary - the third of the three additive terms making up the total
+    planet radius: R_p = R_rocky + convective_envelope_thickness + radiative_atmosphere_thickness.
+
+    Adapted from Lopez & Fortney 2014
+
+    Args:
+        Teq: planet equilibrium temperature [K]
+        planet: Planet parameters - `planet.mass` [kg] and `planet.rocky_radius` [m] are read
+            from it.
+        envelope_thickness: convective-envelope thickness contribution [m] (see
+            `convective_envelope_thickness`)
+        mu: mean molecular mass [kg/particle]
+
+    Returns:
+        Thickness contribution of the radiative atmosphere [m]
+    """
+    # field strength at base of atm
+    g = const.G * planet.mass / ((planet.rocky_radius + envelope_thickness) ** 2)
+    H = const.kb * Teq / (g * mu)  # scale height
+
+    return 9 * H
+
+
+def bondi_radius(Mp, mu, Teq, gamma=7 / 5):
+    """Bondi radius calculation.
+
+    Copy of `isofate.isofunks.R_Bondi`, kept unchanged there for `isocalc`'s own (non-JAX) loop.
+
+    Args:
+        Mp: planetary mass [kg]
+        mu: average particle mass [kg]
+        Teq: planetary equilibrium temperature [K]
+        gamma: adiabatic index (heat capacity ratio) [ndim]
+
+    Returns:
+        Bondi radius [m]
+    """
+    return (gamma - 1) * const.G * Mp * mu / (gamma * const.kb * Teq)
+
+
+def tidal_reduction_factor(system: System, radius: ArrayLike, floor: float = 0.01) -> Array:
+    """Gravitational potential reduction factor due to stellar tidal forces (Erkaev et al. 2007).
+
+    Args:
+        system: System parameters - `system.planet.mass`, `system.star.mass`, and
+            `system.semi_major_axis` are read from it.
+        radius: Planet radius [m] - pass the current total (rocky + envelope) radius when it's
+            time-evolving.
+        floor: Minimum value returned. Defaults to `0.01`.
+
+    Returns:
+        Gravitational potential reduction factor [ndim]
+    """
+    delta = system.planet.mass / system.star.mass
+    lam = system.semi_major_axis / radius
+    zeta = lam * (delta / 3) ** (1 / 3)
+    V_reduction = 1 - 3 / 2 / zeta + 1 / 2 / jnp.power(zeta, 3)
+
+    return jnp.maximum(V_reduction, floor)
+
+
+def gravitational_potential(system: System, radius: ArrayLike, floor: float = 0.01) -> Array:
+    """Gravitational potential at the outer layer [J/kg], reduced by `tidal_reduction_factor`.
+
+    Args:
+        system: System parameters - `system.planet.mass` is read from it (and passed through to
+            `tidal_reduction_factor`).
+        radius: Planet radius [m] - pass the current total (rocky + envelope) radius when it's
+            time-evolving.
+        floor: Minimum `tidal_reduction_factor` value used. Defaults to `0.01`.
+
+    Returns:
+        Gravitational potential [J/kg]
+    """
+    K: Array = tidal_reduction_factor(system, radius, floor)
+
+    return K * const.G * system.planet.mass / radius
 
 
 def _algebraic(
@@ -41,8 +155,8 @@ def _algebraic(
     values are baked into the callable object itself - JAX never re-flattens them as pytree state
     the way it would if they were carried through diffrax's internal `lax.while_loop` via `args`.
     So no `eqx.field(static=True)` bookkeeping is needed to keep e.g. `thermal` (branched on with
-    a raw Python `if` inside `R_env`) or `escape`'s own bool/str config fields from being
-    force-converted into traced arrays.
+    a raw Python `if` inside `convective_envelope_thickness`) or `escape`'s own bool/str config
+    fields from being force-converted into traced arrays.
 
     `M_atm` is not separate integrated state: with no atmodeller coupling in this simplified case,
     dM_atm/dt is exactly dot(dy/dt, atomic_masses), so M_atm(t) is always exactly
@@ -58,7 +172,8 @@ def _algebraic(
     Clips y to >= 0 before use: the adaptive step-size controller can propose trial steps that
     briefly overshoot into slightly negative territory near exhaustion (the original discrete
     loop clipped `y` after every step for the same reason), and a negative M_atm/f_atm would
-    otherwise feed a fractional power (R_env's c2**0.59 term) with a negative base.
+    otherwise feed a fractional power (convective_envelope_thickness's c2**0.59 term) with a
+    negative base.
 
     Args:
         thermal: A plain Python bool, not a traced array - see the note above about why binding
@@ -82,16 +197,16 @@ def _algebraic(
 
     M_atm = jnp.dot(y, atomic_masses)  # y already clipped >= 0 above, so M_atm is too
     f_atm = M_atm / Mp
-    radius_env = R_env(Mp, f_atm, Fp, t, thermal)
-    radius_atm = R_atm(T, Mp, system.planet.rocky_radius, radius_env, mu)
-    R_B = system.bondi_radius(mu, T)  # recomputed from the current mu, not a fixed bootstrap
+    radius_env = convective_envelope_thickness(system.planet, f_atm, Fp, t, thermal)
+    radius_atm = radiative_atmosphere_thickness(T, system.planet, radius_env, mu)
+    R_B = bondi_radius(Mp, mu, T)  # recomputed from the current mu, not a fixed bootstrap
     # was `min(R_B, R_H, radius_p)` in isocalc's plain-Python loop - Python's builtin min() on
     # a traced value, same class of fix as Fxuv/Phi_1_2/Phi_minor_species earlier this session.
     radius_p = jnp.minimum(
         R_B, jnp.minimum(system.hill_radius, system.planet.rocky_radius + radius_atm + radius_env)
     )
 
-    Vpot = system.gravitational_potential(radius_p)
+    Vpot = gravitational_potential(system, radius_p)
     A = 4 * jnp.pi * radius_p**2
     g = gravitational_acceleration(Mp, radius_p)
 
@@ -204,11 +319,11 @@ def _integrate_isocalc_jax(
 
     Args:
         thermal: A plain Python bool, not a traced array - `eqx.filter_jit` holds non-array
-            arguments static automatically (required here, since `R_env` branches on it with a
-            raw Python `if`). Every other argument here is expected to be an actual array (see
-            `isocalc_jax`'s call site, which wraps its locals in `jnp.asarray` before calling) so
-            that varying them across calls reuses this same compiled program rather than
-            retracing.
+            arguments static automatically (required here, since `convective_envelope_thickness` branches
+            on it with a raw Python `if`). Every other argument here is expected to be an actual
+            array (see `isocalc_jax`'s call site, which wraps its locals in `jnp.asarray` before
+            calling) so that varying them across calls reuses this same compiled program rather
+            than retracing.
 
     Returns:
         (y_a, alg_a): the saved trajectory (already inf-filled with the held terminal state past

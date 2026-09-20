@@ -21,7 +21,7 @@ from isofate.atmodeller_coupler import (
     run_atmodeller_step,
 )
 from isofate.constants import const
-from isofate.engine import _algebraic, _integrate_isocalc_jax
+from isofate.engine import _algebraic, _integrate_isocalc_jax, gravitational_potential
 from isofate.escape.mechanisms import EscapeState
 from isofate.escape.fractionation import Phi_1_2, Phi_minor_species
 from isofate.isofunks import R_atm, R_env
@@ -117,7 +117,7 @@ def isocalc(
 
     # d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere below), so
     # they're read from `system` once, here. `system.star.mass` is no longer cached separately -
-    # `system.tidal_reduction_factor(Rp)` reads it directly (see below).
+    # `tidal_reduction_factor(system, Rp)` reads it directly (see below).
     planet: Planet = system.planet
     d: ArrayLike = system.semi_major_axis
     T: ArrayLike = system.equilibrium_temperature
@@ -229,7 +229,7 @@ def isocalc(
             fatm_a[n:] = 0  # f_atm #fatm_a[n-1]
             Renv_a[n:] = 0  # radius_env #Renv_a[n-1]
             Rp_a[n:] = planet.rocky_radius
-            Vpot_a[n:] = system.gravitational_potential()
+            Vpot_a[n:] = gravitational_potential(system, planet.rocky_radius)
 
             phi_a[n:] = 0
             Mloss_a[n:] = 0
@@ -270,7 +270,7 @@ def isocalc(
             # array-construction/dispatch overhead on a 3-scalar comparison run every timestep
             radius_p = min(R_B, R_H, radius_p)
 
-        Vpot = system.gravitational_potential(radius_p)
+        Vpot = gravitational_potential(system, radius_p)
         A = 4 * np.pi * radius_p**2
 
         # sets mass flux [kg/m2/s]
@@ -602,7 +602,7 @@ def isocalc_jax(
     # Only planet.mass is read here, to seed build_atmodeller below (Mp never changes over the
     # run). `_integrate_isocalc_jax` re-derives T/d/Fp/Mp from `system` itself (already one of its
     # arguments), so they don't need to be threaded through separately. `system.star.mass` is no
-    # longer cached separately - `system.tidal_reduction_factor(Rp)` reads it directly (see
+    # longer cached separately - `tidal_reduction_factor(system, Rp)` reads it directly (see
     # below).
     planet: Planet = system.planet
     Mp = planet.mass
@@ -883,7 +883,7 @@ def isocalc_jax2(
     # Only planet.mass is read here, to seed build_atmodeller below (Mp never changes over the
     # run). `_integrate_isocalc_jax` re-derives T/d/Fp/Mp from `system` itself (already one of its
     # arguments), so they don't need to be threaded through separately. `system.star.mass` is no
-    # longer cached separately - `system.tidal_reduction_factor(Rp)` reads it directly (see
+    # longer cached separately - `tidal_reduction_factor(system, Rp)` reads it directly (see
     # below).
     planet: Planet = system.planet
     Mp = planet.mass
@@ -1004,7 +1004,7 @@ def isocalc_jax2(
             fatm_a[start:] = 0
             Renv_a[start:] = 0
             Rp_a[start:] = planet.rocky_radius
-            Vpot_a[start:] = system.gravitational_potential()
+            Vpot_a[start:] = gravitational_potential(system, planet.rocky_radius)
             phi_a[start:] = 0
             Mloss_a[start:] = 0
             y_a[start:] = 0
