@@ -15,7 +15,7 @@ three mechanisms still behave exactly as before the class-hierarchy refactor.
 
 import pytest
 
-from isofate.escape import (
+from isofate.escape.mechanisms import (
     CombinedEscape,
     CPMLEscape,
     EscapeState,

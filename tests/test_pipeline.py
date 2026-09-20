@@ -32,7 +32,7 @@ import pytest
 
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller, get_tracked_gas_species
 from isofate.constants import const
-from isofate.escape import XUVEscape
+from isofate.escape.mechanisms import XUVEscape
 from isofate.isofate_coupler import isocalc, isocalc_jax2
 from isofate.mantle_iron import MantleIronConfig
 from isofate.parameters import IsocalcOptions, Parameters

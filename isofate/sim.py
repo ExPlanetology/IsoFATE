@@ -9,7 +9,7 @@ import time as TIME
 import matplotlib.pyplot as plt
 
 from isofate.constants import const
-from isofate.escape import XUVEscape
+from isofate.escape.mechanisms import XUVEscape
 
 # from debug_isofate_coupler_v2 import *
 from isofate.isofate_coupler import *

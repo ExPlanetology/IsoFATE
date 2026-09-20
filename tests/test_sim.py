@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from isofate.constants import const
-from isofate.escape import XUVEscape
+from isofate.escape.mechanisms import XUVEscape
 from isofate.isofate_coupler import isocalc, isocalc_jax, isocalc_jax2
 from isofate.parameters import IsocalcOptions, Parameters
 from isofate.presets import LHS1140b, LHS1140Star

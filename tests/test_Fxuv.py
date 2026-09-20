@@ -1,7 +1,7 @@
 import numpy as np
 
 from isofate.constants import const
-from isofate.escape import Fxuv
+from isofate.escape.mechanisms import Fxuv
 
 F0 = 1e2       # main-sequence XUV flux [W/m2]
 T0 = 1e6       # start time [yr]

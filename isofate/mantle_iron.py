@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Mantle Fe-O2 reaction config/state, used by isocalc/AtmodellerCoupler to let mantle Fe react
-with atmospheric O2. Mirrors isofate.escape's config/state split: `MantleIronConfig` is the
+with atmospheric O2. Mirrors isofate.escape.mechanisms' config/state split: `MantleIronConfig` is the
 user-facing, fixed-for-the-run choice; `MantleIronState` is the evolving per-timestep state,
 rebuilt via `dataclasses.replace` (never mutated in place).
 """
