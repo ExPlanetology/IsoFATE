@@ -26,8 +26,6 @@ from isofate.species import (
 )
 from isofate.utils import safe_divide
 
-# Number flux of light and heavy species
-
 
 # TODO: Original function still being used by non-JAX branch. Will be removed once the JAX branch
 # is fully swapped in and tested.
@@ -69,7 +67,7 @@ def Phi_1_2(
     phi1_above_critical: ArrayLike = safe_divide(x1 * phi + x1 * x2 * (m2 - m1) * b / H2, mu)  # pyright: ignore[reportOperatorIssue]
     phi2_above_critical: ArrayLike = safe_divide(x2 * phi + x1 * x2 * (m1 - m2) * b / H1, mu)  # pyright: ignore[reportOperatorIssue]
 
-    below_critical: Array = phi < phi_c
+    below_critical: Array = phi < phi_c  # pyright: ignore
     phi1: Array = jnp.where(below_critical, phi1_below_critical, phi1_above_critical)
     phi2: Array = jnp.where(below_critical, phi2_below_critical, phi2_above_critical)
 
@@ -77,85 +75,6 @@ def Phi_1_2(
     phi2 = jnp.where(mu == 0, 0.0, phi2)
 
     return phi1, phi2, phi_c
-
-
-# number flux deuterium Gu & Chen 2023
-
-
-def Phi_D_GC23(Phi_H, Phi_He, H_H, H_D, H_He, N_H, N_He, N_D, T):
-    """
-    Calculates number flux of deuterium for simultaneous calculation of H/He/D escape
-    From Gu & Chen 2023
-
-    Not currently plugged into the Phi calc - an alternate/experimental formulation kept for
-    reference.
-
-    Inputs:
-        - Phi_i: number flux [particles/m2/s]
-        - H_i: scale height [m]
-        - N_i: particles of species i
-        - T: eq temp [K]
-    """
-    b_H_D = (
-        7.183e19 * T**0.728
-    )  # [molecules/m/s] from Genda & Ikoma 2008 for D in H (not measured directly)
-    b_H_He = 1.04e20 * T**0.732  # [molecules/m/s] from Mason & Marrero 1970 for H in He
-    b_He_D = (
-        5.087e19 * T**0.728
-    )  # [molecules/m/s] approximated from b_H_D using Genda/Ikoma 2008 prescription
-    alpha_2 = b_H_D / b_H_He
-    alpha_3 = b_H_D / b_He_D
-    Phi_DL_D = b_H_D * (1 / H_D - 1 / H_H)
-    Phi_DL_He = b_H_He * (1 / H_He - 1 / H_H)
-    X_He = N_He / (N_H + N_He + N_D)
-    X_H = N_H / (N_H + N_He + N_D)
-    X_D = N_D / (N_H + N_He + N_D)
-    num = Phi_H - Phi_DL_D + alpha_2 * Phi_DL_He * X_He + alpha_3 * Phi_He
-    denom = X_H + alpha_3 * X_He
-    return max(0, X_D * num / denom)
-
-
-# number flux deuterium derived from Zahnle et al 1990
-
-
-def Phi_D_Z90_mod(Phi_H, H_D, N_D, N_H, T):
-    """
-    Phi_D_Z90 solution with He set to zero
-
-    Not currently plugged into the Phi calc - an alternate/experimental formulation kept for
-    reference.
-    """
-    b_H_D = (
-        7.183e19 * T**0.728
-    )  # [molecules/m/s] from Genda & Ikoma 2008 for D in H (not measured directly)
-    Phi_DL_D = b_H_D / H_D
-    f_D = N_D / N_H
-    return f_D * Phi_H - (N_D / (N_D + N_H)) * Phi_DL_D
-
-
-def Phi_D_Z90_mod2(Phi_H, Phi_He, H_H, H_D, H_He, N_H, N_He, N_D, T):
-    """
-    Phi_D solution from referee report Cherubim et al 2024
-
-    Not currently plugged into the Phi calc - an alternate/experimental formulation kept for
-    reference.
-    """
-    b_H_D = (
-        7.183e19 * T**0.728
-    )  # [molecules/m/s] from Genda & Ikoma 2008 for D in H (not measured directly)
-    b_H_He = 1.04e20 * T**0.732  # [molecules/m/s] from Mason & Marrero 1970 for H in He
-    b_He_D = (
-        5.087e19 * T**0.728
-    )  # [molecules/m/s] approximated from b_H_D using Genda/Ikoma 2008 prescription (Appendix C)
-    alpha_3 = b_H_D / b_He_D
-    Phi_DL_D = b_H_D / H_D
-    Phi_DL_He = b_H_He / H_He
-    x_He = N_He / (N_H + N_He + N_D)
-    f_He = N_He / N_H
-    f_D = N_D / N_H
-    num = Phi_DL_He * x_He - Phi_DL_D + Phi_H + alpha_3 * Phi_He
-    denom = 1 + alpha_3 * f_He
-    return max(0, f_D * num / denom)
 
 
 # TODO: Eventually this can be removed once the JAX version is fully swapped in
