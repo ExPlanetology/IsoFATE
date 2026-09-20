@@ -10,6 +10,7 @@
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 from jaxtyping import ArrayLike
 
@@ -242,6 +243,8 @@ class EscapeNumberFlux(eqx.Module):
     H and He are always treated as the light/heavy diffusive pair (Phi_1_2); every other tracked
     species is treated as a minor/trace species relative to that pair (Phi_minor_species).
 
+    In the original IsoFATE codebase, this corresponds to the ``dynamic_phi==False`` branch.
+
     Args:
         binary_diffusion: Binary diffusion coefficient table (defaults to `DEFAULT_BINARY_DIFFUSION`)
         species: Tracked-species registry (defaults to `DEFAULT_SPECIES`)
@@ -316,3 +319,122 @@ class EscapeNumberFlux(eqx.Module):
             binary_diffusion=self.binary_diffusion,
             species_symbols=self.species.species,
         )
+
+
+# TODO: Work in progress.  This is the dynamic_phi=True branch
+class EscapeNumberFluxDynamic(eqx.Module):
+    """Like `EscapeNumberFlux`, but picks whichever two species are currently most abundant as
+    the dominant light/heavy diffusive pair (Phi_1_2), instead of always using H/He - every other
+    tracked species is still treated as a minor/trace species relative to that pair
+    (Phi_minor_species).
+
+    In the original IsoFATE codebase, this corresponds to the ``dynamic_phi==True`` branch.
+
+    NumPy-only: NOT safe to call from a jitted/traced context (`jax.jit`/`eqx.filter_jit`), unlike
+    `EscapeNumberFlux`. Selecting the dominant pair here is inherently data-dependent (it depends
+    on the current abundances `y`), so - unlike `EscapeNumberFlux`'s always-static H/He indices -
+    this uses plain Python `sort()`/`if`/`for` control flow and in-place NumPy array assignment at
+    a data-dependent index, neither of which tolerate JAX tracers. Calling this with traced
+    `y`/`T`/`g`/`phi` will raise.
+
+    Args:
+        binary_diffusion: Binary diffusion coefficient table (defaults to `DEFAULT_BINARY_DIFFUSION`)
+        species: Tracked-species registry (defaults to `DEFAULT_SPECIES`)
+    """
+
+    species: IsoFATESpecies = DEFAULT_SPECIES
+    binary_diffusion: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
+
+    def get_number_flux(self, y: ArrayLike, T: ArrayLike, g: ArrayLike, phi: ArrayLike):
+        """Number flux [atoms/s/m2] for every tracked species, plus the critical mass flux.
+
+        Args:
+            y: Current abundances [atoms], ordered per `self.species.species` - concrete NumPy,
+                not traced (see class docstring).
+            T: Temperature [K] - concrete, not traced.
+            g: Gravitational acceleration [m/s2] - concrete, not traced.
+            phi: Total escape mass flux [kg/m2/s] (from the EscapeMechanism) - concrete, not
+                traced.
+
+        Returns:
+            Phi (number flux [atoms/s/m2] for each species, ordered per `self.species.species`),
+            phi_c (critical mass flux [kg/s/m2], from Phi_1_2).
+        """
+        symbols = self.species.species
+        n_species = len(symbols)
+        atomic_masses = self.species.atomic_masses
+
+        N_values = y  # ordered per self.species.species
+        abundances_with_idx = [(i, N_values[i]) for i in range(n_species)]
+        abundances_with_idx.sort(key=lambda item: item[1], reverse=True)
+
+        most_abundant_idx = abundances_with_idx[0][0]
+        second_most_abundant_idx = abundances_with_idx[1][0]
+
+        # Get masses and scale heights for the two most abundant species
+        scale_heights = self.species.scale_heights(T, g)
+
+        mass_most = atomic_masses[most_abundant_idx]
+        mass_second = atomic_masses[second_most_abundant_idx]
+        H_most = scale_heights[most_abundant_idx]
+        H_second = scale_heights[second_most_abundant_idx]
+
+        # Determine which is lighter (species 1) and heavier (species 2) by MASS
+        if mass_most <= mass_second:
+            light_dominant_idx = most_abundant_idx  # species 1 (lighter)
+            heavy_dominant_idx = second_most_abundant_idx  # species 2 (heavier)
+            mass_1 = mass_most
+            mass_2 = mass_second
+            H_1 = H_most
+            H_2 = H_second
+        else:
+            light_dominant_idx = second_most_abundant_idx  # species 1 (lighter)
+            heavy_dominant_idx = most_abundant_idx  # species 2 (heavier)
+            mass_1 = mass_second
+            mass_2 = mass_most
+            H_1 = H_second
+            H_2 = H_most
+
+        # Calculate molar fractions for the two dominant species
+        N1 = N_values[light_dominant_idx]  # lightest dominant (species 1)
+        N2 = N_values[heavy_dominant_idx]  # heaviest dominant (species 2)
+        N_tot_binary = N1 + N2
+
+        X1 = N1 / N_tot_binary  # molar fraction of species 1 in binary mixture
+        X2 = N2 / N_tot_binary  # molar fraction of species 2 in binary mixture
+        MU = X1 * mass_1 + X2 * mass_2
+
+        # Calculate binary diffusion coefficient between the two dominant species
+        light_name = symbols[light_dominant_idx]  # species 1
+        heavy_name = symbols[heavy_dominant_idx]  # species 2
+
+        b = self.binary_diffusion.get(light_name, heavy_name, T)
+
+        # Calculate escape fluxes for the two dominant species
+        Phi_1_calc, Phi_2_calc, phi_c = Phi_1_2(phi, b, H_1, H_2, mass_1, mass_2, X1, X2, MU)
+
+        # Assign fluxes to correct species based on light/heavy dominant indices - ordered
+        # per self.species.species
+        Phi = np.zeros(n_species)
+        Phi[light_dominant_idx] = Phi_1_calc
+        Phi[heavy_dominant_idx] = Phi_2_calc
+
+        # Calculate fluxes for remaining species using corrected generalized function
+        for i in range(n_species):
+            if i != light_dominant_idx and i != heavy_dominant_idx:
+                Phi[i] = Phi_minor_species(
+                    Phi_1_calc,
+                    Phi_2_calc,
+                    H_1,
+                    H_2,
+                    scale_heights[i],
+                    N_values,
+                    T,
+                    i,
+                    light_dominant_idx,
+                    heavy_dominant_idx,
+                    binary_diffusion=self.binary_diffusion,
+                    species_symbols=symbols,
+                )
+
+        return Phi, phi_c

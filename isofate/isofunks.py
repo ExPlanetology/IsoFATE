@@ -577,6 +577,7 @@ def T_surf(Teq, Mp, fatm, R=const.kb / const.mu_H2, cp=14514, Peq=1e4):
 #     return A + B * t + C * t**2 + D * t**3 + E / t**2
 
 
+# NOTE: Now in the Planet class
 def MeltFraction(Mp, T):
     """
     Calculate mantle melt fraction Ψ using a pre-computed grid.
