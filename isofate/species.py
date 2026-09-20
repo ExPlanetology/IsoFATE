@@ -21,6 +21,8 @@ from jax import Array
 from jax.typing import ArrayLike
 from molmass import Formula
 
+from isofate.utils import safe_divide
+
 SYMBOLS: tuple[str, ...] = ("H", "He", "D", "O", "C", "N", "S")
 
 
@@ -211,9 +213,8 @@ class IsoFATESpecies(eqx.Module):
             Mean atmospheric particle mass [kg]
         """
         N_tot: Array = jnp.sum(y)
-        safe_N_tot: Array = jnp.where(N_tot > 0, N_tot, 1.0)
 
-        return jnp.where(N_tot > 0, self.atmosphere_mass(y) / safe_N_tot, 0.0)
+        return safe_divide(self.atmosphere_mass(y), N_tot)
 
     def atmosphere_mass(self, y: Array) -> Array:
         """Total atmospheric mass [kg].
