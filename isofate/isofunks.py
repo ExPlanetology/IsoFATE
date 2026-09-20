@@ -17,8 +17,6 @@ from isofate.orbit_params import *
 _MELT_FRACTION_INTERPOLATOR = None
 
 # incident XUV flux
-# NOTE: Fxuv (the base power-law XUV flux model) moved to isofate.escape, alongside phi_E/phi_RR
-# which are its only callers.
 
 
 def Fxuv_a(t, F0, t_sat=5e8, beta=-1.23):
@@ -74,13 +72,6 @@ def Fxuv_Ribas(t):
     L = F * 4 * np.pi * const.au2m**2
     return L  # [W]
 
-
-# NOTE: Fxuv_hazmat, phi_E, phiE_CP moved to isofate.escape (see also the Fxuv note above).
-
-# NOTE: Phi_1_2, Phi_D_GC23, Phi_D_Z90_mod, Phi_D_Z90_mod2, Phi_minor_species, and
-# EscapeNumberFlux moved to isofate.escape_fractionation. Phi_D_Z90/Phi_O_Z90/Phi_C_Z90/
-# Phi_N_Z90/Phi_S_Z90 also moved there and were later removed entirely, once fully
-# superseded by EscapeNumberFlux.get_number_flux (which calls Phi_minor_species directly).
 
 #####_____ Lopez & Fortney 2014 thermal evolution equations _____#####
 
@@ -335,12 +326,8 @@ def R_Hill(Mp, Mstar, a):
     return R_H
 
 
-# NOTE: phi_kill moved to isofate.escape. F0_kill below is dead code (never called anywhere in
-# the repo) and still references the bare name `phi_kill`, now undefined in this module - since
-# Python only resolves that name at call time and F0_kill is never called, this doesn't break
-# import or tests. If F0_kill is ever revived, update it to `from isofate.escape import
-# phi_kill` locally inside the function (not a module-level import - that would create a
-# circular import, since isofate.escape already imports R_rocky from this module).
+# NOTE: dead code (never called anywhere in the repo) and references the undefined bare name
+# `phi_kill` - harmless since it's never called.
 def F0_kill(Mp, Rp, M_atm, age, eps=0.15):
     C = 0.893818  # integral of power law portion of F_XUV function
     Vpot = const.G * Mp / Rp
@@ -348,21 +335,8 @@ def F0_kill(Mp, Rp, M_atm, age, eps=0.15):
     return 40 * Vpot * phi / eps - 2 * C
 
 
-# NOTE: Moved to Binary Diffusion Coefficient class
-# def b_H2_HD(T):
-#     """
-#     Input: T, temperature [K]
-#     Output: Binary diffusion coefficient for H2 in HD from Genda 2008 [molecules/m/s]
-#     """
-#     return 4.48e19 * T**0.75
-
-
-# NOTE: phi_RR moved to isofate.escape.
-
-
-# NOTE: dead code (never called anywhere in the repo); still references the bare name `Fxuv`,
-# now undefined in this module since Fxuv moved to isofate.escape - harmless since it's never
-# called (same situation as F0_kill above).
+# NOTE: dead code (never called anywhere in the repo) and references the undefined bare name
+# `Fxuv` - harmless since it's never called (same situation as F0_kill above).
 def phi_RMC(t, F0, t_sat, Rp):
     F = Fxuv(t, F0, t_sat)
     phi = 4e9 * np.sqrt(F / (5e5 * const.cgs2si_flux)) / (4 * np.pi * Rp**2)
@@ -577,7 +551,6 @@ def T_surf(Teq, Mp, fatm, R=const.kb / const.mu_H2, cp=14514, Peq=1e4):
 #     return A + B * t + C * t**2 + D * t**3 + E / t**2
 
 
-# NOTE: Now in the Planet class
 def MeltFraction(Mp, T):
     """
     Calculate mantle melt fraction Ψ using a pre-computed grid.
