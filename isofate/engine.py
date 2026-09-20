@@ -104,7 +104,7 @@ def total_radius(planet: Planet, envelope_thickness, atmosphere_thickness) -> Ar
 def bondi_radius(Mp, mu, Teq, gamma=7 / 5):
     """Bondi radius calculation.
 
-    Copy of `isofate.isofunks.R_Bondi`, kept unchanged there for `isocalc`'s own (non-JAX) loop.
+    Copy of `isofate.isofunks.R_Bondi`, kept unchanged there for `isoplot.py`.
 
     Args:
         Mp: planetary mass [kg]
