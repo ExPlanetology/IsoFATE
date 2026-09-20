@@ -8,6 +8,7 @@
 import equinox as eqx
 import jax.numpy as jnp
 from atmodeller.jax_utils import as_j64
+from atmodeller.sci_utils import earth
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -22,8 +23,8 @@ class Star(eqx.Module):
         radius: Stellar radius [m]
         mass: Stellar mass [kg]
         temperature: Stellar effective temperature [K]
-        luminosity: Stellar luminosity [W] (optional; if not provided, computed from radius and
-            temperature)
+        luminosity: Stellar luminosity [W]. Defaults to `None`, meaning it will be computed from
+            radius and temperature.
     """
 
     radius: Array
@@ -77,17 +78,21 @@ class Planet(eqx.Module):
     Args:
         mass: Planet mass [kg]
         period: Orbital period [s]
-        albedo: Planetary albedo [ndim] (optional; defaults to 0)
+        albedo: Planetary albedo [ndim]. Defaults to ``0``.
         _rocky_radius: Radius of the planet's rocky (condensed-matter) component [m] (optional; if
             not provided, computed from mass via Lopez & Fortney 2014). Supply this directly when
             a real, observationally-measured radius is known and should be used instead of the
             generic mass-scaling estimate - independent of whether a gaseous envelope is also
             allowed to evolve on top of it (see `isocalc`'s `rad_evol` option).
+        core_mass_fraction: Mass fraction of the planet in its metallic core. Defaults to Earth.
+        temperature: Planet surface temperature [K]. Defaults to 2000 K.
     """
 
     mass: Array
     period: Array
     albedo: Array
+    core_mass_fraction: Array
+    temperature: Array
     _rocky_radius: Array | None = None
 
     def __init__(
@@ -95,11 +100,15 @@ class Planet(eqx.Module):
         mass: ArrayLike,
         period: ArrayLike,
         albedo: ArrayLike = 0.0,
+        core_mass_fraction: ArrayLike = earth.core_mass_fraction,
+        temperature: ArrayLike = 2000,
         rocky_radius: ArrayLike | None = None,
     ):
         self.mass = as_j64(mass)
         self.period = as_j64(period)
         self.albedo = as_j64(albedo)
+        self.core_mass_fraction = as_j64(core_mass_fraction)
+        self.temperature = as_j64(temperature)
         self._rocky_radius = as_j64(rocky_radius) if rocky_radius is not None else None
 
     @property
