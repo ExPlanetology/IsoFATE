@@ -22,8 +22,8 @@ from isofate.atmodeller_coupler import (
 )
 from isofate.constants import const
 from isofate.engine import _algebraic, _integrate_isocalc_jax
-from isofate.escape import EscapeState
-from isofate.escape_fractionation import Phi_1_2, Phi_minor_species
+from isofate.escape.mechanisms import EscapeState
+from isofate.escape.fractionation import Phi_1_2, Phi_minor_species
 from isofate.isofunks import R_atm, R_env
 from isofate.mantle_iron import MantleIronState
 from isofate.parameters import Parameters
@@ -72,9 +72,9 @@ def isocalc(
     #  - options: mode switches and tuning constants unrelated to escape mechanism, fixed for
     #  the whole run - see IsocalcOptions for the full list (rad_evol, melt_fraction_override,
     #  mu, n_steps, t0, thermal, n_atmodeller, save_molecules, mantle_iron, dynamic_phi)
-    #  - escape: escape-mechanism instance (isofate.escape.EscapeMechanism) controlling the
+    #  - escape: escape-mechanism instance (isofate.escape.mechanisms.EscapeMechanism) controlling the
     #  atmospheric mass-flux calculation each timestep; defaults to XUVEscape(), equivalent to
-    #  today's default mechanism="XUV", RR=True. See isofate.escape for XUVEscape, CPMLEscape,
+    #  today's default mechanism="XUV", RR=True. See isofate.escape.mechanisms for XUVEscape, CPMLEscape,
     #  PhiKillEscape, CombinedEscape.
 
     # Output: Dictionary of 2-D arrays [len(f_atm) x n_steps] with keys,
@@ -558,9 +558,9 @@ def isocalc_jax(
     #  - options: mode switches and tuning constants unrelated to escape mechanism, fixed for
     #  the whole run - see IsocalcOptions for the full list (rad_evol, melt_fraction_override,
     #  mu, n_steps, t0, thermal, n_atmodeller, save_molecules, mantle_iron, dynamic_phi)
-    #  - escape: escape-mechanism instance (isofate.escape.EscapeMechanism) controlling the
+    #  - escape: escape-mechanism instance (isofate.escape.mechanisms.EscapeMechanism) controlling the
     #  atmospheric mass-flux calculation each timestep; defaults to XUVEscape(), equivalent to
-    #  today's default mechanism="XUV", RR=True. See isofate.escape for XUVEscape, CPMLEscape,
+    #  today's default mechanism="XUV", RR=True. See isofate.escape.mechanisms for XUVEscape, CPMLEscape,
     #  PhiKillEscape, CombinedEscape.
 
     # Output: Dictionary of 2-D arrays [len(f_atm) x n_steps] with keys,
