@@ -5,15 +5,29 @@
 
 """Star and Planet parameter objects for defining simulation scenarios."""
 
+import importlib
+import importlib.resources
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from importlib.resources.abc import Traversable
+from pathlib import Path
+
 import equinox as eqx
 import jax.numpy as jnp
-from atmodeller.jax_utils import as_j64
+import numpy as np
+from atmodeller.jax_utils import FloatArray, NpFloat, as_j64
 from atmodeller.sci_utils import earth
 from jax import Array
+from jax.scipy.interpolate import RegularGridInterpolator
 from jax.typing import ArrayLike
 
 from isofate.constants import const
 from isofate.isofunks import R_Bondi
+
+DATA_DIRECTORY: Traversable = importlib.resources.files(f"{__package__}.data")
+"""Data directory"""
+MELT_FRACTION_DATA_SOURCE: Path = Path("melt_fraction_grid.npz")
+"""Source of the melt fraction grid data, relative to `DATA_DIRECTORY`"""
 
 
 class Star(eqx.Module):
@@ -23,14 +37,14 @@ class Star(eqx.Module):
         radius: Stellar radius [m]
         mass: Stellar mass [kg]
         temperature: Stellar effective temperature [K]
-        luminosity: Stellar luminosity [W]. Defaults to `None`, meaning it will be computed from
+        luminosity: Stellar luminosity [W]. Defaults to ``None``, meaning it will be computed from
             radius and temperature.
     """
 
     radius: Array
     mass: Array
     temperature: Array
-    _luminosity: Array | None = None
+    _luminosity: Array
 
     def __init__(
         self,
@@ -42,17 +56,15 @@ class Star(eqx.Module):
         self.radius = as_j64(radius)
         self.mass = as_j64(mass)
         self.temperature = as_j64(temperature)
-        self._luminosity = as_j64(luminosity) if luminosity is not None else None
+        self._luminosity = as_j64(luminosity if luminosity is not None else jnp.nan)
 
     @property
     def luminosity(self) -> Array:
         """Stellar luminosity [W], via the Stefan-Boltzmann law."""
-        if self._luminosity is not None:
-            return self._luminosity
-        else:
-            return (
-                4 * jnp.pi * jnp.square(self.radius) * const.sbc * jnp.power(self.temperature, 4)
-            )
+        computed: Array = (
+            4 * jnp.pi * jnp.square(self.radius) * const.sbc * jnp.power(self.temperature, 4)
+        )
+        return jnp.where(jnp.isnan(self._luminosity), computed, self._luminosity)
 
     @property
     def t_jump(self) -> Array:
@@ -86,6 +98,8 @@ class Planet(eqx.Module):
             allowed to evolve on top of it (see `isocalc`'s `rad_evol` option).
         core_mass_fraction: Mass fraction of the planet in its metallic core. Defaults to Earth.
         temperature: Planet surface temperature [K]. Defaults to 2000 K.
+        mantle_melt_fraction: Mantle melt fraction. Defaults to ``None`` to compute from mass
+            and temperature using a pre-computed grid.
     """
 
     mass: Array
@@ -93,7 +107,9 @@ class Planet(eqx.Module):
     albedo: Array
     core_mass_fraction: Array
     temperature: Array
-    _rocky_radius: Array | None = None
+    _mantle_melt_fraction: Array
+    _mantle_melt_fraction_interpolator: Callable[[tuple[ArrayLike, ArrayLike]], Array]
+    _rocky_radius: Array
 
     def __init__(
         self,
@@ -102,6 +118,7 @@ class Planet(eqx.Module):
         albedo: ArrayLike = 0.0,
         core_mass_fraction: ArrayLike = earth.core_mass_fraction,
         temperature: ArrayLike = 2000,
+        mantle_melt_fraction: ArrayLike | None = None,
         rocky_radius: ArrayLike | None = None,
     ):
         self.mass = as_j64(mass)
@@ -109,12 +126,54 @@ class Planet(eqx.Module):
         self.albedo = as_j64(albedo)
         self.core_mass_fraction = as_j64(core_mass_fraction)
         self.temperature = as_j64(temperature)
-        self._rocky_radius = as_j64(rocky_radius) if rocky_radius is not None else None
+        self._mantle_melt_fraction = as_j64(
+            mantle_melt_fraction if mantle_melt_fraction is not None else jnp.nan
+        )
+        self._mantle_melt_fraction_interpolator = self._get_melt_fraction_interpolator()
+        self._rocky_radius = as_j64(rocky_radius if rocky_radius is not None else jnp.nan)
+
+    @classmethod
+    def _get_melt_fraction_interpolator(cls) -> Callable[[tuple[ArrayLike, ArrayLike]], Array]:
+        """Constructs a RegularGridInterpolator for mantle melt fraction."""
+        data: AbstractContextManager[Path] = importlib.resources.as_file(
+            DATA_DIRECTORY.joinpath(MELT_FRACTION_DATA_SOURCE)  # type: ignore
+        )
+        with data as datapath:
+            data_np: NpFloat = np.load(datapath)
+            temp_grid: NpFloat = data_np["temp_grid"]  # pyright: ignore
+            mass_grid: NpFloat = data_np["mass_grid"]  # pyright: ignore
+            psi_grid: NpFloat = data_np["psi_grid"]  # pyright: ignore
+
+        interpolator: RegularGridInterpolator = RegularGridInterpolator(
+            (mass_grid, temp_grid), psi_grid.transpose(), method="linear"
+        )
+
+        def interpolator_hashable_function_wrapper(x: tuple[ArrayLike, ArrayLike]) -> FloatArray:
+            """Converts interpolator to a hashable function"""
+            return interpolator(x)
+
+        return interpolator_hashable_function_wrapper
 
     @property
-    def has_fixed_radius(self) -> bool:
-        """True if `rocky_radius` was supplied explicitly rather than computed from mass."""
-        return self._rocky_radius is not None
+    def has_fixed_radius(self) -> Array:
+        """True if `rocky_radius` was supplied explicitly rather than computed from mass.
+
+        A traced value-level `Array`, not a Python `bool` - see `_rocky_radius`'s comment.
+        """
+        return jnp.logical_not(jnp.isnan(self._rocky_radius))
+
+    def mantle_melt_fraction(self, temperature: ArrayLike) -> Array:
+        """Mantle melt fraction, either supplied at construction or computed from mass and
+        temperature using a pre-computed grid.
+
+        Branches on `jnp.isnan` (a traced value-level condition), not a Python `is not None`
+        check, since `_mantle_melt_fraction` is always a concrete Array (a `jnp.nan` sentinel
+        when not supplied, never Python `None`) - see the field's docstring/comment.
+        """
+        interpolated = self._mantle_melt_fraction_interpolator((self.mass / const.Me, temperature))
+        return jnp.where(
+            jnp.isnan(self._mantle_melt_fraction), interpolated, self._mantle_melt_fraction
+        )
 
     @property
     def rocky_radius(self) -> Array:
@@ -126,10 +185,8 @@ class Planet(eqx.Module):
 
         NOTE: const.Re is missing from the paper (typo).
         """
-        if self._rocky_radius is not None:
-            return self._rocky_radius
-
-        return const.Re * jnp.power(self.mass / const.Me, 1 / 4)
+        computed = const.Re * jnp.power(self.mass / const.Me, 1 / 4)
+        return jnp.where(jnp.isnan(self._rocky_radius), computed, self._rocky_radius)
 
 
 class System(eqx.Module):
