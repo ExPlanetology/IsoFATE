@@ -21,8 +21,6 @@ from jax import Array
 from jax.typing import ArrayLike
 from molmass import Formula
 
-from isofate.utils import safe_divide
-
 SYMBOLS: tuple[str, ...] = ("H", "He", "D", "O", "C", "N", "S")
 
 
@@ -196,36 +194,6 @@ class IsoFATESpecies(eqx.Module):
             Scale height [m] for each species, ordered per `self.species`
         """
         return jnp.asarray(constants.Boltzmann * temperature / (self.atomic_masses * gravity))
-
-    def atmosphere_mean_mu(self, y: Array) -> Array:
-        """Mean atmospheric particle mass [kg], given per-species abundances `y` [atoms],
-        ordered per `self.species`.
-
-        Returns 0 when the total abundance is zero, rather than letting 0/0 propagate as NaN -
-        this keeps the value finite even when a caller only conditionally uses it (e.g. near-total
-        atmospheric exhaustion in isocalc_jax), so a discarded branch can't corrupt a gradient
-        through the selecting `jnp.where`.
-
-        Args:
-            y: Per-species abundances `y` [atoms], ordered per `self.species`.
-
-        Returns:
-            Mean atmospheric particle mass [kg]
-        """
-        N_tot: Array = jnp.sum(y)
-
-        return safe_divide(self.atmosphere_mass(y), N_tot)
-
-    def atmosphere_mass(self, y: Array) -> Array:
-        """Total atmospheric mass [kg].
-
-        Args:
-            y: Per-species abundances `y` [atoms], ordered per `self.species`
-
-        Returns:
-            Total atmospheric mass [kg]
-        """
-        return jnp.dot(y, self.atomic_masses)
 
 
 DEFAULT_SPECIES: IsoFATESpecies = IsoFATESpecies()

@@ -221,7 +221,7 @@ def isocalc(
         # total mass is exactly the sum of its constituent atoms' masses), rather than tracked as
         # separately-updated state - matches isocalc_jax's design (see engine.py's _algebraic).
         M_atm = np.dot(y, atomic_masses)
-        f_atm = M_atm / Mp
+        f_atm = parameters.atmosphere_mass_fraction(y)
 
         ### Stop simulation when entire atmosphere is lost
         if M_atm <= 0 or np.sum(y) <= 0:
@@ -255,7 +255,7 @@ def isocalc(
 
         # time-variable average atomic mass
         N_tot = np.sum(y)
-        mu = escape_number_flux.species.atmosphere_mean_mu(y)
+        mu = parameters.atmosphere_mean_mu(y)
         R_B = bondi_radius(Mp, mu, T)  # recomputed from the current mu, not a fixed bootstrap
 
         if options.rad_evol == False:

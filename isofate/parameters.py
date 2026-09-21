@@ -8,7 +8,8 @@
 import dataclasses
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from isofate.escape.fractionation import EscapeNumberFlux, EscapeNumberFluxBase
 from isofate.escape.mechanisms import EscapeMechanism
@@ -20,6 +21,7 @@ from isofate.species import (
     IsoFATESpecies,
 )
 from isofate.system import System
+from isofate.utils import safe_divide
 
 
 class IsocalcOptions(eqx.Module):
@@ -69,3 +71,44 @@ class Parameters(eqx.Module):
     binary_diffusion_coefficients: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
     escape_number_flux: EscapeNumberFluxBase = EscapeNumberFlux()
     isocalc_options: IsocalcOptions = IsocalcOptions()
+
+    def atmosphere_mass(self, y: Array) -> Array:
+        """Total atmospheric mass [kg].
+
+        Args:
+            y: Per-species abundances `y` [atoms], ordered per `self.species`
+
+        Returns:
+            Total atmospheric mass [kg]
+        """
+        return jnp.dot(y, self.isofate_species.atomic_masses)
+
+    def atmosphere_mass_fraction(self, y: Array) -> Array:
+        """Atmospheric mass fraction [ndim]: `atmosphere_mass(y)` divided by the planet mass.
+
+        Args:
+            y: Per-species abundances `y` [atoms], ordered per `self.species`
+
+        Returns:
+            Atmospheric mass fraction [ndim]
+        """
+        return self.atmosphere_mass(y) / self.system.planet.mass
+
+    def atmosphere_mean_mu(self, y: Array) -> Array:
+        """Mean atmospheric particle mass [kg], given per-species abundances `y` [atoms],
+        ordered per `self.species`.
+
+        Returns 0 when the total abundance is zero, rather than letting 0/0 propagate as NaN -
+        this keeps the value finite even when a caller only conditionally uses it (e.g. near-total
+        atmospheric exhaustion in isocalc_jax), so a discarded branch can't corrupt a gradient
+        through the selecting `jnp.where`.
+
+        Args:
+            y: Per-species abundances `y` [atoms], ordered per `self.species`.
+
+        Returns:
+            Mean atmospheric particle mass [kg]
+        """
+        N_tot: Array = jnp.sum(y)
+
+        return safe_divide(self.atmosphere_mass(y), N_tot)
