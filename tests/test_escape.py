@@ -11,6 +11,11 @@ mechanism/RR combination it supported - "XUV" (RR=True and RR=False), "CPML", "p
 "XUV+CPML". Only the "XUV" (RR=True) path is exercised by tests/test_pipeline.py's isocalc()
 regression tests (via the default options), so these pins are what actually confirm the other
 three mechanisms still behave exactly as before the class-hierarchy refactor.
+
+The CPML/"XUV+CPML" pins were re-pinned after `EscapeState.A` was removed (`phiE_CP` now derives
+area from `radius_p` internally, matching `phi_kill`'s existing pattern) - `STATE.A` had been a
+manually-rounded `5.3e14`, not the exact `4*pi*radius_p**2` (~5.309e14), so CPML's mass flux
+shifts by ~0.2% relative. A precision fix, not a regression.
 """
 
 import pytest
@@ -36,7 +41,6 @@ STATE = EscapeState(
     T=900.0,
     Vpot=5e7,
     d=7.5e9,
-    A=5.3e14,
     mu=3.3e-27,
     radius_env=1e5,
     f_atm=0.01,
@@ -53,7 +57,7 @@ def test_xuv_escape_matches_old_mechanism_dispatch():
 
 
 def test_cpml_escape_matches_old_mechanism_dispatch():
-    assert CPMLEscape().compute_mass_flux(STATE) == pytest.approx(2.1778503312769265e-07)
+    assert CPMLEscape().compute_mass_flux(STATE) == pytest.approx(2.1740389601731796e-07)
 
 
 def test_phi_kill_escape_matches_old_mechanism_dispatch():
@@ -62,7 +66,7 @@ def test_phi_kill_escape_matches_old_mechanism_dispatch():
 
 def test_combined_escape_matches_old_xuv_plus_cpml_dispatch():
     combined = CombinedEscape((XUVEscape(F0=F0, RR=True), CPMLEscape()))
-    assert combined.compute_mass_flux(STATE) == pytest.approx(2.3450505719285714e-07)
+    assert combined.compute_mass_flux(STATE) == pytest.approx(2.3412392008248244e-07)
 
 
 def test_combined_escape_sums_components():
@@ -95,7 +99,14 @@ def test_xuv_escape_wraps_phi_e_and_phi_rr():
 def test_cpml_escape_wraps_phie_cp():
     escape = CPMLEscape()
     expected = phiE_CP(
-        STATE.T, STATE.Mp, escape.rho_rcb, escape.eps, STATE.Vpot, STATE.A, STATE.mu, STATE.radius_env
+        STATE.T,
+        STATE.Mp,
+        escape.rho_rcb,
+        escape.eps,
+        STATE.Vpot,
+        STATE.radius_p,
+        STATE.mu,
+        STATE.radius_env,
     )
     assert escape.compute_mass_flux(STATE) == pytest.approx(expected)
 

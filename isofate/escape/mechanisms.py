@@ -43,8 +43,6 @@ class EscapeState(eqx.Module):
     """Gravitational potential at the outer layer [J/kg]."""
     d: ArrayLike
     """Orbital distance [m]."""
-    A: ArrayLike
-    """Planet surface area [m2]."""
     mu: ArrayLike
     """Mean atmospheric particle mass [kg]."""
     radius_env: ArrayLike
@@ -245,7 +243,7 @@ def phi_E(
     #    return eps * Fxuv_Johnstone(t, d, stellar_type)
 
 
-def phiE_CP(Teq, Mp, rho_rcb, eps, Vpot, area, mu, R_env):
+def phiE_CP(Teq, Mp, rho_rcb, eps, Vpot, Rp, mu, R_env):
     """
     Atmospheric mass flux for core-powered mass loss scenario
     Adapted from Gupta & Schlicting 2020
@@ -256,10 +254,11 @@ def phiE_CP(Teq, Mp, rho_rcb, eps, Vpot, area, mu, R_env):
         - rho_rcb: density at the RCB [kg/m3]; ref value =1 kg/m3 from eq 7 Gupta & Schlichting 2020
         - eps: heat transfer efficiency factor [ndim]
         - Vpot: planetary gravitational potential [J/kg]
-        - area: planetary surface area [m2]
+        - Rp: planetary radius [m]
         - mu: average particle mass [kg]
     Output: mass flux [kg/m2/s]
     """
+    area = 4 * np.pi * Rp**2
     R_c = R_rocky(Mp)
     V_pot = const.G * Mp / R_c
     gamma = 7 / 5  # adiabatic index for H2
@@ -442,7 +441,7 @@ class CPMLEscape(EscapeMechanism):
             self.rho_rcb,
             self.eps,
             state.Vpot,
-            state.A,
+            state.radius_p,
             state.mu,
             state.radius_env,
         )

@@ -280,7 +280,6 @@ def isocalc(
             T=T,
             Vpot=Vpot,
             d=d,
-            A=A,
             mu=mu,
             radius_env=radius_env,
             f_atm=f_atm,
