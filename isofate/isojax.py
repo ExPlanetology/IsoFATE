@@ -13,6 +13,9 @@ from jax.typing import ArrayLike
 from isofate.constants import const
 from isofate.utils import gravitational_acceleration
 
+# TODO: Started to migrate these functions into atmodeller_coupler_new (class-based coupler for
+# atmodeller).
+
 
 def _atmosphere_descent_vector_field(
     r: ArrayLike,
