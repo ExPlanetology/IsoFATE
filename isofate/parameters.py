@@ -9,6 +9,7 @@ import dataclasses
 
 import equinox as eqx
 import jax.numpy as jnp
+from atmodeller.jax_utils import safe_divide
 from jaxtyping import Array, ArrayLike
 
 from isofate.escape.fractionation import EscapeNumberFlux, EscapeNumberFluxBase
@@ -21,7 +22,6 @@ from isofate.species import (
     IsoFATESpecies,
 )
 from isofate.system import System
-from isofate.utils import safe_divide
 
 
 class IsocalcOptions(eqx.Module):

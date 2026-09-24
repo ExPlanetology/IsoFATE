@@ -13,6 +13,7 @@ from abc import abstractmethod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from atmodeller.jax_utils import safe_divide
 from jax import Array
 from jaxtyping import ArrayLike
 
@@ -24,7 +25,6 @@ from isofate.species import (
     BinaryDiffusionCoefficients,
     IsoFATESpecies,
 )
-from isofate.utils import safe_divide
 
 
 # TODO: Original function still being used by non-JAX branch. Will be removed once the JAX branch
