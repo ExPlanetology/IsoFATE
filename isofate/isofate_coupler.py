@@ -21,9 +21,14 @@ from isofate.atmodeller_coupler import (
     run_atmodeller_step,
 )
 from isofate.constants import const
-from isofate.engine import _algebraic, _integrate_isocalc_jax, bondi_radius, gravitational_potential
-from isofate.escape.mechanisms import EscapeState
+from isofate.engine import (
+    _algebraic,
+    _integrate_isocalc_jax,
+    bondi_radius,
+    gravitational_potential,
+)
 from isofate.escape.fractionation import Phi_1_2, Phi_minor_species
+from isofate.escape.mechanisms import EscapeState
 from isofate.isofunks import R_atm, R_env
 from isofate.mantle_iron import MantleIronState
 from isofate.parameters import Parameters
@@ -256,7 +261,9 @@ def isocalc(
         # time-variable average atomic mass
         N_tot = np.sum(y)
         mu = parameters.atmosphere_mean_mu(y)
-        R_B = bondi_radius(parameters, y, T)  # recomputed from the current mu, not a fixed bootstrap
+        R_B = bondi_radius(
+            parameters, y, T
+        )  # recomputed from the current mu, not a fixed bootstrap
 
         if options.rad_evol == False:
             radius_env = 0
@@ -676,7 +683,6 @@ def isocalc_jax(
         jnp.asarray(t0_seconds),
         jnp.asarray(t_a),
         jnp.asarray(isofate_species_abund),
-        options.thermal,
         jnp.asarray(t_total),
         parameters,
     )
@@ -957,7 +963,6 @@ def isocalc_jax2(
             jnp.asarray(t0_seconds),
             jnp.asarray(t_a),
             jnp.asarray(isofate_species_abund),
-            options.thermal,
             jnp.asarray(t_total),
             parameters,
         )
@@ -1055,7 +1060,6 @@ def isocalc_jax2(
             alg_boundary = _algebraic(
                 jnp.asarray(t_a[b]),
                 jnp.asarray(y),
-                options.thermal,
                 jnp.asarray(t_total),
                 parameters,
             )
@@ -1109,7 +1113,6 @@ def isocalc_jax2(
                 jnp.asarray(t0_chunk),
                 jnp.asarray(t_a[b:end]),
                 jnp.asarray(y),
-                options.thermal,
                 jnp.asarray(t_total),
                 parameters,
             )
@@ -1169,7 +1172,6 @@ def isocalc_jax2(
             alg_final = _algebraic(
                 jnp.asarray(t_final),
                 jnp.asarray(y),
-                options.thermal,
                 jnp.asarray(t_total),
                 parameters,
             )

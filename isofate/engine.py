@@ -25,9 +25,7 @@ from isofate.system import Planet, System
 from isofate.utils import gravitational_acceleration
 
 
-def convective_envelope_thickness(
-    parameters: Parameters, y: Array, Fp, age, thermal: bool = True
-) -> Array:
+def convective_envelope_thickness(parameters: Parameters, y: Array, Fp, age) -> Array:
     """Radial thickness contributed by the convective portion of the H/He envelope (down to the
     radiative-convective boundary), one of the three additive terms making up the total planet
     radius: R_p = R_rocky + convective_envelope_thickness + radiative_atmosphere_thickness.
@@ -35,19 +33,20 @@ def convective_envelope_thickness(
     Adapted from Lopez & Fortney 2014.
 
     Args:
-        parameters: Simulation parameters - `parameters.system.planet.mass` [kg] and the envelope
-            mass fraction (`parameters.atmosphere_mass_fraction(y)`) are read from it.
+        parameters: Simulation parameters - `parameters.system.planet.mass` [kg], the envelope
+            mass fraction (`parameters.atmosphere_mass_fraction(y)`), and
+            `parameters.isocalc_options.thermal` are all read from it.
         y: Per-species abundances [atoms], ordered per `parameters.isofate_species.species` (see
             `Parameters.atmosphere_mass_fraction`).
         Fp: incident bolometric flux [W/m2]
         age: age [s]
-        thermal: toggles radius dependence on thermal evolution [True/False]
 
     Returns:
         Thickness contribution of the convective envelope [m]
     """
     planet: Planet = parameters.system.planet
     f_env: Array = parameters.atmosphere_mass_fraction(y)
+    thermal: bool = parameters.isocalc_options.thermal
 
     c1 = planet.mass / const.Me  # Me = Earth mass [kg]
     # FIXME: Collin to clarify the magic number below
@@ -62,9 +61,7 @@ def convective_envelope_thickness(
     return 2.06 * const.Re * c1 ** (-0.21) * c2 ** (0.59) * c3 ** (0.044) * c4 ** (-0.18)
 
 
-def radiative_atmosphere_thickness(
-    parameters: Parameters, y: Array, Fp, age, Teq, thermal: bool = True
-) -> ArrayLike:
+def radiative_atmosphere_thickness(parameters: Parameters, y: Array, Fp, age, Teq) -> ArrayLike:
     """Radial thickness contributed by the radiative outer atmosphere above the
     radiative-convective boundary - the third of the three additive terms making up the total
     planet radius: R_p = R_rocky + convective_envelope_thickness + radiative_atmosphere_thickness.
@@ -79,13 +76,12 @@ def radiative_atmosphere_thickness(
         Fp: incident bolometric flux [W/m2] (see `convective_envelope_thickness`)
         age: age [s] (see `convective_envelope_thickness`)
         Teq: planet equilibrium temperature [K]
-        thermal: toggles radius dependence on thermal evolution [True/False]
 
     Returns:
         Thickness contribution of the radiative atmosphere [m]
     """
     planet: Planet = parameters.system.planet
-    envelope_thickness: ArrayLike = convective_envelope_thickness(parameters, y, Fp, age, thermal)
+    envelope_thickness: ArrayLike = convective_envelope_thickness(parameters, y, Fp, age)
     mu: Array = parameters.atmosphere_mean_mu(y)
 
     # field strength at base of atm
@@ -95,7 +91,7 @@ def radiative_atmosphere_thickness(
     return 9 * H
 
 
-def total_radius(parameters: Parameters, y: Array, Fp, age, Teq, thermal: bool = True) -> Array:
+def total_radius(parameters: Parameters, y: Array, Fp, age, Teq) -> Array:
     """Total planet radius [m]: the rocky-core radius plus the two additive envelope/atmosphere
     thickness terms, computed internally.
 
@@ -108,14 +104,13 @@ def total_radius(parameters: Parameters, y: Array, Fp, age, Teq, thermal: bool =
         Fp: incident bolometric flux [W/m2] (see `convective_envelope_thickness`)
         age: age [s] (see `convective_envelope_thickness`)
         Teq: planet equilibrium temperature [K] (see `radiative_atmosphere_thickness`)
-        thermal: toggles radius dependence on thermal evolution [True/False]
 
     Returns:
         Total planet radius [m]
     """
     planet = parameters.system.planet
-    envelope_thickness = convective_envelope_thickness(parameters, y, Fp, age, thermal)
-    atmosphere_thickness = radiative_atmosphere_thickness(parameters, y, Fp, age, Teq, thermal)
+    envelope_thickness = convective_envelope_thickness(parameters, y, Fp, age)
+    atmosphere_thickness = radiative_atmosphere_thickness(parameters, y, Fp, age, Teq)
 
     return planet.rocky_radius + envelope_thickness + atmosphere_thickness
 
@@ -185,7 +180,6 @@ def gravitational_potential(system: System, radius: ArrayLike, floor: float = 0.
 def _algebraic(
     t: ArrayLike,
     y: Array,
-    thermal: bool,
     t_total: ArrayLike,
     parameters: Parameters,
 ) -> dict[str, Array]:
@@ -198,9 +192,11 @@ def _algebraic(
     opposed to threading them through diffrax's own `args` parameter) because a partial's bound
     values are baked into the callable object itself - JAX never re-flattens them as pytree state
     the way it would if they were carried through diffrax's internal `lax.while_loop` via `args`.
-    So no `eqx.field(static=True)` bookkeeping is needed to keep e.g. `thermal` (branched on with
-    a raw Python `if` inside `convective_envelope_thickness`) or `escape`'s own bool/str config
-    fields from being force-converted into traced arrays.
+    So no `eqx.field(static=True)` bookkeeping is needed to keep e.g. `parameters.isocalc_options.thermal`
+    (read and branched on with a raw Python `if` inside `convective_envelope_thickness`) or
+    `escape`'s own bool/str config fields from being force-converted into traced arrays -
+    `parameters` is itself held static/untraced by `eqx.filter_jit`'s automatic array/non-array
+    leaf partitioning, same as any bare non-array argument would be.
 
     `M_atm` is not separate integrated state: with no atmodeller coupling in this simplified case,
     dM_atm/dt is exactly dot(dy/dt, atomic_masses), so M_atm(t) is always exactly
@@ -218,10 +214,6 @@ def _algebraic(
     loop clipped `y` after every step for the same reason), and a negative M_atm/f_atm would
     otherwise feed a fractional power (convective_envelope_thickness's c2**0.59 term) with a
     negative base.
-
-    Args:
-        thermal: A plain Python bool, not a traced array - see the note above about why binding
-            this via `functools.partial` (rather than diffrax's `args`) keeps it safely static.
     """
     system = parameters.system
     escape = parameters.escape_mechanism
@@ -241,13 +233,13 @@ def _algebraic(
 
     M_atm = jnp.dot(y, atomic_masses)  # y already clipped >= 0 above, so M_atm is too
     f_atm = parameters.atmosphere_mass_fraction(y)
-    radius_env = convective_envelope_thickness(parameters, y, Fp, t, thermal)
+    radius_env = convective_envelope_thickness(parameters, y, Fp, t)
     R_B = bondi_radius(parameters, y, T)  # recomputed from the current mu, not a fixed bootstrap
     # was `min(R_B, R_H, radius_p)` in isocalc's plain-Python loop - Python's builtin min() on
     # a traced value, same class of fix as Fxuv/Phi_1_2/Phi_minor_species earlier this session.
     radius_p = jnp.minimum(
         R_B,
-        jnp.minimum(system.hill_radius, total_radius(parameters, y, Fp, t, T, thermal)),
+        jnp.minimum(system.hill_radius, total_radius(parameters, y, Fp, t, T)),
     )
 
     Vpot = gravitational_potential(system, radius_p)
@@ -289,7 +281,6 @@ def _vector_field(
     y: Array,
     _args,
     *,
-    thermal: bool,
     t_total: ArrayLike,
     parameters: Parameters,
 ) -> Array:
@@ -302,7 +293,7 @@ def _vector_field(
     `_algebraic`'s docstring for why binding this way, rather than via `args`, is safe) - `args`
     itself is unused (`_integrate_isocalc_jax` passes `args=None` to `diffeqsolve`).
     """
-    alg = _algebraic(t, y, thermal, t_total, parameters)
+    alg = _algebraic(t, y, t_total, parameters)
     return -alg["Phi"] * alg["A"]
 
 
@@ -341,7 +332,6 @@ def _integrate_isocalc_jax(
     t0_seconds: ArrayLike,
     t_a: Array,
     y0: Array,
-    thermal: bool,
     t_total: ArrayLike,
     parameters: Parameters,
 ) -> tuple[Array, dict[str, Array]]:
@@ -358,15 +348,14 @@ def _integrate_isocalc_jax(
 
     `parameters` is itself an `eqx.Module` (pytree) - `filter_jit` already partitions its array
     leaves (traced) from any non-array config fields (held static) without needing explicit
-    annotations, so it's passed through as-is.
+    annotations, so it's passed through as-is - including `parameters.isocalc_options.thermal`
+    (a plain Python `bool`, held static automatically, exactly like the rest of `isocalc_options`;
+    required here since `convective_envelope_thickness` branches on it with a raw Python `if`).
 
     Args:
-        thermal: A plain Python bool, not a traced array - `eqx.filter_jit` holds non-array
-            arguments static automatically (required here, since `convective_envelope_thickness` branches
-            on it with a raw Python `if`). Every other argument here is expected to be an actual
-            array (see `isocalc_jax`'s call site, which wraps its locals in `jnp.asarray` before
-            calling) so that varying them across calls reuses this same compiled program rather
-            than retracing.
+        t0_seconds/t_a/y0/t_total: Expected to be actual arrays (see `isocalc_jax`'s call site,
+            which wraps its locals in `jnp.asarray` before calling) so that varying them across
+            calls reuses this same compiled program rather than retracing.
 
     Returns:
         (y_a, alg_a): the saved trajectory (already inf-filled with the held terminal state past
@@ -383,7 +372,6 @@ def _integrate_isocalc_jax(
 
     vector_field = functools.partial(
         _vector_field,
-        thermal=thermal,
         t_total=t_total,
         parameters=parameters,
     )
@@ -431,8 +419,6 @@ def _integrate_isocalc_jax(
     # Back-compute every diagnostic (including the derived M_atm) from the saved trajectory in one
     # vmapped pass, rather than a per-timestep Python loop. Only t/y vary per output point - the
     # rest are shared/broadcast (in_axes=None), matching what closing over them would have done.
-    alg_a = jax.vmap(_algebraic, in_axes=(0, 0, None, None, None))(
-        t_a, y_a, thermal, t_total, parameters
-    )
+    alg_a = jax.vmap(_algebraic, in_axes=(0, 0, None, None))(t_a, y_a, t_total, parameters)
 
     return y_a, alg_a
