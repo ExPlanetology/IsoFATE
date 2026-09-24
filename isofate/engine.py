@@ -22,10 +22,10 @@ from isofate.escape.fractionation import EscapeNumberFluxBase
 from isofate.escape.mechanisms import EscapeState
 from isofate.parameters import Parameters
 from isofate.system import Planet, System
-from isofate.utils import gravitational_acceleration
+from isofate.utils import gravitational_acceleration, sphere_area
 
 
-def convective_envelope_thickness(parameters: Parameters, y: Array, Fp, age) -> Array:
+def convective_envelope_thickness(parameters: Parameters, y: Array, age) -> Array:
     """Radial thickness contributed by the convective portion of the H/He envelope (down to the
     radiative-convective boundary), one of the three additive terms making up the total planet
     radius: R_p = R_rocky + convective_envelope_thickness + radiative_atmosphere_thickness.
@@ -34,11 +34,11 @@ def convective_envelope_thickness(parameters: Parameters, y: Array, Fp, age) -> 
 
     Args:
         parameters: Simulation parameters - `parameters.system.planet.mass` [kg], the envelope
-            mass fraction (`parameters.atmosphere_mass_fraction(y)`), and
+            mass fraction (`parameters.atmosphere_mass_fraction(y)`), the incident bolometric
+            flux (`parameters.system.insolation` - fixed for the whole run), and
             `parameters.isocalc_options.thermal` are all read from it.
         y: Per-species abundances [atoms], ordered per `parameters.isofate_species.species` (see
             `Parameters.atmosphere_mass_fraction`).
-        Fp: incident bolometric flux [W/m2]
         age: age [s]
 
     Returns:
@@ -47,6 +47,7 @@ def convective_envelope_thickness(parameters: Parameters, y: Array, Fp, age) -> 
     planet: Planet = parameters.system.planet
     f_env: Array = parameters.atmosphere_mass_fraction(y)
     thermal: bool = parameters.isocalc_options.thermal
+    Fp = parameters.system.insolation
 
     c1 = planet.mass / const.Me  # Me = Earth mass [kg]
     # FIXME: Collin to clarify the magic number below
@@ -61,7 +62,7 @@ def convective_envelope_thickness(parameters: Parameters, y: Array, Fp, age) -> 
     return 2.06 * const.Re * c1 ** (-0.21) * c2 ** (0.59) * c3 ** (0.044) * c4 ** (-0.18)
 
 
-def radiative_atmosphere_thickness(parameters: Parameters, y: Array, Fp, age, Teq) -> ArrayLike:
+def radiative_atmosphere_thickness(parameters: Parameters, y: Array, age) -> ArrayLike:
     """Radial thickness contributed by the radiative outer atmosphere above the
     radiative-convective boundary - the third of the three additive terms making up the total
     planet radius: R_p = R_rocky + convective_envelope_thickness + radiative_atmosphere_thickness.
@@ -71,18 +72,18 @@ def radiative_atmosphere_thickness(parameters: Parameters, y: Array, Fp, age, Te
     Args:
         parameters: Simulation parameters - `parameters.system.planet.mass`/`.rocky_radius` [m]
             are read from it (and passed through to `convective_envelope_thickness`); the mean
-            molecular mass is `parameters.atmosphere_mean_mu(y)`.
+            molecular mass is `parameters.atmosphere_mean_mu(y)`; the equilibrium temperature is
+            `parameters.system.equilibrium_temperature` (fixed for the whole run).
         y: Per-species abundances [atoms] (see `convective_envelope_thickness`)
-        Fp: incident bolometric flux [W/m2] (see `convective_envelope_thickness`)
         age: age [s] (see `convective_envelope_thickness`)
-        Teq: planet equilibrium temperature [K]
 
     Returns:
         Thickness contribution of the radiative atmosphere [m]
     """
     planet: Planet = parameters.system.planet
-    envelope_thickness: ArrayLike = convective_envelope_thickness(parameters, y, Fp, age)
+    envelope_thickness: ArrayLike = convective_envelope_thickness(parameters, y, age)
     mu: Array = parameters.atmosphere_mean_mu(y)
+    Teq = parameters.system.equilibrium_temperature
 
     # field strength at base of atm
     g = const.G * planet.mass / ((planet.rocky_radius + envelope_thickness) ** 2)
@@ -91,7 +92,7 @@ def radiative_atmosphere_thickness(parameters: Parameters, y: Array, Fp, age, Te
     return 9 * H
 
 
-def total_radius(parameters: Parameters, y: Array, Fp, age, Teq) -> Array:
+def total_radius(parameters: Parameters, y: Array, age) -> Array:
     """Total planet radius [m]: the rocky-core radius plus the two additive envelope/atmosphere
     thickness terms, computed internally.
 
@@ -101,31 +102,30 @@ def total_radius(parameters: Parameters, y: Array, Fp, age, Teq) -> Array:
         parameters: Simulation parameters - `parameters.system.planet` is read from it (and
             passed through to `convective_envelope_thickness`/`radiative_atmosphere_thickness`).
         y: Per-species abundances [atoms] (see `convective_envelope_thickness`)
-        Fp: incident bolometric flux [W/m2] (see `convective_envelope_thickness`)
         age: age [s] (see `convective_envelope_thickness`)
-        Teq: planet equilibrium temperature [K] (see `radiative_atmosphere_thickness`)
 
     Returns:
         Total planet radius [m]
     """
     planet = parameters.system.planet
-    envelope_thickness = convective_envelope_thickness(parameters, y, Fp, age)
-    atmosphere_thickness = radiative_atmosphere_thickness(parameters, y, Fp, age, Teq)
+    envelope_thickness = convective_envelope_thickness(parameters, y, age)
+    atmosphere_thickness = radiative_atmosphere_thickness(parameters, y, age)
 
     return planet.rocky_radius + envelope_thickness + atmosphere_thickness
 
 
-def bondi_radius(parameters: Parameters, y: Array, Teq, gamma: float = 7 / 5):
+def bondi_radius(parameters: Parameters, y: Array, gamma: float = 7 / 5):
     """Bondi radius calculation.
 
-    Adapted from `isofate.isofunks.R_Bondi` (kept unchanged there for `isoplot.py`); `Mp`/`mu` are
-    read from `parameters`/`y` internally rather than taken as separate arguments.
+    Adapted from `isofate.isofunks.R_Bondi` (kept unchanged there for `isoplot.py`); `Mp`/`mu`/
+    `Teq` are read from `parameters`/`y` internally rather than taken as separate arguments.
 
     Args:
-        parameters: Simulation parameters - `parameters.system.planet.mass` [kg] is read from it.
+        parameters: Simulation parameters - `parameters.system.planet.mass` [kg] and
+            `parameters.system.equilibrium_temperature` [K] (fixed for the whole run) are read
+            from it.
         y: Per-species abundances [atoms] - `parameters.atmosphere_mean_mu(y)` gives the mean
             particle mass [kg].
-        Teq: planetary equilibrium temperature [K]
         gamma: adiabatic index (heat capacity ratio) [ndim]. Defaults to 7/5, which is the heat
             capacity ratio of an ideal diatomic gas.
 
@@ -134,6 +134,7 @@ def bondi_radius(parameters: Parameters, y: Array, Teq, gamma: float = 7 / 5):
     """
     Mp: Array = parameters.system.planet.mass
     mu: Array = parameters.atmosphere_mean_mu(y)
+    Teq = parameters.system.equilibrium_temperature
 
     return (gamma - 1) * const.G * Mp * mu / (gamma * const.kb * Teq)
 
@@ -219,11 +220,9 @@ def _algebraic(
     escape = parameters.escape_mechanism
     escape_number_flux = parameters.escape_number_flux
 
-    atomic_masses = escape_number_flux.species.atomic_masses
     Mp = system.planet.mass
     T = system.equilibrium_temperature
     d = system.semi_major_axis
-    Fp = system.insolation
 
     y = jnp.maximum(y, 0.0)
     N_tot = jnp.sum(y)
@@ -231,19 +230,19 @@ def _algebraic(
     mu = parameters.atmosphere_mean_mu(y)
     x = jnp.where(N_tot > 0, y / safe_N_tot, jnp.zeros_like(y))
 
-    M_atm = jnp.dot(y, atomic_masses)  # y already clipped >= 0 above, so M_atm is too
+    M_atm = parameters.atmosphere_mass(y)  # y already clipped >= 0 above, so M_atm is too
     f_atm = parameters.atmosphere_mass_fraction(y)
-    radius_env = convective_envelope_thickness(parameters, y, Fp, t)
-    R_B = bondi_radius(parameters, y, T)  # recomputed from the current mu, not a fixed bootstrap
+    radius_env = convective_envelope_thickness(parameters, y, t)
+    R_B = bondi_radius(parameters, y)  # recomputed from the current mu, not a fixed bootstrap
     # was `min(R_B, R_H, radius_p)` in isocalc's plain-Python loop - Python's builtin min() on
     # a traced value, same class of fix as Fxuv/Phi_1_2/Phi_minor_species earlier this session.
     radius_p = jnp.minimum(
         R_B,
-        jnp.minimum(system.hill_radius, total_radius(parameters, y, Fp, t, T)),
+        jnp.minimum(system.hill_radius, total_radius(parameters, y, t)),
     )
 
     Vpot = gravitational_potential(system, radius_p)
-    A = 4 * jnp.pi * radius_p**2
+    A = sphere_area(radius_p)
     g = gravitational_acceleration(Mp, radius_p)
 
     state = EscapeState(
@@ -364,10 +363,9 @@ def _integrate_isocalc_jax(
     """
     n_tot = t_a.shape[0]
     escape_number_flux = parameters.escape_number_flux
-    atomic_masses = escape_number_flux.species.atomic_masses
 
     sum_y0 = jnp.sum(y0)
-    M_atm0 = jnp.dot(y0, atomic_masses)
+    M_atm0 = parameters.atmosphere_mass(y0)
     _exhaustion_fraction = 1e-6
 
     vector_field = functools.partial(

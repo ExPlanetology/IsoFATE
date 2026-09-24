@@ -325,7 +325,7 @@ Rp = r_core + r_env + r_atm
 # gives bondi_radius the model's own final composition instead of an assumed solar mu (unlike
 # `mu` above, which stays the solar-composition placeholder used by r_atm).
 y_final = np.array([NH_a[-1], NHe_a[-1], ND_a[-1], NO_a[-1], NC_a[-1], NN_a[-1], NS_a[-1]])
-R_B = bondi_radius(parameters, y_final, T)  # Bondi radius [m]
+R_B = bondi_radius(parameters, y_final)  # Bondi radius [m]
 R_H = system.hill_radius  # Hill radius [m]
 # Rp = r_core  # use this if rad_evol = False for analytics to match isofate; r_core already
 # reflects planet's own fixed-radius override, if any (see Planet.rocky_radius)

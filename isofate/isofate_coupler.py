@@ -261,9 +261,7 @@ def isocalc(
         # time-variable average atomic mass
         N_tot = np.sum(y)
         mu = parameters.atmosphere_mean_mu(y)
-        R_B = bondi_radius(
-            parameters, y, T
-        )  # recomputed from the current mu, not a fixed bootstrap
+        R_B = bondi_radius(parameters, y)  # recomputed from the current mu, not a fixed bootstrap
 
         if options.rad_evol == False:
             radius_env = 0

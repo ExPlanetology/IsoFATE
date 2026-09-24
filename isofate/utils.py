@@ -12,6 +12,18 @@ from jax.typing import ArrayLike
 from isofate.constants import const
 
 
+def sphere_area(radius: ArrayLike) -> ArrayLike:
+    """Surface area of a sphere.
+
+    Args:
+        radius: Sphere radius [m]
+
+    Returns:
+        Surface area [m2]
+    """
+    return 4 * jnp.pi * radius**2
+
+
 def gravitational_acceleration(mass: ArrayLike, radius: ArrayLike) -> ArrayLike:
     """Gravitational acceleration at `radius` from a point/enclosed mass `mass`.
 
