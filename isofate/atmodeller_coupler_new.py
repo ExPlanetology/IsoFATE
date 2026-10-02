@@ -10,6 +10,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from atmodeller import ChemicalSpecies, EquilibriumModel, ReservoirSpecies
 from atmodeller import Planet as AtmodellerPlanet
+from atmodeller.constants import SILICATE_MELT_PHASE_INDEX
 from atmodeller.solubility import get_solubility_models
 from jax.typing import ArrayLike
 from jaxtyping import Array
@@ -62,9 +63,8 @@ class AtmosphereModel(eqx.Module):
         p, _ = y
         Tem, mu, Mc, K, pem = args
 
-        T: ArrayLike = (
-            Tem * (p / pem) ** K
-        )  # dry adiabat: T is algebraic in p, not itself integrated
+        # dry adiabat: T is algebraic in p, not itself integrated
+        T: ArrayLike = Tem * (p / pem) ** K
 
         # Below is intentionally kept from the original code (but was always commented out), to
         # presumably test a deep isothermal layer.  It requires rewriting since it is not JAX
@@ -142,6 +142,17 @@ class AtmosphereModel(eqx.Module):
         return M_atm, T_surf, P_surf
 
 
+class TrackedGasSpecies(eqx.Module):
+    """One isofate-tracked gas-phase species, derived from atmodeller's own species lists."""
+
+    gas_name: str
+    """Atmodeller canonical gas-phase name, e.g. "H2_g", "O2S_g"."""
+    label: str
+    """Isofate's human-readable output label, e.g. "H2", "SO2"."""
+    melt_name: str | None
+    """Atmodeller canonical melt-phase name, or None if this species has no melt reservoir."""
+
+
 class AtmodellerCoupler(eqx.Module):
     """Atmodeller coupler for IsoFATE, which builds an Atmodeller model for the interior-atmosphere
     coupling.
@@ -163,11 +174,13 @@ class AtmodellerCoupler(eqx.Module):
     parameters: Parameters
     equilibrium_model: EquilibriumModel
     max_surface_temperature: float
+    tracked_species: tuple[TrackedGasSpecies, ...]
 
     def __init__(self, parameters: Parameters, max_surface_temperature: float = 6000):
         self.parameters = parameters
         self.equilibrium_model = self.construct_equilibrium_model()
         self.max_surface_temperature = max_surface_temperature
+        self.tracked_species = self.set_tracked_gas_species()
 
     def construct_equilibrium_model(self) -> EquilibriumModel:
         """Constructs an equilibrium model for the interior-atmosphere coupling.
@@ -265,6 +278,38 @@ class AtmodellerCoupler(eqx.Module):
         model: EquilibriumModel = EquilibriumModel.from_state(planet)
 
         return model
+
+    def set_tracked_gas_species(self) -> tuple[TrackedGasSpecies, ...]:
+        """Ordered set of gas-phase species isofate tracks as molecular output - every gas species
+        except He, which isofate tracks separately as one of its own 7 core H/He/D/O/C/N/S species.
+
+        Derived directly from the equilibrium model's own species objects, which already carry both
+        the original formula (used as isofate's output label, e.g. "SO2") and the
+        Hill-canonicalized name atmodeller actually indexes its solve output by (e.g. "O2S_g" -
+        atmodeller internally derives this from molmass, see ChemicalSpeciesData) - so no separate
+        Hill-notation conversion or per-species override table is needed on isofate's side.
+        """
+        gas_species: tuple[ChemicalSpecies, ...] = (
+            self.equilibrium_model.parameters.reaction_system.phase_system.gas.species.species
+        )
+        melt_names: tuple[str, ...] = (
+            self.equilibrium_model.parameters.reaction_system.phase_system.phases[
+                SILICATE_MELT_PHASE_INDEX
+            ].species_names
+        )
+        melt_by_stem: dict[str, str] = {name.removesuffix("_d"): name for name in melt_names}
+
+        tracked: list[TrackedGasSpecies] = []
+        for sp in gas_species:
+            if sp.data.formula == "He":
+                continue
+            tracked.append(
+                TrackedGasSpecies(
+                    sp.data.name, sp.data.formula, melt_by_stem.get(sp.data.hill_formula)
+                )
+            )
+
+        return tuple(tracked)
 
     def run(
         self,
