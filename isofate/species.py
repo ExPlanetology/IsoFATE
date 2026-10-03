@@ -21,7 +21,9 @@ from jax import Array
 from jax.typing import ArrayLike
 from molmass import Formula
 
+# TODO: rename to SPECIES_SYMBOLS?
 SYMBOLS: tuple[str, ...] = ("H", "He", "D", "O", "C", "N", "S")
+"""Canonical list of the species tracked by IsoFATE's escape/interior model."""
 
 
 class BinaryDiffusionCoefficients(eqx.Module):

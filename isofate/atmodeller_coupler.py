@@ -41,6 +41,7 @@ _D_INDEX: int = SYMBOLS.index("D")
 _H_POSITION: int = _COUPLING_ELEMENTS.index("H")
 
 
+# TODO: Now moved to new coupling module, so can eventually remove
 @dataclass(frozen=True)
 class TrackedGasSpecies:
     """One isofate-tracked gas-phase species, derived from atmodeller's own species lists."""
@@ -53,6 +54,7 @@ class TrackedGasSpecies:
     """Atmodeller canonical melt-phase name, or None if this species has no melt reservoir."""
 
 
+# TODO: Now moved to new coupling module, so can eventually remove
 def get_tracked_gas_species(
     interior_atmosphere: EquilibriumModel,
 ) -> tuple[TrackedGasSpecies, ...]:
@@ -82,7 +84,7 @@ def get_tracked_gas_species(
         )
     return tuple(tracked)
 
-
+# TODO: Now moved to new coupling module, so can eventually remove
 def aggregate_D_into_H(values: ArrayLike) -> np.ndarray:
     """Maps an isocalc per-species array (ordered per isofate.species.SYMBOLS: H, He, D, O, C,
     N, S) onto the layout AtmodellerCoupler expects (`_COUPLING_ELEMENTS`: H, He, O, C, N, S).

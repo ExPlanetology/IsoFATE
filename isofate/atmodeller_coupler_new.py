@@ -18,10 +18,23 @@ from jaxtyping import Array
 from isofate.constants import const
 from isofate.mantle_iron import MantleIronState
 from isofate.parameters import Parameters
+from isofate.species import SYMBOLS
 from isofate.system import Planet
 from isofate.utils import gravitational_acceleration
 
 solubility_models = get_solubility_models()
+
+_COUPLING_ELEMENTS: tuple[str, ...] = tuple(symbol for symbol in SYMBOLS if symbol != "D")
+"""Elements coupled to Atmodeller, ordered per `SYMBOLS` with D removed (Atmodeller has no
+separate D reservoir, so D is aggregated into H); must match the mass_constraints keys."""
+
+# Precomputed once: which isofate.species.SYMBOLS index feeds each _COUPLING_ELEMENTS slot, and
+# where "D" and "H" themselves sit in each ordering - used by aggregate_D_into_H below.
+_COUPLING_ELEMENT_INDICES: tuple[int, ...] = tuple(
+    SYMBOLS.index(element) for element in _COUPLING_ELEMENTS
+)
+_D_INDEX: int = SYMBOLS.index("D")
+_H_POSITION: int = _COUPLING_ELEMENTS.index("H")
 
 
 class AtmosphereModel(eqx.Module):
@@ -278,6 +291,29 @@ class AtmodellerCoupler(eqx.Module):
         model: EquilibriumModel = EquilibriumModel.from_state(planet)
 
         return model
+
+    # TODO: keep isocalc_values or use isofate_values?
+    # Perhaps also the method name should eventually change
+    def aggregate_D_into_H(self, isocalc_values: ArrayLike) -> Array:
+        """Maps an isocalc per-species array (ordered per :data:`isofate.species.SYMBOLS`) onto the
+        layout AtmodellerCoupler expects (:data:`_COUPLING_ELEMENTS`).
+
+        Atmodeller has no separate D reservoir, so D's abundance is folded into H's. The inverse
+        step, splitting H back into H and D, uses the D/H ratio `X_DH`.
+
+        Args:
+            isocalc_values: Per-species values (e.g. number of atoms) with leading axis ordered
+                per :data:`isofate.species.SYMBOLS`
+
+        Returns:
+            Per-element values with leading axis ordered per :data:`_COUPLING_ELEMENTS`, with D
+            added to H
+        """
+        values: Array = jnp.asarray(isocalc_values, dtype=float)
+        coupled: Array = values[jnp.array(_COUPLING_ELEMENT_INDICES)]
+        coupled = coupled.at[_H_POSITION].add(values[_D_INDEX])
+
+        return coupled
 
     def set_tracked_gas_species(self) -> tuple[TrackedGasSpecies, ...]:
         """Ordered set of gas-phase species isofate tracks as molecular output - every gas species
