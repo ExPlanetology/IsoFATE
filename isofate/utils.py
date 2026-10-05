@@ -36,6 +36,22 @@ def gravitational_acceleration(mass: ArrayLike, radius: ArrayLike) -> ArrayLike:
     return const.G * mass / radius**2
 
 
+def gravitational_potential(mass: ArrayLike, radius: ArrayLike) -> ArrayLike:
+    """Magnitude of the gravitational potential at `radius` from a point/enclosed mass `mass`.
+
+    Returned as a positive quantity, G M / r, i.e. the energy per unit mass needed to escape to
+    infinity.
+
+    Args:
+        mass: Enclosed mass [kg]
+        radius: Radial distance from the center [m]
+
+    Returns:
+        Gravitational potential [J/kg]
+    """
+    return const.G * mass / radius
+
+
 def scale_height(temperature: ArrayLike, mass: ArrayLike, gravity: ArrayLike) -> ArrayLike:
     """Isothermal ideal-gas scale height, H = k_B T / (m g).
 

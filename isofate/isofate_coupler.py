@@ -24,7 +24,7 @@ from isofate.constants import const
 from isofate.engine import (
     IsocalcIntegrator,
     bondi_radius,
-    gravitational_potential,
+    tidal_gravitational_potential,
 )
 from isofate.escape.fractionation import Phi_1_2, Phi_minor_species
 from isofate.escape.mechanisms import EscapeState
@@ -234,7 +234,7 @@ def isocalc(
             fatm_a[n:] = 0  # f_atm #fatm_a[n-1]
             Renv_a[n:] = 0  # radius_env #Renv_a[n-1]
             Rp_a[n:] = planet.rocky_radius
-            Vpot_a[n:] = gravitational_potential(system, planet.rocky_radius)
+            Vpot_a[n:] = tidal_gravitational_potential(system, planet.rocky_radius)
 
             phi_a[n:] = 0
             Mloss_a[n:] = 0
@@ -275,7 +275,7 @@ def isocalc(
             # array-construction/dispatch overhead on a 3-scalar comparison run every timestep
             radius_p = min(R_B, R_H, radius_p)
 
-        Vpot = gravitational_potential(system, radius_p)
+        Vpot = tidal_gravitational_potential(system, radius_p)
         A = 4 * np.pi * radius_p**2
 
         # sets mass flux [kg/m2/s]
@@ -1005,7 +1005,7 @@ def isocalc_jax2(
             fatm_a[start:] = 0
             Renv_a[start:] = 0
             Rp_a[start:] = planet.rocky_radius
-            Vpot_a[start:] = gravitational_potential(system, planet.rocky_radius)
+            Vpot_a[start:] = tidal_gravitational_potential(system, planet.rocky_radius)
             phi_a[start:] = 0
             Mloss_a[start:] = 0
             y_a[start:] = 0

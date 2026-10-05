@@ -21,7 +21,12 @@ from isofate.constants import const
 from isofate.escape.mechanisms import EscapeState
 from isofate.parameters import Parameters
 from isofate.system import Planet, System
-from isofate.utils import gravitational_acceleration, scale_height, sphere_area
+from isofate.utils import (
+    gravitational_acceleration,
+    gravitational_potential,
+    scale_height,
+    sphere_area,
+)
 
 
 def convective_envelope_thickness(parameters: Parameters, y: Array, age: ArrayLike) -> Array:
@@ -62,14 +67,11 @@ def radiative_atmosphere_thickness(parameters: Parameters, y: Array, age: ArrayL
     radiative-convective boundary - the third of the three additive terms making up the total
     planet radius: R_p = R_rocky + convective_envelope_thickness + radiative_atmosphere_thickness.
 
-    Adapted from Lopez & Fortney 2014
+    Adapted from Lopez and Fortney, 2014.
 
     Args:
-        parameters: Simulation parameters - `parameters.system.planet.mass`/`.rocky_radius` [m]
-            are read from it (and passed through to `convective_envelope_thickness`); the mean
-            molecular mass is `parameters.atmosphere_mean_mu(y)`; the equilibrium temperature is
-            `parameters.system.equilibrium_temperature` (fixed for the whole run).
-        y: Per-species abundances [atoms] (see `convective_envelope_thickness`)
+        parameters: Parameters
+        y: Per-species abundances [atoms], ordered per `parameters.isofate_species.species`
         age: age [s]
 
     Returns:
@@ -87,17 +89,16 @@ def radiative_atmosphere_thickness(parameters: Parameters, y: Array, age: ArrayL
     return 9 * scale_height(Teq, mu, g)
 
 
-def total_radius(parameters: Parameters, y: Array, age) -> Array:
+def total_radius(parameters: Parameters, y: Array, age: ArrayLike) -> Array:
     """Total planet radius [m]: the rocky-core radius plus the two additive envelope/atmosphere
     thickness terms, computed internally.
 
     R_p = R_rocky + convective_envelope_thickness + radiative_atmosphere_thickness.
 
     Args:
-        parameters: Simulation parameters - `parameters.system.planet` is read from it (and
-            passed through to `convective_envelope_thickness`/`radiative_atmosphere_thickness`).
-        y: Per-species abundances [atoms] (see `convective_envelope_thickness`)
-        age: age [s] (see `convective_envelope_thickness`)
+        parameters: Parameters
+        y: Per-species abundances [atoms], ordered per `parameters.isofate_species.species`
+        age: age [s]
 
     Returns:
         Total planet radius [m]
@@ -117,11 +118,8 @@ def bondi_radius(parameters: Parameters, y: Array):
     arguments.
 
     Args:
-        parameters: Simulation parameters - `parameters.system.planet.mass` [kg],
-            `parameters.system.equilibrium_temperature` [K] (fixed for the whole run), and the
-            adiabatic index `parameters.atmosphere.adiabatic_index` [ndim] are read from it.
-        y: Per-species abundances [atoms] - `parameters.atmosphere_mean_mu(y)` gives the mean
-            particle mass [kg].
+        parameters: Parameters
+        y: Per-species abundances [atoms], ordered per `parameters.isofate_species.species`
 
     Returns:
         Bondi radius [m]
@@ -138,8 +136,7 @@ def tidal_reduction_factor(system: System, radius: ArrayLike, floor: float = 0.0
     """Gravitational potential reduction factor due to stellar tidal forces (Erkaev et al. 2007).
 
     Args:
-        system: System parameters - `system.planet.mass`, `system.star.mass`, and
-            `system.semi_major_axis` are read from it.
+        system: System parameters
         radius: Planet radius [m] - pass the current total (rocky + envelope) radius when it's
             time-evolving.
         floor: Minimum value returned. Defaults to `0.01`.
@@ -147,7 +144,7 @@ def tidal_reduction_factor(system: System, radius: ArrayLike, floor: float = 0.0
     Returns:
         Gravitational potential reduction factor [ndim]
     """
-    delta = system.planet.mass / system.star.mass
+    delta: Array = system.planet.mass / system.star.mass
     lam = system.semi_major_axis / radius
     zeta = lam * (delta / 3) ** (1 / 3)
     V_reduction = 1 - 3 / 2 / zeta + 1 / 2 / jnp.power(zeta, 3)
@@ -155,7 +152,7 @@ def tidal_reduction_factor(system: System, radius: ArrayLike, floor: float = 0.0
     return jnp.maximum(V_reduction, floor)
 
 
-def gravitational_potential(system: System, radius: ArrayLike, floor: float = 0.01) -> Array:
+def tidal_gravitational_potential(system: System, radius: ArrayLike, floor: float = 0.01) -> Array:
     """Gravitational potential at the outer layer [J/kg], reduced by `tidal_reduction_factor`.
 
     Args:
@@ -170,7 +167,7 @@ def gravitational_potential(system: System, radius: ArrayLike, floor: float = 0.
     """
     K: Array = tidal_reduction_factor(system, radius, floor)
 
-    return K * const.G * system.planet.mass / radius
+    return K * gravitational_potential(system.planet.mass, radius)
 
 
 def _hold_last_finite(y_a: Array, y0: Array) -> Array:
@@ -281,7 +278,7 @@ class IsocalcIntegrator(eqx.Module):
             jnp.minimum(system.hill_radius, total_radius(parameters, y, t)),
         )
 
-        Vpot = gravitational_potential(system, radius_p)
+        Vpot = tidal_gravitational_potential(system, radius_p)
         A = sphere_area(radius_p)
         g = gravitational_acceleration(Mp, radius_p)
 
