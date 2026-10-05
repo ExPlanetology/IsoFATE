@@ -45,7 +45,10 @@ _PLACEHOLDER_REDUCTION: float = 0.01
 """Fractional reduction of every abundance applied by `placeholder_reequilibration`."""
 
 _RESTART_DT0_FRACTION: float = 1e-6
-"""Initial step on restarts in `integrate_segments`, as a fraction of the remaining time span."""
+"""Initial step on restarts in `integrate_segments`, as a fraction of the full integration span.
+
+diffrax clips the step to the end of the integration, so this is safe close to the end too.
+"""
 
 
 def convective_envelope_thickness(parameters: Parameters, y: Array, age: ArrayLike) -> Array:
@@ -447,19 +450,26 @@ class IsocalcIntegrator(eqx.Module):
         return y_a, alg_a, stop
 
 
-class Restart(eqx.Module):
-    """A restart of the segmented integration (see `integrate_segments`).
+class Restarts(eqx.Module):
+    """The restarts of a segmented integration (see `integrate_segments`), in fixed-size buffers
+    so that the integration can be jitted.
+
+    Only the first `count` entries are filled; the remaining entries are NaN.
 
     Args:
-        t: Restart time [s]
-        y_before: Per-species abundances when the mass-loss event fired [atoms]
+        t: Restart times [s]
+        y_before: Per-species abundances when each mass-loss event fired [atoms]
         y_after: Per-species abundances after the `on_mass_lost` hook, from which the integration
             restarted [atoms]
+        count: Number of restarts
+        finished: True if the integration finished within `max_segments` segments
     """
 
     t: Array
     y_before: Array
     y_after: Array
+    count: Array
+    finished: Array
 
 
 def placeholder_reequilibration(carry: Any, t: Array, y: Array) -> tuple[Any, Array]:
@@ -484,6 +494,7 @@ def placeholder_reequilibration(carry: Any, t: Array, y: Array) -> tuple[Any, Ar
     return carry, (1 - _PLACEHOLDER_REDUCTION) * y
 
 
+@eqx.filter_jit
 def integrate_segments(
     integrator: IsocalcIntegrator,
     t0_seconds: ArrayLike,
@@ -492,7 +503,7 @@ def integrate_segments(
     on_mass_lost: Callable[[Any, Array, Array], tuple[Any, Array]] = placeholder_reequilibration,
     carry: Any = None,
     max_segments: int = 1000,
-) -> tuple[Array, dict[str, ArrayLike], list[Restart], Any]:
+) -> tuple[Array, dict[str, ArrayLike], Restarts, Any]:
     """Integrates in segments, restarting after each mass-loss event.
 
     diffrax events can only end a solve, so each restart is a new `integrator.integrate` call. With
@@ -503,7 +514,7 @@ def integrate_segments(
     so the derivative is recomputed after the jump in `y`, and no step-size controller state (it
     only holds error ratios, not the step size).
 
-    Restarts use an explicit initial step, `_RESTART_DT0_FRACTION` of the remaining time span,
+    Restarts use an explicit initial step, `_RESTART_DT0_FRACTION` of the full integration span,
     rather than diffrax's automatic choice: at late times (e.g. t ~ 1e16 s) that choice can be
     effectively zero, and since the PID controller scales each new step from the previous one, the
     solve then never advances. The controller adapts the explicit step from there.
@@ -512,60 +523,117 @@ def integrate_segments(
     `EXHAUSTION_FRACTION` of its value at `t0_seconds` (checked both when the event fires and after
     the hook).
 
-    Every segment saves on the full output grid, clipped to its own start time, so the shape is
-    fixed and `integrate` compiles once. Each segment overwrites the rows from its start time
-    onwards, so an output time exactly at a restart holds the post-hook state. The diagnostics are
-    computed once over the assembled trajectory; the per-segment diagnostics computed inside
-    `integrate` are discarded.
+    Every segment saves on the full output grid, clipped to its own start time, so the shapes are
+    fixed. Each segment overwrites the rows from its start time onwards, so an output time exactly
+    at a restart holds the post-hook state. The diagnostics are computed once over the assembled
+    trajectory; the per-segment diagnostics computed inside `integrate` are discarded.
 
-    A Python loop for now, because the hook will call Atmodeller; each `integrate` call is jitted.
+    Jitted, so `on_mass_lost` must be jittable and must return `carry` with the same structure,
+    shapes and dtypes it received. Following the pattern of Atmodeller's retry solver, the first
+    segment runs before a `jax.lax.while_loop` over the restarts (so it keeps diffrax's automatic
+    initial step, matching a single `integrate` call), and each restart is recorded in fixed-size
+    buffers. `max_segments` sets the buffer size, so a different value retraces.
 
     Args:
         integrator: Integrator, reused for every segment
         t0_seconds: Integration start time [s]
         t_a: Output times [s]
         y0: Initial per-species abundances [atoms]
-        on_mass_lost: Hook `(carry, t, y) -> (carry, y_new)` called at each restart. Defaults to
-            `placeholder_reequilibration`.
+        on_mass_lost: Jittable hook `(carry, t, y) -> (carry, y_new)` called at each restart.
+            Defaults to `placeholder_reequilibration`.
         carry: Initial state carried between calls of `on_mass_lost`. Defaults to ``None``.
         max_segments: Maximum number of segments. Defaults to ``1000``.
 
     Returns:
         `(y_a, alg_a, restarts, carry)`: the trajectory on `t_a`, the `algebraic` diagnostics for
-        every `t_a` entry, one `Restart` per restart, and the final carried state
+        every `t_a` entry, the restarts, and the final carried state
 
     Raises:
-        RuntimeError: If the integration has not finished after `max_segments` segments
+        EquinoxRuntimeError: If the integration has not finished after `max_segments` segments,
+            but only if Equinox errors are enabled (`EQX_ON_ERROR`, which isofate turns off by
+            default) - otherwise check `restarts.finished`
     """
     parameters: Parameters = integrator.parameters
+    t0_seconds = jnp.asarray(t0_seconds)
+    t_last: Array = t_a[-1]
     floor: Array = EXHAUSTION_FRACTION * parameters.atmosphere_mass(y0)
+    restart_dt0: Array = _RESTART_DT0_FRACTION * (t_last - t0_seconds)
+    max_restarts: int = max_segments - 1
 
-    t_start: Array = jnp.asarray(t0_seconds)
-    y: Array = y0
-    y_a: Array = jnp.zeros((t_a.shape[0], y0.shape[0]))
-    restarts: list[Restart] = []
+    def needs_restart(stop: IntegrationStop) -> Array:
+        """True if the segment ended on a mass-loss event before exhaustion and the last output
+        time."""
+        return (
+            stop.mass_lost
+            & (parameters.atmosphere_mass(stop.y) > floor)
+            & (stop.t < t_last)
+        )
 
-    for _ in range(max_segments):
-        # diffrax chooses the first segment's initial step, as in a single `integrate` call
-        dt0: Array | None = None if not restarts else _RESTART_DT0_FRACTION * (t_a[-1] - t_start)
-        y_segment, _, stop = integrator.integrate(t_start, jnp.maximum(t_a, t_start), y, dt0)
-        y_a = jnp.where((t_a >= t_start)[:, None], y_segment, y_a)
+    # First segment, before the loop
+    y_segment, _, stop = integrator.integrate(t0_seconds, jnp.maximum(t_a, t0_seconds), y0)
+    nan_buffer: Array = jnp.full((max_restarts, y0.shape[0]), jnp.nan)
+    state = (
+        y_segment,  # y_a
+        stop,
+        needs_restart(stop),
+        carry,
+        Restarts(
+            t=jnp.full(max_restarts, jnp.nan),
+            y_before=nan_buffer,
+            y_after=nan_buffer,
+            count=jnp.array(0),
+            finished=jnp.array(False),
+        ),
+    )
 
-        if not bool(stop.mass_lost) or bool(parameters.atmosphere_mass(stop.y) <= floor):
-            break
+    def cond_fn(state) -> Array:
+        _, _, restart, _, restarts = state
 
-        carry, y = on_mass_lost(carry, stop.t, stop.y)
-        restarts.append(Restart(t=stop.t, y_before=stop.y, y_after=y))
+        return restart & (restarts.count < max_restarts)
 
-        if bool(parameters.atmosphere_mass(y) <= floor):
-            y_a = jnp.where((t_a > stop.t)[:, None], y, y_a)
-            break
+    def body_fn(state):
+        y_a, stop, _, carry, restarts = state
 
-        t_start = stop.t
-    else:
-        raise RuntimeError(f"Segmented integration did not finish within {max_segments} segments")
+        carry, y_new = on_mass_lost(carry, stop.t, stop.y)
+        index: Array = restarts.count
+        restarts = Restarts(
+            t=restarts.t.at[index].set(stop.t),
+            y_before=restarts.y_before.at[index].set(stop.y),
+            y_after=restarts.y_after.at[index].set(y_new),
+            count=index + 1,
+            finished=restarts.finished,
+        )
+
+        def finish(y_a: Array) -> tuple[Array, IntegrationStop, Array]:
+            """The hook left the atmosphere exhausted: hold its output for the remaining rows."""
+            y_a = jnp.where((t_a > stop.t)[:, None], y_new, y_a)
+            exhausted_stop = IntegrationStop(t=stop.t, y=y_new, mass_lost=jnp.array(False))
+
+            return y_a, exhausted_stop, jnp.array(False)
+
+        def restart(y_a: Array) -> tuple[Array, IntegrationStop, Array]:
+            """Integrate the next segment from the hook's output."""
+            y_segment, _, next_stop = integrator.integrate(
+                stop.t, jnp.maximum(t_a, stop.t), y_new, restart_dt0
+            )
+            y_a = jnp.where((t_a >= stop.t)[:, None], y_segment, y_a)
+
+            return y_a, next_stop, needs_restart(next_stop)
+
+        y_a, stop, needs_another = jax.lax.cond(
+            parameters.atmosphere_mass(y_new) <= floor, finish, restart, y_a
+        )
+
+        return y_a, stop, needs_another, carry, restarts
+
+    y_a, _, unfinished, carry, restarts = jax.lax.while_loop(cond_fn, body_fn, state)
+    restarts = eqx.tree_at(lambda r: r.finished, restarts, jnp.invert(unfinished))
+    # Only raises if Equinox errors are enabled (isofate/__init__.py sets EQX_ON_ERROR="off"), so
+    # callers should also check `restarts.finished`
+    y_a = eqx.error_if(
+        y_a, unfinished, f"Segmented integration did not finish within {max_segments} segments"
+    )
 
     alg_a: dict[str, ArrayLike] = jax.vmap(integrator.algebraic)(t_a, y_a)
 
     return y_a, alg_a, restarts, carry
-

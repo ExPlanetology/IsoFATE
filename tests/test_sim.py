@@ -282,15 +282,18 @@ def test_integrate_segments_identity_hook_matches_single_solve():
     reference_integrator, _, _, _ = _sim_integrator_setup()
     y_reference, _, _ = reference_integrator.integrate(t_start, t_a, y0)
 
-    assert len(restarts) >= 3
+    count = int(restarts.count)
+    assert count >= 2
+    assert bool(restarts.finished)
+    assert np.all(np.isnan(restarts.t[count:]))
     segment_start_mass = parameters.atmosphere_mass(y0)
-    for restart in restarts:
-        assert np.all(restart.y_after == restart.y_before)
+    for i in range(count):
+        assert np.all(restarts.y_after[i] == restarts.y_before[i])
         # Slightly past 5%: the boolean condition fires at the end of the step on which it becomes
         # true, and later segments take larger steps
-        mass = parameters.atmosphere_mass(restart.y_before)
+        mass = parameters.atmosphere_mass(restarts.y_before[i])
         assert 0.9 < float(mass / segment_start_mass) <= 0.95
-        segment_start_mass = parameters.atmosphere_mass(restart.y_after)
+        segment_start_mass = parameters.atmosphere_mass(restarts.y_after[i])
 
     assert np.all(np.isfinite(y_a))
     np.testing.assert_allclose(y_a, y_reference, rtol=1e-4)
@@ -307,13 +310,14 @@ def test_integrate_segments_placeholder_hook():
         integrator, t_start, t_a, y0, on_mass_lost=_identity_hook
     )
 
-    assert len(restarts) >= len(restarts_identity) >= 3
-    for restart in restarts:
-        np.testing.assert_allclose(restart.y_after, 0.99 * restart.y_before)
-        i_next = int(np.searchsorted(np.asarray(t_a), float(restart.t), side="right"))
+    count = int(restarts.count)
+    assert count >= int(restarts_identity.count) >= 2
+    for i in range(count):
+        np.testing.assert_allclose(restarts.y_after[i], 0.99 * restarts.y_before[i])
+        i_next = int(np.searchsorted(np.asarray(t_a), float(restarts.t[i]), side="right"))
         if i_next < t_a.shape[0]:
             assert float(parameters.atmosphere_mass(y_a[i_next])) < float(
-                parameters.atmosphere_mass(restart.y_before)
+                parameters.atmosphere_mass(restarts.y_before[i])
             )
 
     assert np.all(np.isfinite(y_a))
@@ -332,9 +336,9 @@ def test_integrate_segments_hook_and_floor():
         return carry + 1, y
 
     _, _, restarts, n_calls = integrate_segments(
-        integrator, t_start, t_a, y0, on_mass_lost=counting_hook, carry=0
+        integrator, t_start, t_a, y0, on_mass_lost=counting_hook, carry=jnp.array(0)
     )
-    assert n_calls == len(restarts) >= 3
+    assert int(n_calls) == int(restarts.count) >= 2
 
     def removing_hook(carry, t, y):
         return carry, 1e-7 * y
@@ -342,11 +346,21 @@ def test_integrate_segments_hook_and_floor():
     y_a, _, restarts, _ = integrate_segments(
         integrator, t_start, t_a, y0, on_mass_lost=removing_hook
     )
-    assert len(restarts) == 1
-    i_next = int(np.searchsorted(np.asarray(t_a), float(restarts[0].t), side="right"))
+    assert int(restarts.count) == 1
+    i_next = int(np.searchsorted(np.asarray(t_a), float(restarts.t[0]), side="right"))
     np.testing.assert_allclose(
-        y_a[i_next:], np.broadcast_to(restarts[0].y_after, y_a[i_next:].shape)
+        y_a[i_next:], np.broadcast_to(restarts.y_after[0], y_a[i_next:].shape)
     )
-    assert float(parameters.atmosphere_mass(restarts[0].y_after)) <= EXHAUSTION_FRACTION * float(
+    assert float(parameters.atmosphere_mass(restarts.y_after[0])) <= EXHAUSTION_FRACTION * float(
         parameters.atmosphere_mass(y0)
     )
+
+
+def test_integrate_segments_max_segments():
+    """Running out of segments is reported by `restarts.finished` (and raises only if Equinox
+    errors are enabled, which isofate turns off by default)."""
+    integrator, t_start, t_a, y0 = _sim_integrator_setup(0.05)
+
+    _, _, restarts, _ = integrate_segments(integrator, t_start, t_a, y0, max_segments=2)
+    assert int(restarts.count) == 1
+    assert not bool(restarts.finished)
