@@ -25,33 +25,29 @@ from isofate.system import Planet, System
 from isofate.utils import gravitational_acceleration, sphere_area
 
 
-def convective_envelope_thickness(parameters: Parameters, y: Array, age) -> Array:
+def convective_envelope_thickness(parameters: Parameters, y: Array, age: ArrayLike) -> Array:
     """Radial thickness contributed by the convective portion of the H/He envelope (down to the
     radiative-convective boundary), one of the three additive terms making up the total planet
     radius: R_p = R_rocky + convective_envelope_thickness + radiative_atmosphere_thickness.
 
-    Adapted from Lopez & Fortney 2014.
+    Adapted from Lopez and Fortney, 2014.
 
     Args:
-        parameters: Simulation parameters - `parameters.system.planet.mass` [kg], the envelope
-            mass fraction (`parameters.atmosphere_mass_fraction(y)`), the incident bolometric
-            flux (`parameters.system.insolation` - fixed for the whole run), and
-            `parameters.isocalc_options.thermal` are all read from it.
-        y: Per-species abundances [atoms], ordered per `parameters.isofate_species.species` (see
-            `Parameters.atmosphere_mass_fraction`).
+        parameters: Parameters
+        y: Per-species abundances [atoms], ordered per `parameters.isofate_species.species`
         age: age [s]
 
     Returns:
         Thickness contribution of the convective envelope [m]
     """
     planet: Planet = parameters.system.planet
-    f_env: Array = parameters.atmosphere_mass_fraction(y)
+    envelope_mass_fraction: Array = parameters.envelope_mass_fraction(y)
     thermal: bool = parameters.isocalc_options.thermal
-    Fp = parameters.system.insolation
+    Fp: Array = parameters.system.insolation
 
     c1 = planet.mass / const.Me  # Me = Earth mass [kg]
     # FIXME: Collin to clarify the magic number below
-    c2 = f_env / 0.05
+    c2 = envelope_mass_fraction / 0.05
     c3 = Fp / const.Fe  # Fe = Earth incident bolometric flux [W/m2]
     if thermal:
         # FIXME: Collin to clarify the magic number below
