@@ -20,9 +20,9 @@ from atmodeller.sci_utils import earth
 from atmodeller.solubility import get_solubility_models
 from jax.typing import ArrayLike
 
+from isofate.atmosphere import AtmosphereModel
 from isofate.constants import const
 from isofate.isofunks import *
-from isofate.isojax import make_atmosphere_descent_jax
 from isofate.mantle_iron import MantleIronState
 from isofate.orbit_params import *
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
@@ -108,8 +108,8 @@ def aggregate_D_into_H(values: ArrayLike) -> np.ndarray:
 
 
 # Module-level so the compiled trace is cached and reused across AtmodellerCoupler calls, same
-# reasoning as _update_solve_extract below. make_atmosphere_descent_jax (isojax.py) integrates
-# the same ODE as the original (now-removed) isofunks.make_atmosphere_descent with diffrax
+# reasoning as _update_solve_extract below. AtmosphereModel.make_atmosphere_descent (atmosphere.py)
+# integrates the same ODE as the original (now-removed) isofunks.make_atmosphere_descent with diffrax
 # instead of a plain-Python/NumPy loop; validated to agree with the original to ~1e-12 to 1e-14
 # relative before that original was deleted as dead code.
 #
@@ -118,7 +118,10 @@ def aggregate_D_into_H(values: ArrayLike) -> np.ndarray:
 # jnp array at the call site - and that cast plus eqx.filter_jit's own partition/combine overhead
 # together cost more (~0.07 ms/call) than plain jax.jit accepting raw Python floats directly
 # (~0.02 ms/call).
-_make_atmosphere_descent_jit = jax.jit(make_atmosphere_descent_jax)
+#
+# The default AtmosphereModel (adiabatic index 7/5, emission pressure 0.2 bar) matches the values
+# this legacy coupler always hard-coded; its fields are closed over as compile-time constants.
+_make_atmosphere_descent_jit = jax.jit(AtmosphereModel().make_atmosphere_descent)
 
 
 @eqx.filter_jit
@@ -380,7 +383,6 @@ def AtmodellerCoupler(
     """
 
     results = {}
-    gamma = 7 / 5
     # Planet mass and rocky-component radius are fixed for the whole isocalc run and already set
     # on interior_atmosphere at construction time (build_atmodeller) - read them back here rather
     # than threading them through every call as separate arguments.
@@ -389,9 +391,7 @@ def AtmodellerCoupler(
     # Converted back to plain Python floats immediately: everything downstream in this function
     # (and the isocalc loop calling it) is plain Python/NumPy, not JAX. Matm is discarded here -
     # AtmodellerCoupler computes M_atm from the equilibrium solve's own output instead.
-    _, T_surface_j, P_surface_j = _make_atmosphere_descent_jit(
-        Teq, mu, Rp, Mp, gamma, radius_rocky
-    )
+    _, T_surface_j, P_surface_j = _make_atmosphere_descent_jit(Teq, mu, Rp, Mp, radius_rocky)
     T_surface, P_surface = float(T_surface_j), float(P_surface_j)
     surface_temperature: float = np.min([6000, T_surface])  # K
     if melt_fraction != False:

@@ -19,7 +19,8 @@ Tolerances here are deliberately loose (rtol=1e-2) relative to the ~1e-4 cross-c
 avoid false failures from ordinary atmodeller version bumps while still catching real regressions
 (wrong species/element mapping, broken unit conversions, wrong dict keys, crashes).
 
-Values were re-pinned after `isojax.make_atmosphere_descent_jax` switched from a fixed-step
+Values were re-pinned after the atmosphere descent (now `AtmosphereModel.make_atmosphere_descent`)
+switched from a fixed-step
 `Euler()` integrator (249 steps) to adaptive `Tsit5()`: the fixed-step scheme had real truncation
 error (~1e-3 to ~3e-2 relative, benchmarked against a tight-tolerance reference), so this was an
 accuracy fix, not a neutral refactor - trace-abundance and near-zero quantities (`N_S_atm`,
@@ -97,7 +98,7 @@ def test_atmodeller_coupler_single_solve():
     assert mantle_iron_state is None
 
     # Cross-checked by hand against ../IsoFATE_main (atmodeller 0.9.1) to ~3e-5 relative; re-pinned
-    # for the Tsit5/adaptive-step make_atmosphere_descent_jax (see module docstring)
+    # for the Tsit5/adaptive-step atmosphere descent (see module docstring)
     expected = {
         "N_H_atm": 1.841429610047864e44,
         "N_H_int": 4.981878379760501e46,
