@@ -281,7 +281,7 @@ def isocalc(
         # sets mass flux [kg/m2/s]
         state = EscapeState(
             system=system,
-            radius_p=radius_p,
+            escape_radius=radius_p,
             Vpot=Vpot,
             mu=mu,
             radius_env=radius_env,

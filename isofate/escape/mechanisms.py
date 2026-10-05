@@ -38,8 +38,8 @@ class EscapeState(eqx.Module):
 
     system: System
     """Star-planet system."""
-    radius_p: ArrayLike
-    """Total planet radius [m]."""
+    escape_radius: ArrayLike
+    """Effective outer radius from which the atmosphere escapes [m]"""
     Vpot: ArrayLike
     """Gravitational potential at the outer layer [J/kg]."""
     mu: ArrayLike
@@ -403,7 +403,7 @@ class XUVEscape(EscapeMechanism):
         if not self.RR:
             return phi_energy_limited
         phi_recombination_limited = phi_RR(
-            state.radius_p,
+            state.escape_radius,
             state.system.planet.mass,
             state.system.equilibrium_temperature,
             state.t_now,
@@ -440,7 +440,7 @@ class CPMLEscape(EscapeMechanism):
             self.rho_rcb,
             self.eps,
             state.Vpot,
-            state.radius_p,
+            state.escape_radius,
             state.mu,
             state.radius_env,
         )
@@ -452,7 +452,9 @@ class PhiKillEscape(EscapeMechanism):
     @override
     def compute_mass_flux(self, state: EscapeState) -> ArrayLike:
         return phi_kill(
-            state.system.planet.mass * state.f_atm, state.radius_p, state.t_total - state.t_now
+            state.system.planet.mass * state.f_atm,
+            state.escape_radius,
+            state.t_total - state.t_now,
         )
 
 

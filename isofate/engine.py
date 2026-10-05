@@ -289,7 +289,7 @@ class IsocalcIntegrator(eqx.Module):
 
         state = EscapeState(
             system=system,
-            radius_p=_escape_radius,
+            escape_radius=_escape_radius,
             Vpot=Vpot,
             mu=mu,
             radius_env=_convective_envelope_thickness,
