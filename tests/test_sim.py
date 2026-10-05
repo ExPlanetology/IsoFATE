@@ -152,7 +152,7 @@ def test_sim_regression():
 
 def test_isocalc_isocalc_jax_cross_check():
     """isocalc and isocalc_jax should agree closely on the same scenario: both now derive
-    M_atm/f_atm fresh from y (see isocalc's and _integrate_isocalc_jax's docstrings), so the only
+    M_atm/f_atm fresh from y (see isocalc's and IsocalcIntegrator's docstrings), so the only
     remaining difference is the integration scheme itself - isocalc's fixed-step Euler loop vs.
     isocalc_jax's adaptive Tsit5 (diffrax). They also now share the exact same call signature
     (`parameters`, `time`, `isofate_species_abund`), so the same kwargs work for both.

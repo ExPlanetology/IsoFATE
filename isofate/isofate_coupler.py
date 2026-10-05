@@ -22,8 +22,7 @@ from isofate.atmodeller_coupler import (
 )
 from isofate.constants import const
 from isofate.engine import (
-    _algebraic,
-    _integrate_isocalc_jax,
+    IsocalcIntegrator,
     bondi_radius,
     gravitational_potential,
 )
@@ -108,8 +107,8 @@ def isocalc(
     # local names, matching isocalc_jax. Every IsocalcOptions field is read-only for the whole run
     # and referenced directly as `options.<field>` below. `mu`/R_B are derived fresh from the
     # evolving y every iteration below (no bootstrap `IsocalcOptions.mu` field exists anymore),
-    # matching isocalc_jax's `_algebraic` (see engine.py). (`options.mantle_iron` similarly seeds a
-    # local `mantle_iron_state` below, once `interior_atmosphere` is available.)
+    # matching `IsocalcIntegrator.algebraic` (see engine.py). (`options.mantle_iron` similarly
+    # seeds a local `mantle_iron_state` below, once `interior_atmosphere` is available.)
     system = parameters.system
     options = parameters.isocalc_options
     escape = parameters.escape_mechanism
@@ -224,7 +223,8 @@ def isocalc(
     for n in range(n_tot):
         # Derived fresh from y every iteration (mass-conservation identity: the atmosphere's
         # total mass is exactly the sum of its constituent atoms' masses), rather than tracked as
-        # separately-updated state - matches isocalc_jax's design (see engine.py's _algebraic).
+        # separately-updated state - matches isocalc_jax's design (see
+        # engine.py's IsocalcIntegrator.algebraic).
         M_atm = np.dot(y, atomic_masses)
         f_atm = parameters.atmosphere_mass_fraction(y)
 
@@ -589,8 +589,8 @@ def isocalc_jax(
 
     # `system`/`options` are unpacked here since they're also read directly below (`system.planet`,
     # `options.<field>`); `escape`/`escape_number_flux` are not - `parameters` itself is passed
-    # straight through to `_integrate_isocalc_jax`, which pulls them off internally.
-    # `planet.f_atm` is NOT read here (unlike isocalc): `_integrate_isocalc_jax` derives
+    # straight through to `IsocalcIntegrator.integrate`, which pulls them off internally.
+    # `planet.f_atm` is NOT read here (unlike isocalc): `IsocalcIntegrator.integrate` derives
     # mu/M_atm/f_atm/R_B purely from the evolving y - see that function's docstring for why. Every
     # other IsocalcOptions field is read-only for the whole run and referenced directly as
     # `options.<field>` below. (`options.mantle_iron` similarly seeds a local `mantle_iron_state`
@@ -604,10 +604,10 @@ def isocalc_jax(
     N_H, _, N_D, _, _, _, _ = isofate_species_abund
 
     # Only planet.mass is read here, to seed build_atmodeller below (Mp never changes over the
-    # run). `_integrate_isocalc_jax` re-derives T/d/Fp/Mp from `system` itself (already one of its
-    # arguments), so they don't need to be threaded through separately. `system.star.mass` is no
-    # longer cached separately - `tidal_reduction_factor(system, Rp)` reads it directly (see
-    # below).
+    # run). `IsocalcIntegrator.integrate` re-derives T/d/Fp/Mp from `system` itself (via its
+    # `parameters` field), so they don't need to be threaded through separately.
+    # `system.star.mass` is no longer cached separately - `tidal_reduction_factor(system, Rp)`
+    # reads it directly (see below).
     planet: Planet = system.planet
     Mp = planet.mass
 
@@ -658,7 +658,7 @@ def isocalc_jax(
     # Atmospheric number of atoms per species [atoms], ordered per
     # isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S), same as isofate_species_abund above.
     # The initial atmospheric mass is not seeded from planet.f_atm here (unlike isocalc) - see
-    # _integrate_isocalc_jax's docstring for why - it's derived from this y instead.
+    # IsocalcIntegrator's docstring for why - it's derived from this y instead.
     # y = np.array(isofate_species_abund, dtype=float)
     ###_____Initialize arrays_____###
 
@@ -677,12 +677,10 @@ def isocalc_jax(
 
     ###_____Integrate_____###
 
-    y_a, alg_a = _integrate_isocalc_jax(
+    y_a, alg_a = IsocalcIntegrator(parameters, t_total).integrate(
         jnp.asarray(t0_seconds),
         jnp.asarray(t_a),
         jnp.asarray(isofate_species_abund),
-        jnp.asarray(t_total),
-        parameters,
     )
     Matm_a = alg_a["M_atm"]
     fatm_a = alg_a["f_atm"]
@@ -853,9 +851,9 @@ def isocalc_jax2(
     # Duplicate of isocalc_jax (kept untouched as a reference for the no-Atmodeller path) with
     # Atmodeller coupling re-added: the integration is split into segments at Atmodeller-call
     # boundaries (spaced options.n_atmodeller output points apart, exactly like isocalc's discrete
-    # cadence), each segment run as a normal adaptive _integrate_isocalc_jax call, with Atmodeller
-    # called from Python between segments exactly as isocalc's discrete loop calls it. See the
-    # "options.n_atmodeller != 0" branch below.
+    # cadence), each segment run as a normal adaptive IsocalcIntegrator.integrate call, with
+    # Atmodeller called from Python between segments exactly as isocalc's discrete loop calls it.
+    # See the "options.n_atmodeller != 0" branch below.
     #
     # Known, deliberate one-index difference from isocalc: isocalc records isofate_species_abund
     # at output index n *before* iteration n's own Atmodeller call is applied (the call's effect
@@ -869,8 +867,8 @@ def isocalc_jax2(
 
     # `system`/`options` are unpacked here since they're also read directly below (`system.planet`,
     # `options.<field>`); `escape`/`escape_number_flux` are not - `parameters` itself is passed
-    # straight through to `_integrate_isocalc_jax`, which pulls them off internally.
-    # `planet.f_atm` is NOT read here (unlike isocalc): `_integrate_isocalc_jax` derives
+    # straight through to `IsocalcIntegrator.integrate`, which pulls them off internally.
+    # `planet.f_atm` is NOT read here (unlike isocalc): `IsocalcIntegrator.integrate` derives
     # mu/M_atm/f_atm/R_B purely from the evolving y - see that function's docstring for why. Every
     # other IsocalcOptions field is read-only for the whole run and referenced directly as
     # `options.<field>` below. (`options.mantle_iron` similarly seeds a local `mantle_iron_state`
@@ -884,10 +882,10 @@ def isocalc_jax2(
     N_H, _, N_D, _, _, _, _ = isofate_species_abund
 
     # Only planet.mass is read here, to seed build_atmodeller below (Mp never changes over the
-    # run). `_integrate_isocalc_jax` re-derives T/d/Fp/Mp from `system` itself (already one of its
-    # arguments), so they don't need to be threaded through separately. `system.star.mass` is no
-    # longer cached separately - `tidal_reduction_factor(system, Rp)` reads it directly (see
-    # below).
+    # run). `IsocalcIntegrator.integrate` re-derives T/d/Fp/Mp from `system` itself (via its
+    # `parameters` field), so they don't need to be threaded through separately.
+    # `system.star.mass` is no longer cached separately - `tidal_reduction_factor(system, Rp)`
+    # reads it directly (see below).
     planet: Planet = system.planet
     Mp = planet.mass
     T = system.equilibrium_temperature  # fixed for the whole run
@@ -898,9 +896,9 @@ def isocalc_jax2(
     # np.asarray (not a bare Python float): the segment loop below passes this as `t0_chunk` on
     # its first iteration and `t_a[b - 1]` (a numpy-array-derived scalar) on every later one - a
     # bare Python float there is "weak-typed" once jnp.asarray'd, while an array-derived scalar
-    # isn't, and _integrate_isocalc_jax (eqx.filter_jit) treats those as different abstract types,
-    # forcing a second, otherwise-unnecessary trace/compile for the first segment alone. Matching
-    # the type here up front keeps every segment on the one compiled program.
+    # isn't, and IsocalcIntegrator.integrate (eqx.filter_jit) treats those as different abstract
+    # types, forcing a second, otherwise-unnecessary trace/compile for the first segment alone.
+    # Matching the type here up front keeps every segment on the one compiled program.
     t0_seconds = np.asarray(options.t0 / const.s2yr)  # simulation start time [s]
     # Named t_total (not the bare `t` isocalc uses) - `t` here would collide with diffrax's own
     # integration-time parameter name in the vector field/postprocessing closures below.
@@ -956,13 +954,13 @@ def isocalc_jax2(
 
     ###_____Integrate_____###
 
+    integrator = IsocalcIntegrator(parameters, t_total)
+
     if options.n_atmodeller == 0:
-        y_a, alg_a = _integrate_isocalc_jax(
+        y_a, alg_a = integrator.integrate(
             jnp.asarray(t0_seconds),
             jnp.asarray(t_a),
             jnp.asarray(isofate_species_abund),
-            jnp.asarray(t_total),
-            parameters,
         )
         Matm_a = alg_a["M_atm"]
         fatm_a = alg_a["f_atm"]
@@ -992,9 +990,10 @@ def isocalc_jax2(
         x_a = np.zeros((n_tot, 7))
         y_a = np.zeros((n_tot, 7))
 
-        # 1e-6 matches _exhausted's own floor (engine.py), applied here against the run's true
-        # initial mass/count - _integrate_isocalc_jax's internal event is relative to each
-        # segment's own (shrinking) y0 and would otherwise under-detect exhaustion late in a run.
+        # 1e-6 matches IsocalcIntegrator.exhaustion_fraction's default (engine.py), applied here
+        # against the run's true initial mass/count - IsocalcIntegrator.integrate's internal event
+        # is relative to each segment's own (shrinking) y0 and would otherwise under-detect
+        # exhaustion late in a run.
         exhaustion_fraction = 1e-6
         M_atm0_run = float(np.dot(y, atomic_masses))
         sum_y0_run = float(np.sum(y))
@@ -1046,7 +1045,7 @@ def isocalc_jax2(
                 )  # assumes D/H is in equilibrium between interior and atmosphere
 
             # T/mu/radius_p at the segment boundary, via the same shared physics chain
-            # _vector_field uses during integration (engine.py's _algebraic) - avoids
+            # IsocalcIntegrator.vector_field uses during integration (its algebraic method) - avoids
             # reimplementing the mu/radius_p formulas here. Evaluated at t_a[b] - matching
             # isocalc's own iteration-b physics (R_env(..., t_a[n], ...)) - not at this
             # segment's integration-start time (t0_chunk, below): R_env's age-dependent thermal
@@ -1055,12 +1054,7 @@ def isocalc_jax2(
             # converge as the run progresses and one delta_t becomes negligible next to the
             # accumulated age.
             t0_chunk = t0_seconds if i == 0 else t_a[b - 1]
-            alg_boundary = _algebraic(
-                jnp.asarray(t_a[b]),
-                jnp.asarray(y),
-                jnp.asarray(t_total),
-                parameters,
-            )
+            alg_boundary = integrator.algebraic(jnp.asarray(t_a[b]), jnp.asarray(y))
             mu = float(alg_boundary["mu"])
             radius_p = float(alg_boundary["radius_p"])
 
@@ -1107,16 +1101,14 @@ def isocalc_jax2(
                         melt_num_a[sp.label][b:end] = 0.0  # no solubility model / melt reservoir
                 fO2_a[b:end] = step.atmod_full["O2_g"]["gas"]["activity"][0][0]
 
-            y_a_chunk, alg_a_chunk = _integrate_isocalc_jax(
+            y_a_chunk, alg_a_chunk = integrator.integrate(
                 jnp.asarray(t0_chunk),
                 jnp.asarray(t_a[b:end]),
                 jnp.asarray(y),
-                jnp.asarray(t_total),
-                parameters,
             )
 
             # Re-derived from this chunk's own trajectory against the run-level floor above,
-            # rather than trusting _integrate_isocalc_jax's internal (segment-relative) event -
+            # rather than trusting IsocalcIntegrator.integrate's internal (segment-relative) event -
             # robust whether or not that internal event fired early (see isocalc_jax2 design
             # notes / the project plan).
             M_atm_chunk = np.asarray(alg_a_chunk["M_atm"])
@@ -1167,12 +1159,7 @@ def isocalc_jax2(
         # into the trajectory (mirrors isocalc's `if n == options.n_steps - 1: ...` call).
         if not exhausted:
             t_final = float(t_a[-1])
-            alg_final = _algebraic(
-                jnp.asarray(t_final),
-                jnp.asarray(y),
-                jnp.asarray(t_total),
-                parameters,
-            )
+            alg_final = integrator.algebraic(jnp.asarray(t_final), jnp.asarray(y))
             mu = float(alg_final["mu"])
             radius_p = float(alg_final["radius_p"])
             atmod_sol = AtmodellerCoupler(
