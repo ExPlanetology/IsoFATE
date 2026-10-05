@@ -34,3 +34,20 @@ def gravitational_acceleration(mass: ArrayLike, radius: ArrayLike) -> ArrayLike:
         Gravitational field strength [m/s2]
     """
     return const.G * mass / radius**2
+
+
+def scale_height(temperature: ArrayLike, mass: ArrayLike, gravity: ArrayLike) -> ArrayLike:
+    """Isothermal ideal-gas scale height, H = k_B T / (m g).
+
+    The per-particle form: `k_B` (Boltzmann's constant [J/K]) pairs with a particle mass [kg],
+    rather than `R_gas` [J/mol/K], which would require a molar mass [kg/mol].
+
+    Args:
+        temperature: Temperature [K]
+        mass: Particle mass [kg] - a mean molecular mass, or per-species masses (broadcasts)
+        gravity: Gravitational acceleration [m/s2]
+
+    Returns:
+        Scale height [m]
+    """
+    return const.kb * temperature / (mass * gravity)

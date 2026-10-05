@@ -21,6 +21,8 @@ from jax import Array
 from jax.typing import ArrayLike
 from molmass import Formula
 
+from isofate.utils import scale_height
+
 # TODO: rename to SPECIES_SYMBOLS?
 SYMBOLS: tuple[str, ...] = ("H", "He", "D", "O", "C", "N", "S")
 """Canonical list of the species tracked by IsoFATE's escape/interior model."""
@@ -184,9 +186,7 @@ class IsoFATESpecies(eqx.Module):
     def scale_heights(self, temperature: ArrayLike, gravity: ArrayLike) -> Array:
         """Atmospheric scale height for each species at a given temperature and gravity.
 
-        H = k_B * T / (m * g), the per-particle form of the ideal-gas scale height - `k_B`
-        (Boltzmann's constant [J/K]) pairs with `atomic_masses` [kg/atom], rather than `R_gas`
-        [J/mol/K] which would require molar masses [kg/mol].
+        `isofate.utils.scale_height` evaluated with each species' atomic mass [kg/atom].
 
         Args:
             temperature: Temperature [K]
@@ -195,7 +195,7 @@ class IsoFATESpecies(eqx.Module):
         Returns:
             Scale height [m] for each species, ordered per `self.species`
         """
-        return jnp.asarray(constants.Boltzmann * temperature / (self.atomic_masses * gravity))
+        return jnp.asarray(scale_height(temperature, self.atomic_masses, gravity))
 
 
 DEFAULT_SPECIES: IsoFATESpecies = IsoFATESpecies()
