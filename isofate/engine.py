@@ -18,7 +18,8 @@ from jax import Array
 from jaxtyping import ArrayLike
 
 from isofate.constants import const
-from isofate.escape.mechanisms import EscapeState
+from isofate.escape.fractionation import EscapeNumberFluxBase
+from isofate.escape.mechanisms import EscapeMechanism, EscapeState
 from isofate.parameters import Parameters
 from isofate.system import Planet, System
 from isofate.utils import (
@@ -80,13 +81,13 @@ def radiative_atmosphere_thickness(parameters: Parameters, y: Array, age: ArrayL
     planet: Planet = parameters.system.planet
     envelope_thickness: ArrayLike = convective_envelope_thickness(parameters, y, age)
     mu: Array = parameters.atmosphere_mean_mu(y)
-    Teq = parameters.system.equilibrium_temperature
+    equilibrium_temperature: Array = parameters.system.equilibrium_temperature
 
     g: ArrayLike = gravitational_acceleration(
         planet.mass, planet.rocky_radius + envelope_thickness
     )
 
-    return 9 * scale_height(Teq, mu, g)
+    return 9 * scale_height(equilibrium_temperature, mu, g)
 
 
 def total_radius(parameters: Parameters, y: Array, age: ArrayLike) -> Array:
@@ -103,19 +104,15 @@ def total_radius(parameters: Parameters, y: Array, age: ArrayLike) -> Array:
     Returns:
         Total planet radius [m]
     """
-    planet = parameters.system.planet
-    envelope_thickness = convective_envelope_thickness(parameters, y, age)
-    atmosphere_thickness = radiative_atmosphere_thickness(parameters, y, age)
+    planet: Planet = parameters.system.planet
+    envelope_thickness: Array = convective_envelope_thickness(parameters, y, age)
+    atmosphere_thickness: ArrayLike = radiative_atmosphere_thickness(parameters, y, age)
 
     return planet.rocky_radius + envelope_thickness + atmosphere_thickness
 
 
 def bondi_radius(parameters: Parameters, y: Array):
     """Bondi radius calculation.
-
-    Adapted from `isofate.isofunks.R_Bondi` (kept unchanged there for `isoplot.py`); `Mp`/`mu`/
-    `Teq`/`gamma` are read from `parameters`/`y` internally rather than taken as separate
-    arguments.
 
     Args:
         parameters: Parameters
@@ -124,12 +121,33 @@ def bondi_radius(parameters: Parameters, y: Array):
     Returns:
         Bondi radius [m]
     """
-    Mp: Array = parameters.system.planet.mass
+    planet_mass: Array = parameters.system.planet.mass
     mu: Array = parameters.atmosphere_mean_mu(y)
-    Teq = parameters.system.equilibrium_temperature
-    gamma = parameters.atmosphere.adiabatic_index
+    equilibrium_temperature: Array = parameters.system.equilibrium_temperature
+    gamma: ArrayLike = parameters.atmosphere.adiabatic_index
 
-    return (gamma - 1) * const.G * Mp * mu / (gamma * const.kb * Teq)
+    return (gamma - 1) * const.G * planet_mass * mu / (gamma * const.kb * equilibrium_temperature)
+
+
+def escape_radius(parameters: Parameters, y: Array, age: ArrayLike) -> Array:
+    """Effective outer radius of the planet, from which the atmosphere escapes.
+
+    The structural radius (`total_radius`) capped by the Bondi radius, beyond which gas is not
+    thermally bound to the planet, and by the Hill radius, beyond which the star's gravity
+    dominates.
+
+    Args:
+        parameters: Parameters
+        y: Per-species abundances [atoms], ordered per `parameters.isofate_species.species`
+        age: age [s]
+
+    Returns:
+        Escape radius [m]
+    """
+    return jnp.minimum(
+        bondi_radius(parameters, y),
+        jnp.minimum(parameters.system.hill_radius, total_radius(parameters, y, age)),
+    )
 
 
 def tidal_reduction_factor(system: System, radius: ArrayLike, floor: float = 0.01) -> Array:
@@ -145,9 +163,9 @@ def tidal_reduction_factor(system: System, radius: ArrayLike, floor: float = 0.0
         Gravitational potential reduction factor [ndim]
     """
     delta: Array = system.planet.mass / system.star.mass
-    lam = system.semi_major_axis / radius
-    zeta = lam * (delta / 3) ** (1 / 3)
-    V_reduction = 1 - 3 / 2 / zeta + 1 / 2 / jnp.power(zeta, 3)
+    lam: Array = system.semi_major_axis / radius
+    zeta: Array = lam * (delta / 3) ** (1 / 3)
+    V_reduction: Array = 1 - 3 / 2 / zeta + 1 / 2 / jnp.power(zeta, 3)
 
     return jnp.maximum(V_reduction, floor)
 
@@ -165,9 +183,9 @@ def tidal_gravitational_potential(system: System, radius: ArrayLike, floor: floa
     Returns:
         Gravitational potential [J/kg]
     """
-    K: Array = tidal_reduction_factor(system, radius, floor)
+    tidal_factor: Array = tidal_reduction_factor(system, radius, floor)
 
-    return K * gravitational_potential(system.planet.mass, radius)
+    return tidal_factor * gravitational_potential(system.planet.mass, radius)
 
 
 def _hold_last_finite(y_a: Array, y0: Array) -> Array:
@@ -219,6 +237,7 @@ class IsocalcIntegrator(eqx.Module):
             the atmosphere counts as lost. Defaults to ``1e-6``.
     """
 
+    # TODO: Might not be best to have parameters live on the integrator, but rather be passed in?
     parameters: Parameters
     # An array rather than a Python float, so that a different `time` doesn't force a retrace
     t_total: Array = eqx.field(converter=as_j64)
@@ -232,78 +251,65 @@ class IsocalcIntegrator(eqx.Module):
 
         `M_atm` is not separate integrated state: dM_atm/dt is exactly dot(dy/dt, atomic_masses),
         so M_atm(t) is always exactly dot(y(t), atomic_masses) - it's computed fresh here from y.
-        This also means `planet.f_atm` is never read for the initial condition: the initial
-        atmosphere mass is `dot(isofate_species_abund, atomic_masses)`.
-
-        For the same reason, the Bondi radius R_B is recomputed here from the current (evolving) mu
-        at every call, rather than fixed once from a bootstrap guess before the trajectory exists.
 
         Clips y to >= 0 before use: the adaptive step-size controller can propose trial steps that
-        briefly overshoot into slightly negative territory near exhaustion (the original discrete
-        loop clipped `y` after every step for the same reason), and a negative M_atm/f_atm would
-        otherwise feed a fractional power (convective_envelope_thickness's c2**0.59 term) with a
-        negative base.
+        briefly overshoot into slightly negative territory near exhaustion, and a negative
+        M_atm/f_atm would otherwise feed a fractional power (convective_envelope_thickness's
+        c2**0.59 term) with a negative base.
 
         Args:
             t: Time [s]
             y: Per-species abundances [atoms], ordered per `parameters.isofate_species`
 
         Returns:
-            Diagnostics keyed by name (`mu`, `x`, `M_atm`, `f_atm`, `radius_env`, `radius_p`,
+            Diagnostics keyed by name (`mu`, `x`, `M_atm`, `f_atm`, `radius_env`, `escape_radius`,
             `Vpot`, `A`, `phi`, `phi_c`, `Phi`)
         """
-        parameters = self.parameters
-        system = parameters.system
-        escape = parameters.escape_mechanism
-        escape_number_flux = parameters.escape_number_flux
+        parameters: Parameters = self.parameters
+        system: System = parameters.system
+        escape: EscapeMechanism = parameters.escape_mechanism
+        escape_number_flux: EscapeNumberFluxBase = parameters.escape_number_flux
 
-        Mp = system.planet.mass
-        T = system.equilibrium_temperature
-        d = system.semi_major_axis
+        planet_mass: Array = system.planet.mass
+        equilibrium_temperature: Array = system.equilibrium_temperature
+        semi_major_axis: Array = system.semi_major_axis
 
-        y = jnp.maximum(y, 0.0)
-        N_tot = jnp.sum(y)
-        safe_N_tot = jnp.where(N_tot > 0, N_tot, 1.0)
-        mu = parameters.atmosphere_mean_mu(y)
-        x = jnp.where(N_tot > 0, y / safe_N_tot, jnp.zeros_like(y))
+        y: Array = jnp.maximum(y, 0.0)
+        mu: Array = parameters.atmosphere_mean_mu(y)
+        x: Array = parameters.atmosphere_atom_fractions(y)
 
-        M_atm = parameters.atmosphere_mass(y)  # y already clipped >= 0 above, so M_atm is too
-        f_atm = parameters.atmosphere_mass_fraction(y)
-        radius_env = convective_envelope_thickness(parameters, y, t)
-        R_B = bondi_radius(parameters, y)  # recomputed from the current mu, not a fixed bootstrap
-        # was `min(R_B, R_H, radius_p)` in isocalc's plain-Python loop - Python's builtin min() on
-        # a traced value, same class of fix as Fxuv/Phi_1_2/Phi_minor_species earlier this session.
-        radius_p = jnp.minimum(
-            R_B,
-            jnp.minimum(system.hill_radius, total_radius(parameters, y, t)),
-        )
+        # y already clipped >= 0 above, so M_atm is too
+        atmosphere_mass: Array = parameters.atmosphere_mass(y)
+        atmosphere_mass_fraction: Array = parameters.atmosphere_mass_fraction(y)
+        _convective_envelope_thickness: Array = convective_envelope_thickness(parameters, y, t)
+        _escape_radius: Array = escape_radius(parameters, y, t)
 
-        Vpot = tidal_gravitational_potential(system, radius_p)
-        A = sphere_area(radius_p)
-        g = gravitational_acceleration(Mp, radius_p)
+        Vpot = tidal_gravitational_potential(system, _escape_radius)
+        A = sphere_area(_escape_radius)
+        g = gravitational_acceleration(planet_mass, _escape_radius)
 
         state = EscapeState(
-            radius_p=radius_p,
-            Mp=Mp,
-            T=T,
+            radius_p=_escape_radius,
+            Mp=planet_mass,
+            T=equilibrium_temperature,
             Vpot=Vpot,
-            d=d,
+            d=semi_major_axis,
             mu=mu,
-            radius_env=radius_env,
-            f_atm=f_atm,
+            radius_env=_convective_envelope_thickness,
+            f_atm=atmosphere_mass_fraction,
             t_now=t,
             t_total=self.t_total,
         )
         phi = escape.compute_mass_flux(state)
-        Phi, phi_c = escape_number_flux.get_number_flux(y, T, g, phi)
+        Phi, phi_c = escape_number_flux.get_number_flux(y, equilibrium_temperature, g, phi)
 
         return dict(
             mu=mu,
             x=x,
-            M_atm=M_atm,
-            f_atm=f_atm,
-            radius_env=radius_env,
-            radius_p=radius_p,
+            M_atm=atmosphere_mass,
+            f_atm=atmosphere_mass_fraction,
+            radius_env=_convective_envelope_thickness,
+            escape_radius=_escape_radius,
             Vpot=Vpot,
             A=A,
             phi=phi,
@@ -323,7 +329,7 @@ class IsocalcIntegrator(eqx.Module):
         Returns:
             dy/dt [atoms/s]
         """
-        alg = self.algebraic(t, y)
+        alg: dict = self.algebraic(t, y)
 
         return -alg["Phi"] * alg["A"]
 
@@ -351,7 +357,7 @@ class IsocalcIntegrator(eqx.Module):
         M_atm = self.parameters.atmosphere_mass(y)
 
         return (M_atm <= self.exhaustion_fraction * M_atm0) | (
-            jnp.sum(y) <= self.exhaustion_fraction * sum_y0
+            self.parameters.atmosphere_atoms(y) <= self.exhaustion_fraction * sum_y0
         )
 
     @eqx.filter_jit
@@ -387,7 +393,7 @@ class IsocalcIntegrator(eqx.Module):
             t1=t_a[-1],
             dt0=None,
             y0=y0,
-            args=(self.parameters.atmosphere_mass(y0), jnp.sum(y0)),
+            args=(self.parameters.atmosphere_mass(y0), self.parameters.atmosphere_atoms(y0)),
             stepsize_controller=diffrax.PIDController(rtol=self.rtol, atol=self.atol),
             saveat=diffrax.SaveAt(ts=t_a),
             event=diffrax.Event(cond_fn=self.exhausted),

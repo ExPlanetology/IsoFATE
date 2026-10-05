@@ -63,7 +63,16 @@ class IsocalcOptions(eqx.Module):
 
 
 class Parameters(eqx.Module):
-    """Parameters for an IsoFATE simulation."""
+    """Parameters for an IsoFATE simulation.
+
+    The `atmosphere_*`/`envelope_*` methods take `y`, the per-species abundances [atoms] ordered
+    per `isofate_species`. IsoFATE's species are all elemental (H, He, D, O, C, N, S), so `y`
+    counts atoms of each element regardless of which molecules they are bound in. This is in
+    contrast to Atmodeller, whose species are molecules (e.g. H2, H2O, CO2). Quantities derived
+    here are therefore elemental: atom counts and fractions, and a mean mass per atom. Where they
+    have a molecular counterpart in Atmodeller's output, such as the volume mixing ratio or the
+    mean molecular mass, the two differ.
+    """
 
     system: System
     escape_mechanism: EscapeMechanism
@@ -106,6 +115,24 @@ class Parameters(eqx.Module):
             Total atmospheric atoms [atoms]
         """
         return jnp.sum(y)
+
+    def atmosphere_atom_fractions(self, y: Array) -> Array:
+        """Atom fraction of each species [ndim]: `y / atmosphere_atoms(y)`.
+
+        Because `y` counts elements, not molecules, this is each element's share of all atoms -
+        not a volume mixing ratio (the mole fraction of molecules), which Atmodeller reports from
+        its gas-phase speciation.
+
+        Returns 0 for every species when the total abundance is zero, rather than letting 0/0
+        propagate as NaN (see `atmosphere_mean_mu`).
+
+        Args:
+            y: Per-species abundances `y` [atoms], ordered per `self.species`
+
+        Returns:
+            Atom fraction of each species [ndim], ordered per `self.species`
+        """
+        return safe_divide(y, self.atmosphere_atoms(y))
 
     def atmosphere_mean_mu(self, y: Array) -> Array:
         """Mean atmospheric particle mass [kg], given per-species abundances `y` [atoms],

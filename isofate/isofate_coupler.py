@@ -685,7 +685,7 @@ def isocalc_jax(
     Matm_a = alg_a["M_atm"]
     fatm_a = alg_a["f_atm"]
     Renv_a = alg_a["radius_env"]
-    Rp_a = alg_a["radius_p"]
+    Rp_a = alg_a["escape_radius"]
     Vpot_a = alg_a["Vpot"]
     phi_a = alg_a["phi"]
     phic_a = alg_a["phi_c"]
@@ -709,7 +709,7 @@ def isocalc_jax(
     #     if n == options.n_steps - 1:
     #         atmod_sol = AtmodellerCoupler(
     #             T,
-    #             radius_p,
+    #             escape_radius,
     #             mu,
     #             options.melt_fraction_override,
     #             mantle_iron_state,
@@ -725,7 +725,7 @@ def isocalc_jax(
     #         # (element number_moles + gas mass only) is all this loop needs.
     #         step = run_atmodeller_step(
     #             T,
-    #             radius_p,
+    #             escape_radius,
     #             mu,
     #             options.melt_fraction_override,
     #             mantle_iron_state,
@@ -965,7 +965,7 @@ def isocalc_jax2(
         Matm_a = alg_a["M_atm"]
         fatm_a = alg_a["f_atm"]
         Renv_a = alg_a["radius_env"]
-        Rp_a = alg_a["radius_p"]
+        Rp_a = alg_a["escape_radius"]
         Vpot_a = alg_a["Vpot"]
         phi_a = alg_a["phi"]
         phic_a = alg_a["phi_c"]
@@ -1044,9 +1044,9 @@ def isocalc_jax2(
                     y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2]
                 )  # assumes D/H is in equilibrium between interior and atmosphere
 
-            # T/mu/radius_p at the segment boundary, via the same shared physics chain
+            # T/mu/escape_radius at the segment boundary, via the same shared physics chain
             # IsocalcIntegrator.vector_field uses during integration (its algebraic method) - avoids
-            # reimplementing the mu/radius_p formulas here. Evaluated at t_a[b] - matching
+            # reimplementing the mu/escape_radius formulas here. Evaluated at t_a[b] - matching
             # isocalc's own iteration-b physics (R_env(..., t_a[n], ...)) - not at this
             # segment's integration-start time (t0_chunk, below): R_env's age-dependent thermal
             # contraction term is sensitive to this at early times (t_a[0] vs t0_seconds differ
@@ -1056,7 +1056,7 @@ def isocalc_jax2(
             t0_chunk = t0_seconds if i == 0 else t_a[b - 1]
             alg_boundary = integrator.algebraic(jnp.asarray(t_a[b]), jnp.asarray(y))
             mu = float(alg_boundary["mu"])
-            radius_p = float(alg_boundary["radius_p"])
+            escape_radius = float(alg_boundary["escape_radius"])
 
             ##### run atmodeller ######
             # Species-level diagnostics (step.atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
@@ -1064,7 +1064,7 @@ def isocalc_jax2(
             # (element number_moles + gas mass only) is all this loop needs.
             step = run_atmodeller_step(
                 T,
-                radius_p,
+                escape_radius,
                 mu,
                 options.melt_fraction_override,
                 mantle_iron_state,
@@ -1123,7 +1123,7 @@ def isocalc_jax2(
                 Matm_a[b:k] = M_atm_chunk[:k_rel]
                 fatm_a[b:k] = np.asarray(alg_a_chunk["f_atm"])[:k_rel]
                 Renv_a[b:k] = np.asarray(alg_a_chunk["radius_env"])[:k_rel]
-                Rp_a[b:k] = np.asarray(alg_a_chunk["radius_p"])[:k_rel]
+                Rp_a[b:k] = np.asarray(alg_a_chunk["escape_radius"])[:k_rel]
                 Vpot_a[b:k] = np.asarray(alg_a_chunk["Vpot"])[:k_rel]
                 phi_a[b:k] = np.asarray(alg_a_chunk["phi"])[:k_rel]
                 phic_a[b:k] = np.asarray(alg_a_chunk["phi_c"])[:k_rel]
@@ -1143,7 +1143,7 @@ def isocalc_jax2(
                 Matm_a[b:end] = M_atm_chunk
                 fatm_a[b:end] = np.asarray(alg_a_chunk["f_atm"])
                 Renv_a[b:end] = np.asarray(alg_a_chunk["radius_env"])
-                Rp_a[b:end] = np.asarray(alg_a_chunk["radius_p"])
+                Rp_a[b:end] = np.asarray(alg_a_chunk["escape_radius"])
                 Vpot_a[b:end] = np.asarray(alg_a_chunk["Vpot"])
                 phi_a[b:end] = np.asarray(alg_a_chunk["phi"])
                 phic_a[b:end] = np.asarray(alg_a_chunk["phi_c"])
@@ -1161,10 +1161,10 @@ def isocalc_jax2(
             t_final = float(t_a[-1])
             alg_final = integrator.algebraic(jnp.asarray(t_final), jnp.asarray(y))
             mu = float(alg_final["mu"])
-            radius_p = float(alg_final["radius_p"])
+            escape_radius = float(alg_final["escape_radius"])
             atmod_sol = AtmodellerCoupler(
                 T,
-                radius_p,
+                escape_radius,
                 mu,
                 options.melt_fraction_override,
                 mantle_iron_state,
