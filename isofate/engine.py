@@ -274,7 +274,7 @@ class IsocalcIntegrator(eqx.Module):
 
         Returns:
             Diagnostics keyed by name (`mu`, `x`, `M_atm`, `f_atm`, `radius_env`, `escape_radius`,
-            `Vpot`, `A`, `phi`, `phi_c`, `Phi`)
+            `Vpot`, `A`, `mass_flux`, `critical_mass_flux`, `number_flux`)
         """
         parameters: Parameters = self.parameters
         system: System = parameters.system
@@ -306,8 +306,13 @@ class IsocalcIntegrator(eqx.Module):
             atmosphere_mass_fraction=atmosphere_mass_fraction,
             t_current=t,
         )
-        phi: ArrayLike = escape.compute_mass_flux(state)
-        Phi, phi_c = escape_number_flux.get_number_flux(y, equilibrium_temperature, grav_acc, phi)
+        # Bulk escaping mass flux [kg/m2/s] from the escape mechanism, partitioned into per-species
+        # number fluxes [atoms/m2/s] by diffusion-limited fractionation; the critical mass flux
+        # [kg/m2/s] is the bulk flux above which the heavier dominant species also escapes
+        mass_flux: ArrayLike = escape.compute_mass_flux(state)
+        number_flux, critical_mass_flux = escape_number_flux.get_number_flux(
+            y, equilibrium_temperature, grav_acc, mass_flux
+        )
 
         return dict(
             mu=mu,
@@ -318,9 +323,9 @@ class IsocalcIntegrator(eqx.Module):
             escape_radius=_escape_radius,
             Vpot=gravitational_potential,
             A=area,
-            phi=phi,
-            phi_c=phi_c,
-            Phi=Phi,
+            mass_flux=mass_flux,
+            critical_mass_flux=critical_mass_flux,
+            number_flux=number_flux,
         )
 
     def vector_field(self, t: ArrayLike, y: Array, args) -> ArrayLike:
@@ -339,7 +344,7 @@ class IsocalcIntegrator(eqx.Module):
 
         alg: dict[str, ArrayLike] = self.algebraic(t, y)
 
-        return -1 * alg["Phi"] * alg["A"]
+        return -1 * alg["number_flux"] * alg["A"]
 
     def mass_lost(self, t: ArrayLike, y: Array, args: Array, **kwargs) -> Array:
         """Event condition: the atmospheric mass has dropped by

@@ -688,9 +688,9 @@ def isocalc_jax(
     Renv_a = alg_a["radius_env"]
     Rp_a = alg_a["escape_radius"]
     Vpot_a = alg_a["Vpot"]
-    phi_a = alg_a["phi"]
-    phic_a = alg_a["phi_c"]
-    Phi_a = alg_a["Phi"]
+    phi_a = alg_a["mass_flux"]
+    phic_a = alg_a["critical_mass_flux"]
+    Phi_a = alg_a["number_flux"]
     x_a = alg_a["x"]
     # Matches isocalc's per-output-step estimate (instantaneous rate * the output grid's fixed
     # delta_t) - not literally "mass lost between saved points" (which the adaptive trajectory
@@ -968,9 +968,9 @@ def isocalc_jax2(
         Renv_a = alg_a["radius_env"]
         Rp_a = alg_a["escape_radius"]
         Vpot_a = alg_a["Vpot"]
-        phi_a = alg_a["phi"]
-        phic_a = alg_a["phi_c"]
-        Phi_a = alg_a["Phi"]
+        phi_a = alg_a["mass_flux"]
+        phic_a = alg_a["critical_mass_flux"]
+        Phi_a = alg_a["number_flux"]
         x_a = alg_a["x"]
         # Matches isocalc's per-output-step estimate (instantaneous rate * the output grid's fixed
         # delta_t) - not literally "mass lost between saved points".
@@ -1119,12 +1119,12 @@ def isocalc_jax2(
                 Renv_a[b:k] = np.asarray(alg_a_chunk["radius_env"])[:k_rel]
                 Rp_a[b:k] = np.asarray(alg_a_chunk["escape_radius"])[:k_rel]
                 Vpot_a[b:k] = np.asarray(alg_a_chunk["Vpot"])[:k_rel]
-                phi_a[b:k] = np.asarray(alg_a_chunk["phi"])[:k_rel]
-                phic_a[b:k] = np.asarray(alg_a_chunk["phi_c"])[:k_rel]
-                Phi_a[b:k] = np.asarray(alg_a_chunk["Phi"])[:k_rel]
+                phi_a[b:k] = np.asarray(alg_a_chunk["mass_flux"])[:k_rel]
+                phic_a[b:k] = np.asarray(alg_a_chunk["critical_mass_flux"])[:k_rel]
+                Phi_a[b:k] = np.asarray(alg_a_chunk["number_flux"])[:k_rel]
                 x_a[b:k] = np.asarray(alg_a_chunk["x"])[:k_rel]
                 Mloss_a[b:k] = (
-                    np.asarray(alg_a_chunk["phi"])[:k_rel]
+                    np.asarray(alg_a_chunk["mass_flux"])[:k_rel]
                     * np.asarray(alg_a_chunk["A"])[:k_rel]
                     * delta_t
                 )
@@ -1139,12 +1139,12 @@ def isocalc_jax2(
                 Renv_a[b:end] = np.asarray(alg_a_chunk["radius_env"])
                 Rp_a[b:end] = np.asarray(alg_a_chunk["escape_radius"])
                 Vpot_a[b:end] = np.asarray(alg_a_chunk["Vpot"])
-                phi_a[b:end] = np.asarray(alg_a_chunk["phi"])
-                phic_a[b:end] = np.asarray(alg_a_chunk["phi_c"])
-                Phi_a[b:end] = np.asarray(alg_a_chunk["Phi"])
+                phi_a[b:end] = np.asarray(alg_a_chunk["mass_flux"])
+                phic_a[b:end] = np.asarray(alg_a_chunk["critical_mass_flux"])
+                Phi_a[b:end] = np.asarray(alg_a_chunk["number_flux"])
                 x_a[b:end] = np.asarray(alg_a_chunk["x"])
                 Mloss_a[b:end] = (
-                    np.asarray(alg_a_chunk["phi"]) * np.asarray(alg_a_chunk["A"]) * delta_t
+                    np.asarray(alg_a_chunk["mass_flux"]) * np.asarray(alg_a_chunk["A"]) * delta_t
                 )
                 y_a[b:end] = np.asarray(y_a_chunk)
                 y = np.asarray(y_a_chunk[-1])
