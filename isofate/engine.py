@@ -272,7 +272,6 @@ class IsocalcIntegrator(eqx.Module):
 
         planet_mass: Array = system.planet.mass
         equilibrium_temperature: Array = system.equilibrium_temperature
-        semi_major_axis: Array = system.semi_major_axis
 
         y: Array = jnp.maximum(y, 0.0)
         mu: Array = parameters.atmosphere_mean_mu(y)
@@ -289,11 +288,9 @@ class IsocalcIntegrator(eqx.Module):
         g = gravitational_acceleration(planet_mass, _escape_radius)
 
         state = EscapeState(
+            system=system,
             radius_p=_escape_radius,
-            Mp=planet_mass,
-            T=equilibrium_temperature,
             Vpot=Vpot,
-            d=semi_major_axis,
             mu=mu,
             radius_env=_convective_envelope_thickness,
             f_atm=atmosphere_mass_fraction,

@@ -119,11 +119,11 @@ def isocalc(
     # below.
     N_H, N_He, N_D, N_O, N_C, N_N, N_S = isofate_species_abund
 
-    # d, T, and Fp are confirmed fixed for the whole run (never reassigned anywhere below), so
-    # they're read from `system` once, here. `system.star.mass` is no longer cached separately -
-    # `tidal_reduction_factor(system, Rp)` reads it directly (see below).
+    # T and Fp are confirmed fixed for the whole run (never reassigned anywhere below), so
+    # they're read from `system` once, here. `system.star.mass` and the orbital distance are not
+    # cached separately - `tidal_reduction_factor(system, Rp)` and `EscapeState(system=...)` read
+    # them directly (see below).
     planet: Planet = system.planet
-    d: ArrayLike = system.semi_major_axis
     T: ArrayLike = system.equilibrium_temperature
     Fp: ArrayLike = system.insolation
 
@@ -280,11 +280,9 @@ def isocalc(
 
         # sets mass flux [kg/m2/s]
         state = EscapeState(
+            system=system,
             radius_p=radius_p,
-            Mp=Mp,
-            T=T,
             Vpot=Vpot,
-            d=d,
             mu=mu,
             radius_env=radius_env,
             f_atm=f_atm,

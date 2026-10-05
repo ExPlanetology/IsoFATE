@@ -23,6 +23,7 @@ from jaxtyping import ArrayLike
 from isofate import override
 from isofate.constants import const
 from isofate.isofunks import R_rocky
+from isofate.system import System
 from isofate.utils import gravitational_acceleration
 
 
@@ -30,19 +31,17 @@ class EscapeState(eqx.Module):
     """Per-timestep physical state handed to `EscapeMechanism.compute_mass_flux`.
 
     Config constants (eps, t0, rho_rcb, ...) are NOT here - they live on the
-    `EscapeMechanism` instance itself, baked in at construction.
+    `EscapeMechanism` instance itself, baked in at construction. Fixed properties of the
+    star-planet system (planet mass, equilibrium temperature, orbital distance) are read from
+    `system` rather than copied in as separate fields.
     """
 
+    system: System
+    """Star-planet system."""
     radius_p: ArrayLike
     """Total planet radius [m]."""
-    Mp: ArrayLike
-    """Planet mass [kg]."""
-    T: ArrayLike
-    """Equilibrium temperature [K]."""
     Vpot: ArrayLike
     """Gravitational potential at the outer layer [J/kg]."""
-    d: ArrayLike
-    """Orbital distance [m]."""
     mu: ArrayLike
     """Mean atmospheric particle mass [kg]."""
     radius_env: ArrayLike
@@ -387,7 +386,7 @@ class XUVEscape(EscapeMechanism):
         phi_energy_limited = phi_E(
             state.t_now,
             state.Vpot,
-            state.d,
+            state.system.semi_major_axis,
             self.F0,
             eps=self.eps,
             t0=self.t0,
@@ -405,8 +404,8 @@ class XUVEscape(EscapeMechanism):
             return phi_energy_limited
         phi_recombination_limited = phi_RR(
             state.radius_p,
-            state.Mp,
-            state.T,
+            state.system.planet.mass,
+            state.system.equilibrium_temperature,
             state.t_now,
             self.F0,
             t0=self.t0,
@@ -436,8 +435,8 @@ class CPMLEscape(EscapeMechanism):
     @override
     def compute_mass_flux(self, state: EscapeState) -> ArrayLike:
         return phiE_CP(
-            state.T,
-            state.Mp,
+            state.system.equilibrium_temperature,
+            state.system.planet.mass,
             self.rho_rcb,
             self.eps,
             state.Vpot,
@@ -452,7 +451,9 @@ class PhiKillEscape(EscapeMechanism):
 
     @override
     def compute_mass_flux(self, state: EscapeState) -> ArrayLike:
-        return phi_kill(state.Mp * state.f_atm, state.radius_p, state.t_total - state.t_now)
+        return phi_kill(
+            state.system.planet.mass * state.f_atm, state.radius_p, state.t_total - state.t_now
+        )
 
 
 class CombinedEscape(EscapeMechanism):
