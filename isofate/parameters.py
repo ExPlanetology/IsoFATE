@@ -112,3 +112,15 @@ class Parameters(eqx.Module):
         N_tot: Array = jnp.sum(y)
 
         return safe_divide(self.atmosphere_mass(y), N_tot)
+
+    def envelope_mass(self, y: Array) -> Array:
+        """Alias for atmosphere mass"""
+        return self.atmosphere_mass(y)
+
+    def envelope_mass_fraction(self, y: Array) -> Array:
+        """Alias for atmosphere mass fraction"""
+        return self.atmosphere_mass_fraction(y)
+
+    def envelope_mean_mu(self, y: Array) -> Array:
+        """Alias for atmosphere mean mu"""
+        return self.atmosphere_mean_mu(y)
