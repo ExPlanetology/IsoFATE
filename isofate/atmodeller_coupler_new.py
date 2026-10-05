@@ -42,14 +42,14 @@ class AtmosphereModel(eqx.Module):
 
     Args:
         planet: Planet
-        gamma: Adiabatic index. Defaults to ``7/5`` (diatomic ideal gas).
-        pem: Pressure at the emission level/top of atmosphere (Pa). Defaults to ``0.2e5`` Pa
-            (0.2 bar).
+        adiabatic_index: Adiabatic index. Defaults to ``7/5`` (diatomic ideal gas).
+        emission_pressure: Pressure at the emission level/top of atmosphere (Pa). Defaults to
+            ``0.2e5`` Pa (0.2 bar).
     """
 
     planet: Planet
-    gamma: ArrayLike = 7 / 5
-    pem: float = 0.2e5
+    adiabatic_index: ArrayLike = 7 / 5
+    emission_pressure: float = 0.2e5
 
     def _atmosphere_descent_vector_field(
         self,
@@ -68,18 +68,19 @@ class AtmosphereModel(eqx.Module):
                 `r_rocky`.
             y: `(p, matm)` - pressure at `r` (Pa) and the atmospheric mass (kg) accumulated so far,
                 integrated from the top of the atmosphere down to `r`.
-            args: `(Tem, mu, Mc, K)` - emission temperature (K), mean molecular mass (kg),
-                planet core mass (kg), and adiabatic exponent `(gamma-1)/gamma` (dimensionless).
+            args: `(emission_temperature, mu, Mc, K)` - emission temperature (K), mean molecular
+                mass (kg), planet core mass (kg), and adiabatic exponent
+                `(adiabatic_index-1)/adiabatic_index` (dimensionless).
 
         Returns:
             `(dp_dr, dmatm_dr)`: the hydrostatic pressure gradient and the rate of atmospheric mass
             accumulation, both with respect to `r`.
         """
         p, _ = y
-        Tem, mu, Mc, K = args
+        emission_temperature, mu, Mc, K = args
 
         # dry adiabat: T is algebraic in p, not itself integrated
-        T: ArrayLike = Tem * (p / self.pem) ** K
+        T: ArrayLike = emission_temperature * (p / self.emission_pressure) ** K
 
         # Below is intentionally kept from the original code (but was always commented out), to
         # presumably test a deep isothermal layer.  It requires rewriting since it is not JAX
@@ -101,7 +102,7 @@ class AtmosphereModel(eqx.Module):
 
     def make_atmosphere_descent(
         self,
-        Tem: ArrayLike,
+        emission_temperature: ArrayLike,
         mu: ArrayLike,
         rplanet: ArrayLike,
         Mc: ArrayLike,
@@ -111,8 +112,8 @@ class AtmosphereModel(eqx.Module):
 
         The original NumPy implementation's three per-step array updates reduce to a 2-state ODE in
         `r`: `T` is not actually integrated - it's read off the dry adiabat algebraically from `p`
-        (`T = Tem*(p/pem)**K`), and `rho` is a pure function of `p` too, so the only genuine ODE
-        states are `p(r)` and the accumulated `M_atm(r)`.
+        (`T = emission_temperature*(p/emission_pressure)**K`), and `rho` is a pure function of `p`
+        too, so the only genuine ODE states are `p(r)` and the accumulated `M_atm(r)`.
 
         This integrates with `diffrax.Tsit5()` (5th-order explicit Runge-Kutta) and adaptive step
         sizing (`PIDController`).
@@ -121,7 +122,7 @@ class AtmosphereModel(eqx.Module):
         should just discard the rest (e.g. `_, T_surf, P_surf = make_atmosphere_descent_jax(...)`).
 
         Args:
-            Tem: Emission temperature (K)
+            emission_temperature: Emission temperature (K)
             mu: Atomic mass (kg)
             rplanet: Planetary radius (m)
             Mc: Planet core mass (kg)
@@ -130,10 +131,10 @@ class AtmosphereModel(eqx.Module):
         Returns:
             `(M_atm, T_surf, P_surf)`
         """
-        K: ArrayLike = (self.gamma - 1) / self.gamma
+        K: ArrayLike = (self.adiabatic_index - 1) / self.adiabatic_index
 
         gem: ArrayLike = gravitational_acceleration(Mc, rplanet)
-        matm0: ArrayLike = 4 * jnp.pi * rplanet**2 * self.pem / gem
+        matm0: ArrayLike = 4 * jnp.pi * rplanet**2 * self.emission_pressure / gem
 
         term = diffrax.ODETerm(self._atmosphere_descent_vector_field)
         sol = diffrax.diffeqsolve(
@@ -142,14 +143,14 @@ class AtmosphereModel(eqx.Module):
             t0=rplanet,  # pyright: ignore[reportArgumentType]
             t1=r_rocky,  # pyright: ignore[reportArgumentType]
             dt0=None,  # let the PIDController choose an initial step adaptively
-            y0=(self.pem, matm0),
-            args=(Tem, mu, Mc, K),
+            y0=(self.emission_pressure, matm0),
+            args=(emission_temperature, mu, Mc, K),
             stepsize_controller=diffrax.PIDController(rtol=1e-10, atol=1e-12),
             saveat=diffrax.SaveAt(t1=True),
         )
         P_surf: ArrayLike = sol.ys[0][-1]  # pyright: ignore[reportOptionalSubscript]
         M_atm: ArrayLike = sol.ys[1][-1]  # pyright: ignore[reportOptionalSubscript]
-        T_surf: Array = jnp.power((P_surf / self.pem), K) * Tem
+        T_surf: Array = jnp.power((P_surf / self.emission_pressure), K) * emission_temperature
 
         return M_atm, T_surf, P_surf
 
