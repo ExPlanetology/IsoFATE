@@ -57,6 +57,8 @@ SYSTEM = System(
     planet=Planet(mass=5e24, period=_STAR.period_for_semi_major_axis(_SEMI_MAJOR_AXIS)),
 )
 
+_T_END = 1.5e17  # [s]
+
 STATE = EscapeState(
     system=SYSTEM,
     escape_radius=6.5e6,
@@ -65,7 +67,6 @@ STATE = EscapeState(
     convective_envelope_thickness=1e5,
     atmosphere_mass_fraction=0.01,
     t_current=3e13,
-    t_end=1.5e17,
 )
 
 
@@ -81,7 +82,8 @@ def test_cpml_escape_matches_old_mechanism_dispatch():
 
 
 def test_phi_kill_escape_matches_old_mechanism_dispatch():
-    assert PhiKillEscape().compute_mass_flux(STATE) == pytest.approx(6.279557414121694e-09)
+    escape = PhiKillEscape(t_end=_T_END * const.s2yr)
+    assert escape.compute_mass_flux(STATE) == pytest.approx(6.279557414121694e-09)
 
 
 def test_combined_escape_matches_old_xuv_plus_cpml_dispatch():
@@ -151,11 +153,11 @@ def test_cpml_escape_wraps_phie_cp():
 
 
 def test_phi_kill_escape_wraps_phi_kill():
-    escape = PhiKillEscape()
+    escape = PhiKillEscape(t_end=_T_END * const.s2yr)
     expected = phi_kill(
         STATE.system.planet.mass * STATE.atmosphere_mass_fraction,
         STATE.escape_radius,
-        STATE.t_end - STATE.t_current,
+        _T_END - STATE.t_current,
     )
     assert escape.compute_mass_flux(STATE) == pytest.approx(expected)
 

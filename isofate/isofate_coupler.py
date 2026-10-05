@@ -288,7 +288,6 @@ def isocalc(
             convective_envelope_thickness=radius_env,
             atmosphere_mass_fraction=f_atm,
             t_current=t_a[n],
-            t_end=t0_seconds + t,
         )
         phi = escape.compute_mass_flux(state)
 
@@ -675,7 +674,7 @@ def isocalc_jax(
 
     ###_____Integrate_____###
 
-    y_a, alg_a, _ = IsocalcIntegrator(parameters, t_end_seconds).integrate(
+    y_a, alg_a, _ = IsocalcIntegrator(parameters).integrate(
         jnp.asarray(t_start_seconds),
         jnp.asarray(t_a),
         jnp.asarray(isofate_species_abund),
@@ -695,11 +694,10 @@ def isocalc_jax(
     # one for now, matching the original quantity).
     Mloss_a = phi_a * alg_a["A"] * delta_t
 
-    # TODO: For a later refactor, decide if holding the last-integrated state constant (done above,
-    # via the finite_mask/last_finite_idx handling of diffrax's SaveAt(ts=...)+Event interaction,
-    # which otherwise returns inf for entries at/after the event) is the right post-exhaustion
-    # behavior to keep long-term, as opposed to isocalc's original per-field zero-vs-hold choices
-    # (e.g. Rp_a held at planet.rocky_radius, not the last pre-exhaustion Rp).
+    # TODO: For a later refactor, decide on the post-exhaustion convention: the rows after the
+    # exhaustion event are currently inf (as diffrax leaves them, see IsocalcIntegrator.integrate),
+    # as opposed to isocalc's original per-field zero-vs-hold choices (e.g. Rp_a held at
+    # planet.rocky_radius).
 
     # TODO: Will add back eventually, once JAX refactor is working for the simpler case
     ##### run atmodeller ######
@@ -951,7 +949,7 @@ def isocalc_jax2(
 
     ###_____Integrate_____###
 
-    integrator = IsocalcIntegrator(parameters, t_end_seconds)
+    integrator = IsocalcIntegrator(parameters)
 
     if options.n_atmodeller == 0:
         y_a, alg_a, _ = integrator.integrate(
@@ -1091,18 +1089,18 @@ def isocalc_jax2(
                         melt_num_a[sp.label][b:end] = 0.0  # no solubility model / melt reservoir
                 fO2_a[b:end] = step.atmod_full["O2_g"]["gas"]["activity"][0][0]
 
-            y_a_chunk, alg_a_chunk, _ = integrator.integrate(
+            y_a_chunk, alg_a_chunk, stop = integrator.integrate(
                 jnp.asarray(t0_chunk),
                 jnp.asarray(t_a[b:end]),
                 jnp.asarray(y),
             )
 
-            # Re-derived from this chunk's own trajectory against the run-level floor above,
-            # rather than trusting IsocalcIntegrator.integrate's internal (segment-relative) event -
-            # robust whether or not that internal event fired early (see isocalc_jax2 design
-            # notes / the project plan).
+            # Exhausted from the first output row after the integrator's own (segment-relative)
+            # exhaustion event, whose rows are inf, or from the first finite row below the
+            # run-level floor, whichever comes first.
             M_atm_chunk = np.asarray(alg_a_chunk["M_atm"])
-            exhausted_mask = M_atm_chunk <= EXHAUSTION_FRACTION * M_atm0_run
+            after_event = bool(stop.mass_lost) & (t_a[b:end] > float(stop.t))
+            exhausted_mask = after_event | (M_atm_chunk <= EXHAUSTION_FRACTION * M_atm0_run)
 
             if exhausted_mask.any():
                 k_rel = int(np.argmax(exhausted_mask))

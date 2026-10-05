@@ -50,8 +50,6 @@ class EscapeState(eqx.Module):
     """Atmospheric mass fraction [ndim]."""
     t_current: ArrayLike
     """Current time, i.e. system age [s]."""
-    t_end: ArrayLike
-    """End time of the simulation, i.e. system age at the end of the run [s]."""
 
 
 class EscapeMechanism(eqx.Module):
@@ -447,14 +445,21 @@ class CPMLEscape(EscapeMechanism):
 
 
 class PhiKillEscape(EscapeMechanism):
-    """Forces removal of the entire atmosphere by the end of the run. No tuning constants."""
+    """Forces removal of the entire atmosphere by `t_end`.
+
+    Args:
+        t_end: Time by which the atmosphere is removed, i.e. system age [yr] - normally the run's
+            end time.
+    """
+
+    t_end: ArrayLike
 
     @override
     def compute_mass_flux(self, state: EscapeState) -> ArrayLike:
         return phi_kill(
             state.system.planet.mass * state.atmosphere_mass_fraction,
             state.escape_radius,
-            state.t_end - state.t_current,
+            self.t_end / const.s2yr - state.t_current,
         )
 
 
