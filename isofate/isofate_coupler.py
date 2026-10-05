@@ -23,6 +23,7 @@ from isofate.atmodeller_coupler import (
 from isofate.constants import const
 from isofate.engine import (
     EXHAUSTION_FRACTION,
+    IntegrationStop,
     IsocalcIntegrator,
     bondi_radius,
     tidal_gravitational_potential,
@@ -674,11 +675,14 @@ def isocalc_jax(
 
     ###_____Integrate_____###
 
-    y_a, alg_a, _ = IsocalcIntegrator(parameters).integrate(
+    integrator = IsocalcIntegrator(parameters)
+    sol = integrator.integrate(
         jnp.asarray(t_start_seconds),
         jnp.asarray(t_a),
         jnp.asarray(isofate_species_abund),
     )
+    y_a = sol.ys[0]  # pyright: ignore[reportOptionalSubscript]
+    alg_a = integrator.diagnostics(jnp.asarray(t_a), y_a)
     Matm_a = alg_a["M_atm"]
     fatm_a = alg_a["f_atm"]
     Renv_a = alg_a["radius_env"]
@@ -952,11 +956,13 @@ def isocalc_jax2(
     integrator = IsocalcIntegrator(parameters)
 
     if options.n_atmodeller == 0:
-        y_a, alg_a, _ = integrator.integrate(
+        sol = integrator.integrate(
             jnp.asarray(t_start_seconds),
             jnp.asarray(t_a),
             jnp.asarray(isofate_species_abund),
         )
+        y_a = sol.ys[0]  # pyright: ignore[reportOptionalSubscript]
+        alg_a = integrator.diagnostics(jnp.asarray(t_a), y_a)
         Matm_a = alg_a["M_atm"]
         fatm_a = alg_a["f_atm"]
         Renv_a = alg_a["radius_env"]
@@ -1089,11 +1095,14 @@ def isocalc_jax2(
                         melt_num_a[sp.label][b:end] = 0.0  # no solubility model / melt reservoir
                 fO2_a[b:end] = step.atmod_full["O2_g"]["gas"]["activity"][0][0]
 
-            y_a_chunk, alg_a_chunk, stop = integrator.integrate(
+            sol = integrator.integrate(
                 jnp.asarray(t0_chunk),
                 jnp.asarray(t_a[b:end]),
                 jnp.asarray(y),
             )
+            y_a_chunk = sol.ys[0]  # pyright: ignore[reportOptionalSubscript]
+            alg_a_chunk = integrator.diagnostics(jnp.asarray(t_a[b:end]), y_a_chunk)
+            stop = IntegrationStop.from_solution(sol)
 
             # Exhausted from the first output row after the integrator's own (segment-relative)
             # exhaustion event, whose rows are inf, or from the first finite row below the

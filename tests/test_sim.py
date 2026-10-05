@@ -20,7 +20,12 @@ import numpy as np
 import pytest
 
 from isofate.constants import const
-from isofate.engine import EXHAUSTION_FRACTION, IsocalcIntegrator, integrate_segments
+from isofate.engine import (
+    EXHAUSTION_FRACTION,
+    IntegrationStop,
+    IsocalcIntegrator,
+    integrate_segments,
+)
 from isofate.escape.mechanisms import XUVEscape
 from isofate.isofate_coupler import isocalc, isocalc_jax, isocalc_jax2
 from isofate.parameters import IsocalcOptions, Parameters
@@ -233,7 +238,8 @@ def _sim_integrator_setup(mass_loss_fraction=None):
 def _integrate_sim(mass_loss_fraction=None):
     """One `IsocalcIntegrator.integrate` call on the LHS 1140 b scenario."""
     integrator, t_start, t_a, y0 = _sim_integrator_setup(mass_loss_fraction)
-    y_a, _, stop = integrator.integrate(t_start, t_a, y0)
+    sol = integrator.integrate(t_start, t_a, y0)
+    y_a, stop = sol.ys[0], IntegrationStop.from_solution(sol)
 
     return integrator.parameters, np.asarray(t_a), y0, y_a, stop
 
@@ -281,7 +287,7 @@ def test_integrate_segments_identity_hook_matches_single_solve():
     )
 
     reference_integrator, _, _, _ = _sim_integrator_setup()
-    y_reference, _, _ = reference_integrator.integrate(t_start, t_a, y0)
+    y_reference = reference_integrator.integrate(t_start, t_a, y0).ys[0]
 
     count = int(restarts.count)
     assert count >= 2

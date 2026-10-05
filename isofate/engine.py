@@ -223,6 +223,22 @@ class IntegrationStop(eqx.Module):
     y: Array
     mass_lost: Array
 
+    @classmethod
+    def from_solution(cls, sol: diffrax.Solution) -> "IntegrationStop":
+        """Extracts the stop information from the solution returned by
+        `IsocalcIntegrator.integrate`.
+
+        Args:
+            sol: Solution returned by `IsocalcIntegrator.integrate`
+
+        Returns:
+            Where and why the integration stopped
+        """
+        _, ys_stop = sol.ys  # pyright: ignore[reportGeneralTypeIssues]
+        _, ts_stop = sol.ts  # pyright: ignore[reportGeneralTypeIssues]
+
+        return cls(t=ts_stop[0], y=ys_stop[0], mass_lost=sol.event_mask)  # pyright: ignore
+
 
 class IsocalcIntegrator(eqx.Module):
     """Time integration of the atmospheric-escape ODE for one isocalc run.
@@ -352,10 +368,8 @@ class IsocalcIntegrator(eqx.Module):
         return self.parameters.atmosphere_mass(y) <= (1 - mass_loss_fraction) * args
 
     @eqx.filter_jit
-    def integrate(
-        self, t_start: float | Array, t_a: Array, y0: Array
-    ) -> tuple[Array, dict[str, ArrayLike], IntegrationStop]:
-        """Integrates `y` from `t_start` and back-computes the diagnostics on `t_a`.
+    def integrate(self, t_start: float | Array, t_a: Array, y0: Array) -> diffrax.Solution:
+        """Integrates `y` from `t_start`, saving on `t_a`.
 
         The integration stops early if the `mass_lost` event fires: loss of
         `parameters.isocalc_options.mass_loss_fraction` of the atmospheric mass at `t_start`
@@ -368,12 +382,12 @@ class IsocalcIntegrator(eqx.Module):
             y0: Initial per-species abundances [atoms]
 
         Returns:
-            `(y_a, alg_a, stop)`: the saved trajectory, the `algebraic` diagnostics for every
-            `t_a` entry (including the derived `M_atm`/`f_atm`), and where and why the integration
-            stopped. If the event fired, the rows of `y_a` (and of the diagnostics) at `t_a` after
-            the event are ``inf``, as diffrax leaves them; `stop.y` is the state at the event.
+            The diffrax solution. `sol.ys` and `sol.ts` are pairs from two sub-saves: the
+            trajectory on `t_a` (rows after the event, if it fired, are ``inf``, as diffrax leaves
+            them) and the single state at the stop time. `sol.event_mask` is True if the event
+            fired. See `IntegrationStop.from_solution` and `diagnostics`.
         """
-        sol = diffrax.diffeqsolve(
+        return diffrax.diffeqsolve(
             diffrax.ODETerm(self.vector_field),
             diffrax.Tsit5(),
             t0=t_start,
@@ -392,18 +406,22 @@ class IsocalcIntegrator(eqx.Module):
             event=diffrax.Event(cond_fn=self.mass_lost),
             max_steps=self.max_steps,
         )
-        ys_out, ys_stop = sol.ys  # pyright: ignore[reportGeneralTypeIssues]
-        _, ts_stop = sol.ts  # pyright: ignore[reportGeneralTypeIssues]
-        mass_lost: Array = sol.event_mask  # pyright: ignore[reportAssignmentType]
-        stop = IntegrationStop(t=ts_stop[0], y=ys_stop[0], mass_lost=mass_lost)
 
-        y_a: Array = ys_out
+    @eqx.filter_jit
+    def diagnostics(self, t_a: Array, y_a: Array) -> dict[str, ArrayLike]:
+        """`algebraic` diagnostics for every entry of a saved trajectory.
 
-        # Back-compute every diagnostic (including the derived M_atm) from the saved trajectory in
-        # one vmapped pass, rather than a per-timestep Python loop.
-        alg_a = jax.vmap(self.algebraic)(t_a, y_a)
+        Back-computes every diagnostic (including the derived M_atm) in one vmapped pass, rather
+        than a per-timestep Python loop.
 
-        return y_a, alg_a, stop
+        Args:
+            t_a: Output times [s]
+            y_a: Per-species abundances at each output time [atoms]
+
+        Returns:
+            Diagnostics keyed by name (see `algebraic`), one entry per output time
+        """
+        return jax.vmap(self.algebraic)(t_a, y_a)
 
 
 class Restarts(eqx.Module):
@@ -522,7 +540,9 @@ def integrate_segments(
         return stop.mass_lost & (parameters.atmosphere_mass(stop.y) > floor) & (stop.t < t_last)
 
     # First segment, before the loop
-    y_segment, _, stop = integrator.integrate(t_start, jnp.maximum(t_a, t_start), y0)
+    sol: diffrax.Solution = integrator.integrate(t_start, jnp.maximum(t_a, t_start), y0)
+    y_segment: Array = sol.ys[0]  # pyright: ignore[reportOptionalSubscript]
+    stop: IntegrationStop = IntegrationStop.from_solution(sol)
     nan_buffer: Array = jnp.full((max_restarts, y0.shape[0]), jnp.nan)
     state = (
         y_segment,  # y_a
@@ -565,7 +585,9 @@ def integrate_segments(
 
         def restart(y_a: Array) -> tuple[Array, IntegrationStop, Array]:
             """Integrate the next segment from the hook's output."""
-            y_segment, _, next_stop = integrator.integrate(stop.t, jnp.maximum(t_a, stop.t), y_new)
+            sol = integrator.integrate(stop.t, jnp.maximum(t_a, stop.t), y_new)
+            y_segment: Array = sol.ys[0]  # pyright: ignore[reportOptionalSubscript]
+            next_stop = IntegrationStop.from_solution(sol)
             y_a = jnp.where((t_a >= stop.t)[:, None], y_segment, y_a)
 
             return y_a, next_stop, needs_restart(next_stop)
@@ -584,6 +606,6 @@ def integrate_segments(
         y_a, unfinished, f"Segmented integration did not finish within {max_segments} segments"
     )
 
-    alg_a: dict[str, ArrayLike] = jax.vmap(integrator.algebraic)(t_a, y_a)
+    alg_a: dict[str, ArrayLike] = integrator.diagnostics(t_a, y_a)
 
     return y_a, alg_a, restarts, carry
