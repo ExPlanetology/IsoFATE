@@ -240,6 +240,41 @@ class IntegrationStop(eqx.Module):
         return cls(t=ts_stop[0], y=ys_stop[0], mass_lost=sol.event_mask)  # pyright: ignore
 
 
+class AtmosphereState(eqx.Module):
+    """Everything derivable from `(t, y)` alone, returned by `IsocalcIntegrator.algebraic`.
+
+    `IsocalcIntegrator.diagnostics` returns the same module with every field batched over the
+    output times.
+
+    Args:
+        mean_mu: Mean atmospheric particle mass [kg]
+        atom_fractions: Atom fraction of each species [ndim]
+        atmosphere_mass: Atmospheric mass [kg]
+        atmosphere_mass_fraction: Atmospheric mass fraction [ndim]
+        convective_envelope_thickness: Radial thickness of the convective envelope [m]
+        escape_radius: Effective outer radius from which the atmosphere escapes [m]
+        gravitational_potential: Gravitational potential at the escape radius, reduced by stellar
+            tidal forces [J/kg]
+        area: Area of the sphere at the escape radius [m2]
+        mass_flux: Bulk escaping mass flux from the escape mechanism [kg/m2/s]
+        critical_mass_flux: Bulk mass flux above which the heavier dominant species also escapes
+            [kg/m2/s]
+        number_flux: Escaping number flux of each species [atoms/m2/s]
+    """
+
+    mean_mu: ArrayLike
+    atom_fractions: ArrayLike
+    atmosphere_mass: ArrayLike
+    atmosphere_mass_fraction: ArrayLike
+    convective_envelope_thickness: ArrayLike
+    escape_radius: ArrayLike
+    gravitational_potential: ArrayLike
+    area: ArrayLike
+    mass_flux: ArrayLike
+    critical_mass_flux: ArrayLike
+    number_flux: ArrayLike
+
+
 class IsocalcIntegrator(eqx.Module):
     """Time integration of the atmospheric-escape ODE for one isocalc run.
 
@@ -257,7 +292,7 @@ class IsocalcIntegrator(eqx.Module):
     atol: float = 1e3
     max_steps: int = 100_000
 
-    def algebraic(self, t: ArrayLike, y: Array) -> dict[str, ArrayLike]:
+    def algebraic(self, t: ArrayLike, y: Array) -> AtmosphereState:
         """Everything derivable from `(t, y)` alone, given the run's fixed quantities.
 
         `M_atm` is not separate integrated state: dM_atm/dt is exactly dot(dy/dt, atomic_masses),
@@ -273,8 +308,7 @@ class IsocalcIntegrator(eqx.Module):
             y: Per-species abundances [atoms], ordered per `parameters.isofate_species`
 
         Returns:
-            Diagnostics keyed by name (`mu`, `x`, `M_atm`, `f_atm`, `radius_env`, `escape_radius`,
-            `Vpot`, `A`, `mass_flux`, `critical_mass_flux`, `number_flux`)
+            The atmosphere state at `(t, y)`
         """
         parameters: Parameters = self.parameters
         system: System = parameters.system
@@ -314,15 +348,15 @@ class IsocalcIntegrator(eqx.Module):
             y, equilibrium_temperature, grav_acc, mass_flux
         )
 
-        return dict(
-            mu=mu,
-            x=x,
-            M_atm=atmosphere_mass,
-            f_atm=atmosphere_mass_fraction,
-            radius_env=_convective_envelope_thickness,
+        return AtmosphereState(
+            mean_mu=mu,
+            atom_fractions=x,
+            atmosphere_mass=atmosphere_mass,
+            atmosphere_mass_fraction=atmosphere_mass_fraction,
+            convective_envelope_thickness=_convective_envelope_thickness,
             escape_radius=_escape_radius,
-            Vpot=gravitational_potential,
-            A=area,
+            gravitational_potential=gravitational_potential,
+            area=area,
             mass_flux=mass_flux,
             critical_mass_flux=critical_mass_flux,
             number_flux=number_flux,
@@ -342,9 +376,9 @@ class IsocalcIntegrator(eqx.Module):
         """
         del args
 
-        alg: dict[str, ArrayLike] = self.algebraic(t, y)
+        atmosphere: AtmosphereState = self.algebraic(t, y)
 
-        return -1 * alg["number_flux"] * alg["A"]
+        return -1 * atmosphere.number_flux * atmosphere.area
 
     def mass_lost(self, t: ArrayLike, y: Array, args: Array, **kwargs) -> Array:
         """Event condition: the atmospheric mass has dropped by
@@ -413,7 +447,7 @@ class IsocalcIntegrator(eqx.Module):
         )
 
     @eqx.filter_jit
-    def diagnostics(self, t_a: Array, y_a: Array) -> dict[str, ArrayLike]:
+    def diagnostics(self, t_a: Array, y_a: Array) -> AtmosphereState:
         """`algebraic` diagnostics for every entry of a saved trajectory.
 
         Back-computes every diagnostic (including the derived M_atm) in one vmapped pass, rather
@@ -424,7 +458,7 @@ class IsocalcIntegrator(eqx.Module):
             y_a: Per-species abundances at each output time [atoms]
 
         Returns:
-            Diagnostics keyed by name (see `algebraic`), one entry per output time
+            The atmosphere state (see `algebraic`), with every field batched over the output times
         """
         return jax.vmap(self.algebraic)(t_a, y_a)
 
@@ -482,7 +516,7 @@ def integrate_segments(
     on_mass_lost: Callable[[Any, Array, Array], tuple[Any, Array]] = placeholder_reequilibration,
     carry: Any = None,
     max_segments: int = 1000,
-) -> tuple[Array, dict[str, ArrayLike], Restarts, Any]:
+) -> tuple[Array, AtmosphereState, Restarts, Any]:
     """Integrates in segments, restarting after each mass-loss event.
 
     diffrax events can only end a solve, so each restart is a new `integrator.integrate` call. With
@@ -611,6 +645,6 @@ def integrate_segments(
         y_a, unfinished, f"Segmented integration did not finish within {max_segments} segments"
     )
 
-    alg_a: dict[str, ArrayLike] = integrator.diagnostics(t_a, y_a)
+    alg_a: AtmosphereState = integrator.diagnostics(t_a, y_a)
 
     return y_a, alg_a, restarts, carry

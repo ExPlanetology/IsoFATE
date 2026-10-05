@@ -683,20 +683,20 @@ def isocalc_jax(
     )
     y_a = sol.ys[0]  # pyright: ignore[reportOptionalSubscript]
     alg_a = integrator.diagnostics(jnp.asarray(t_a), y_a)
-    Matm_a = alg_a["M_atm"]
-    fatm_a = alg_a["f_atm"]
-    Renv_a = alg_a["radius_env"]
-    Rp_a = alg_a["escape_radius"]
-    Vpot_a = alg_a["Vpot"]
-    phi_a = alg_a["mass_flux"]
-    phic_a = alg_a["critical_mass_flux"]
-    Phi_a = alg_a["number_flux"]
-    x_a = alg_a["x"]
+    Matm_a = alg_a.atmosphere_mass
+    fatm_a = alg_a.atmosphere_mass_fraction
+    Renv_a = alg_a.convective_envelope_thickness
+    Rp_a = alg_a.escape_radius
+    Vpot_a = alg_a.gravitational_potential
+    phi_a = alg_a.mass_flux
+    phic_a = alg_a.critical_mass_flux
+    Phi_a = alg_a.number_flux
+    x_a = alg_a.atom_fractions
     # Matches isocalc's per-output-step estimate (instantaneous rate * the output grid's fixed
     # delta_t) - not literally "mass lost between saved points" (which the adaptive trajectory
     # could give more precisely via diff(Matm_a), but that's a different definition; keeping this
     # one for now, matching the original quantity).
-    Mloss_a = phi_a * alg_a["A"] * delta_t
+    Mloss_a = phi_a * alg_a.area * delta_t
 
     # TODO: For a later refactor, decide on the post-exhaustion convention: the rows after the
     # exhaustion event are currently inf (as diffrax leaves them, see IsocalcIntegrator.integrate),
@@ -963,18 +963,18 @@ def isocalc_jax2(
         )
         y_a = sol.ys[0]  # pyright: ignore[reportOptionalSubscript]
         alg_a = integrator.diagnostics(jnp.asarray(t_a), y_a)
-        Matm_a = alg_a["M_atm"]
-        fatm_a = alg_a["f_atm"]
-        Renv_a = alg_a["radius_env"]
-        Rp_a = alg_a["escape_radius"]
-        Vpot_a = alg_a["Vpot"]
-        phi_a = alg_a["mass_flux"]
-        phic_a = alg_a["critical_mass_flux"]
-        Phi_a = alg_a["number_flux"]
-        x_a = alg_a["x"]
+        Matm_a = alg_a.atmosphere_mass
+        fatm_a = alg_a.atmosphere_mass_fraction
+        Renv_a = alg_a.convective_envelope_thickness
+        Rp_a = alg_a.escape_radius
+        Vpot_a = alg_a.gravitational_potential
+        phi_a = alg_a.mass_flux
+        phic_a = alg_a.critical_mass_flux
+        Phi_a = alg_a.number_flux
+        x_a = alg_a.atom_fractions
         # Matches isocalc's per-output-step estimate (instantaneous rate * the output grid's fixed
         # delta_t) - not literally "mass lost between saved points".
-        Mloss_a = phi_a * alg_a["A"] * delta_t
+        Mloss_a = phi_a * alg_a.area * delta_t
     else:
         atomic_masses = DEFAULT_SPECIES.atomic_masses
         y = np.asarray(isofate_species_abund, dtype=float)
@@ -1049,8 +1049,8 @@ def isocalc_jax2(
             # accumulated age.
             t0_chunk = t_start_seconds if i == 0 else t_a[b - 1]
             alg_boundary = integrator.algebraic(jnp.asarray(t_a[b]), jnp.asarray(y))
-            mu = float(alg_boundary["mu"])
-            escape_radius = float(alg_boundary["escape_radius"])
+            mu = float(alg_boundary.mean_mu)
+            escape_radius = float(alg_boundary.escape_radius)
 
             ##### run atmodeller ######
             # Species-level diagnostics (step.atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
@@ -1107,7 +1107,7 @@ def isocalc_jax2(
             # Exhausted from the first output row after the integrator's own (segment-relative)
             # exhaustion event, whose rows are inf, or from the first finite row below the
             # run-level floor, whichever comes first.
-            M_atm_chunk = np.asarray(alg_a_chunk["M_atm"])
+            M_atm_chunk = np.asarray(alg_a_chunk.atmosphere_mass)
             after_event = bool(stop.mass_lost) & (t_a[b:end] > float(stop.t))
             exhausted_mask = after_event | (M_atm_chunk <= EXHAUSTION_FRACTION * M_atm0_run)
 
@@ -1115,17 +1115,17 @@ def isocalc_jax2(
                 k_rel = int(np.argmax(exhausted_mask))
                 k = b + k_rel
                 Matm_a[b:k] = M_atm_chunk[:k_rel]
-                fatm_a[b:k] = np.asarray(alg_a_chunk["f_atm"])[:k_rel]
-                Renv_a[b:k] = np.asarray(alg_a_chunk["radius_env"])[:k_rel]
-                Rp_a[b:k] = np.asarray(alg_a_chunk["escape_radius"])[:k_rel]
-                Vpot_a[b:k] = np.asarray(alg_a_chunk["Vpot"])[:k_rel]
-                phi_a[b:k] = np.asarray(alg_a_chunk["mass_flux"])[:k_rel]
-                phic_a[b:k] = np.asarray(alg_a_chunk["critical_mass_flux"])[:k_rel]
-                Phi_a[b:k] = np.asarray(alg_a_chunk["number_flux"])[:k_rel]
-                x_a[b:k] = np.asarray(alg_a_chunk["x"])[:k_rel]
+                fatm_a[b:k] = np.asarray(alg_a_chunk.atmosphere_mass_fraction)[:k_rel]
+                Renv_a[b:k] = np.asarray(alg_a_chunk.convective_envelope_thickness)[:k_rel]
+                Rp_a[b:k] = np.asarray(alg_a_chunk.escape_radius)[:k_rel]
+                Vpot_a[b:k] = np.asarray(alg_a_chunk.gravitational_potential)[:k_rel]
+                phi_a[b:k] = np.asarray(alg_a_chunk.mass_flux)[:k_rel]
+                phic_a[b:k] = np.asarray(alg_a_chunk.critical_mass_flux)[:k_rel]
+                Phi_a[b:k] = np.asarray(alg_a_chunk.number_flux)[:k_rel]
+                x_a[b:k] = np.asarray(alg_a_chunk.atom_fractions)[:k_rel]
                 Mloss_a[b:k] = (
-                    np.asarray(alg_a_chunk["mass_flux"])[:k_rel]
-                    * np.asarray(alg_a_chunk["A"])[:k_rel]
+                    np.asarray(alg_a_chunk.mass_flux)[:k_rel]
+                    * np.asarray(alg_a_chunk.area)[:k_rel]
                     * delta_t
                 )
                 y_a[b:k] = np.asarray(y_a_chunk)[:k_rel]
@@ -1135,16 +1135,16 @@ def isocalc_jax2(
                 exhausted = True
             else:
                 Matm_a[b:end] = M_atm_chunk
-                fatm_a[b:end] = np.asarray(alg_a_chunk["f_atm"])
-                Renv_a[b:end] = np.asarray(alg_a_chunk["radius_env"])
-                Rp_a[b:end] = np.asarray(alg_a_chunk["escape_radius"])
-                Vpot_a[b:end] = np.asarray(alg_a_chunk["Vpot"])
-                phi_a[b:end] = np.asarray(alg_a_chunk["mass_flux"])
-                phic_a[b:end] = np.asarray(alg_a_chunk["critical_mass_flux"])
-                Phi_a[b:end] = np.asarray(alg_a_chunk["number_flux"])
-                x_a[b:end] = np.asarray(alg_a_chunk["x"])
+                fatm_a[b:end] = np.asarray(alg_a_chunk.atmosphere_mass_fraction)
+                Renv_a[b:end] = np.asarray(alg_a_chunk.convective_envelope_thickness)
+                Rp_a[b:end] = np.asarray(alg_a_chunk.escape_radius)
+                Vpot_a[b:end] = np.asarray(alg_a_chunk.gravitational_potential)
+                phi_a[b:end] = np.asarray(alg_a_chunk.mass_flux)
+                phic_a[b:end] = np.asarray(alg_a_chunk.critical_mass_flux)
+                Phi_a[b:end] = np.asarray(alg_a_chunk.number_flux)
+                x_a[b:end] = np.asarray(alg_a_chunk.atom_fractions)
                 Mloss_a[b:end] = (
-                    np.asarray(alg_a_chunk["mass_flux"]) * np.asarray(alg_a_chunk["A"]) * delta_t
+                    np.asarray(alg_a_chunk.mass_flux) * np.asarray(alg_a_chunk.area) * delta_t
                 )
                 y_a[b:end] = np.asarray(y_a_chunk)
                 y = np.asarray(y_a_chunk[-1])
@@ -1154,8 +1154,8 @@ def isocalc_jax2(
         if not exhausted:
             t_final = float(t_a[-1])
             alg_final = integrator.algebraic(jnp.asarray(t_final), jnp.asarray(y))
-            mu = float(alg_final["mu"])
-            escape_radius = float(alg_final["escape_radius"])
+            mu = float(alg_final.mean_mu)
+            escape_radius = float(alg_final.escape_radius)
             atmod_sol = AtmodellerCoupler(
                 T,
                 escape_radius,
