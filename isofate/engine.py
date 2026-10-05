@@ -110,20 +110,19 @@ def total_radius(parameters: Parameters, y: Array, age) -> Array:
     return planet.rocky_radius + envelope_thickness + atmosphere_thickness
 
 
-def bondi_radius(parameters: Parameters, y: Array, gamma: float = 7 / 5):
+def bondi_radius(parameters: Parameters, y: Array):
     """Bondi radius calculation.
 
     Adapted from `isofate.isofunks.R_Bondi` (kept unchanged there for `isoplot.py`); `Mp`/`mu`/
-    `Teq` are read from `parameters`/`y` internally rather than taken as separate arguments.
+    `Teq`/`gamma` are read from `parameters`/`y` internally rather than taken as separate
+    arguments.
 
     Args:
-        parameters: Simulation parameters - `parameters.system.planet.mass` [kg] and
-            `parameters.system.equilibrium_temperature` [K] (fixed for the whole run) are read
-            from it.
+        parameters: Simulation parameters - `parameters.system.planet.mass` [kg],
+            `parameters.system.equilibrium_temperature` [K] (fixed for the whole run), and the
+            adiabatic index `parameters.atmosphere.adiabatic_index` [ndim] are read from it.
         y: Per-species abundances [atoms] - `parameters.atmosphere_mean_mu(y)` gives the mean
             particle mass [kg].
-        gamma: adiabatic index (heat capacity ratio) [ndim]. Defaults to 7/5, which is the heat
-            capacity ratio of an ideal diatomic gas.
 
     Returns:
         Bondi radius [m]
@@ -131,6 +130,7 @@ def bondi_radius(parameters: Parameters, y: Array, gamma: float = 7 / 5):
     Mp: Array = parameters.system.planet.mass
     mu: Array = parameters.atmosphere_mean_mu(y)
     Teq = parameters.system.equilibrium_temperature
+    gamma = parameters.atmosphere.adiabatic_index
 
     return (gamma - 1) * const.G * Mp * mu / (gamma * const.kb * Teq)
 

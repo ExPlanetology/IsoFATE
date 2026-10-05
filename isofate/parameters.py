@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from atmodeller.jax_utils import safe_divide
 from jaxtyping import Array, ArrayLike
 
+from isofate.atmosphere import AtmosphereModel
 from isofate.escape.fractionation import EscapeNumberFlux, EscapeNumberFluxBase
 from isofate.escape.mechanisms import EscapeMechanism
 from isofate.mantle_iron import MantleIronConfig
@@ -71,6 +72,7 @@ class Parameters(eqx.Module):
     binary_diffusion_coefficients: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
     escape_number_flux: EscapeNumberFluxBase = EscapeNumberFlux()
     isocalc_options: IsocalcOptions = IsocalcOptions()
+    atmosphere: AtmosphereModel = AtmosphereModel()
 
     def atmosphere_mass(self, y: Array) -> Array:
         """Total atmospheric mass [kg].
