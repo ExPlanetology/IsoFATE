@@ -103,7 +103,7 @@ def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0):
         rad_evol=rad_evol,
         melt_fraction_override=melt_fraction_override,
         n_steps=n_steps,
-        t0=t0,
+        t_start=t0,
         thermal=thermal,
         n_atmodeller=n_atmodeller,
         save_molecules=save_molecules,
@@ -113,7 +113,7 @@ def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0):
     parameters = Parameters(system, escape_mechanism=escape, isocalc_options=options)
     return dict(
         parameters=parameters,
-        time=time,
+        t_end=time,
         # ordered per isofate.species.SYMBOLS
         isofate_species_abund=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),
     )

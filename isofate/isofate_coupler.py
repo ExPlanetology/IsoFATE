@@ -38,7 +38,7 @@ from isofate.utils import gravitational_acceleration
 
 def isocalc(
     parameters: Parameters,
-    time=5e9,
+    t_end=5e9,
     isofate_species_abund: ArrayLike = (0, 0, 0, 0, 0, 0, 0),
 ):
     """
@@ -70,12 +70,12 @@ def isocalc(
     #  - Fp: incident bolometric flux [W/m2]
     #  - T: planet equilibrium temperature [K]
     #  - d: orbtial distance [m]
-    #  - time: total simulation time; scalar [yr]
+    #  - t_end: simulation end time, i.e. system age at the end of the run; scalar [yr]
     #  - isofate_species_abund: initial abundance [atoms] for each tracked species, ordered as in
     #  isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
     #  - options: mode switches and tuning constants unrelated to escape mechanism, fixed for
     #  the whole run - see IsocalcOptions for the full list (rad_evol, melt_fraction_override,
-    #  mu, n_steps, t0, thermal, n_atmodeller, save_molecules, mantle_iron, dynamic_phi)
+    #  mu, n_steps, t_start, thermal, n_atmodeller, save_molecules, mantle_iron, dynamic_phi)
     #  - escape: escape-mechanism instance (isofate.escape.mechanisms.EscapeMechanism) controlling the
     #  atmospheric mass-flux calculation each timestep; defaults to XUVEscape(), equivalent to
     #  today's default mechanism="XUV", RR=True. See isofate.escape.mechanisms for XUVEscape, CPMLEscape,
@@ -139,8 +139,8 @@ def isocalc(
     ###_____Initialize timesteps_____###
 
     n_tot = options.n_steps  # timesteps
-    t0_seconds = options.t0 / const.s2yr  # simulation start time [s]
-    t = time / const.s2yr - t0_seconds  # total simulation time [s]
+    t0_seconds = options.t_start / const.s2yr  # simulation start time [s]
+    t = t_end / const.s2yr - t0_seconds  # simulation duration [s]
     delta_t = t / n_tot  # timestep [s]
 
     ###_____Set initial values____###
@@ -282,12 +282,12 @@ def isocalc(
         state = EscapeState(
             system=system,
             escape_radius=radius_p,
-            Vpot=Vpot,
-            mu=mu,
-            radius_env=radius_env,
-            f_atm=f_atm,
-            t_now=t_a[n],
-            t_total=t,
+            gravitational_potential=Vpot,
+            mean_mu=mu,
+            convective_envelope_thickness=radius_env,
+            atmosphere_mass_fraction=f_atm,
+            t_current=t_a[n],
+            t_end=t0_seconds + t,
         )
         phi = escape.compute_mass_flux(state)
 
@@ -522,7 +522,7 @@ def isocalc(
 
 def isocalc_jax(
     parameters: Parameters,
-    time=5e9,
+    t_end=5e9,
     isofate_species_abund: Array = jnp.array([0, 0, 0, 0, 0, 0, 0], dtype=float),
 ):
     """
@@ -554,12 +554,12 @@ def isocalc_jax(
     #  - Fp: incident bolometric flux [W/m2]
     #  - T: planet equilibrium temperature [K]
     #  - d: orbtial distance [m]
-    #  - time: total simulation time; scalar [yr]
+    #  - t_end: simulation end time, i.e. system age at the end of the run; scalar [yr]
     #  - isofate_species_abund: initial abundance [atoms] for each tracked species, ordered as in
     #  isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
     #  - options: mode switches and tuning constants unrelated to escape mechanism, fixed for
     #  the whole run - see IsocalcOptions for the full list (rad_evol, melt_fraction_override,
-    #  mu, n_steps, t0, thermal, n_atmodeller, save_molecules, mantle_iron, dynamic_phi)
+    #  mu, n_steps, t_start, thermal, n_atmodeller, save_molecules, mantle_iron, dynamic_phi)
     #  - escape: escape-mechanism instance (isofate.escape.mechanisms.EscapeMechanism) controlling the
     #  atmospheric mass-flux calculation each timestep; defaults to XUVEscape(), equivalent to
     #  today's default mechanism="XUV", RR=True. See isofate.escape.mechanisms for XUVEscape, CPMLEscape,
@@ -612,11 +612,10 @@ def isocalc_jax(
     ###_____Initialize timesteps_____###
 
     n_tot = options.n_steps  # timesteps
-    t0_seconds = options.t0 / const.s2yr  # simulation start time [s]
-    # Named t_total (not the bare `t` isocalc uses) - `t` here would collide with diffrax's own
-    # integration-time parameter name in the vector field/postprocessing closures below.
-    t_total = time / const.s2yr - t0_seconds  # total simulation time [s]
-    delta_t = t_total / n_tot  # timestep [s]
+    t_start_seconds = options.t_start / const.s2yr  # simulation start time [s]
+    t_end_seconds = t_end / const.s2yr  # simulation end time [s]
+    duration = t_end_seconds - t_start_seconds  # simulation duration [s]
+    delta_t = duration / n_tot  # timestep [s]
 
     ###_____Set initial values____###
 
@@ -660,7 +659,7 @@ def isocalc_jax(
     # y = np.array(isofate_species_abund, dtype=float)
     ###_____Initialize arrays_____###
 
-    t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t0_seconds  # time array [s]
+    t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t_start_seconds  # time array [s]
 
     y_a_int = np.zeros((n_tot, 7))  # mantle number array [atoms] - atmodeller disabled, stays 0
     # Atmospheric/mantle molecule number history, ordered per interior_atmosphere's own gas-phase
@@ -675,8 +674,8 @@ def isocalc_jax(
 
     ###_____Integrate_____###
 
-    y_a, alg_a = IsocalcIntegrator(parameters, t_total).integrate(
-        jnp.asarray(t0_seconds),
+    y_a, alg_a = IsocalcIntegrator(parameters, t_end_seconds).integrate(
+        jnp.asarray(t_start_seconds),
         jnp.asarray(t_a),
         jnp.asarray(isofate_species_abund),
     )
@@ -827,7 +826,7 @@ def isocalc_jax(
 
 def isocalc_jax2(
     parameters: Parameters,
-    time=5e9,
+    t_end=5e9,
     isofate_species_abund: Array = jnp.array([0, 0, 0, 0, 0, 0, 0], dtype=float),
 ):
     """
@@ -897,11 +896,10 @@ def isocalc_jax2(
     # isn't, and IsocalcIntegrator.integrate (eqx.filter_jit) treats those as different abstract
     # types, forcing a second, otherwise-unnecessary trace/compile for the first segment alone.
     # Matching the type here up front keeps every segment on the one compiled program.
-    t0_seconds = np.asarray(options.t0 / const.s2yr)  # simulation start time [s]
-    # Named t_total (not the bare `t` isocalc uses) - `t` here would collide with diffrax's own
-    # integration-time parameter name in the vector field/postprocessing closures below.
-    t_total = time / const.s2yr - t0_seconds  # total simulation time [s]
-    delta_t = t_total / n_tot  # timestep [s]
+    t_start_seconds = np.asarray(options.t_start / const.s2yr)  # simulation start time [s]
+    t_end_seconds = t_end / const.s2yr  # simulation end time [s]
+    duration = t_end_seconds - t_start_seconds  # simulation duration [s]
+    delta_t = duration / n_tot  # timestep [s]
 
     ###_____Set initial values____###
 
@@ -938,7 +936,7 @@ def isocalc_jax2(
 
     ###_____Initialize arrays_____###
 
-    t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t0_seconds  # time array [s]
+    t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t_start_seconds  # time array [s]
 
     # Atmospheric/mantle molecule number history, ordered per interior_atmosphere's own gas-phase
     # SpeciesCollection (see tracked_species above), keyed by isofate's human-readable label
@@ -952,11 +950,11 @@ def isocalc_jax2(
 
     ###_____Integrate_____###
 
-    integrator = IsocalcIntegrator(parameters, t_total)
+    integrator = IsocalcIntegrator(parameters, t_end_seconds)
 
     if options.n_atmodeller == 0:
         y_a, alg_a = integrator.integrate(
-            jnp.asarray(t0_seconds),
+            jnp.asarray(t_start_seconds),
             jnp.asarray(t_a),
             jnp.asarray(isofate_species_abund),
         )
@@ -1047,11 +1045,11 @@ def isocalc_jax2(
             # reimplementing the mu/escape_radius formulas here. Evaluated at t_a[b] - matching
             # isocalc's own iteration-b physics (R_env(..., t_a[n], ...)) - not at this
             # segment's integration-start time (t0_chunk, below): R_env's age-dependent thermal
-            # contraction term is sensitive to this at early times (t_a[0] vs t0_seconds differ
-            # by a large relative amount when t0_seconds is itself small), even though the two
-            # converge as the run progresses and one delta_t becomes negligible next to the
+            # contraction term is sensitive to this at early times (t_a[0] vs t_start_seconds
+            # differ by a large relative amount when t_start_seconds is itself small), even though
+            # the two converge as the run progresses and one delta_t becomes negligible next to the
             # accumulated age.
-            t0_chunk = t0_seconds if i == 0 else t_a[b - 1]
+            t0_chunk = t_start_seconds if i == 0 else t_a[b - 1]
             alg_boundary = integrator.algebraic(jnp.asarray(t_a[b]), jnp.asarray(y))
             mu = float(alg_boundary["mu"])
             escape_radius = float(alg_boundary["escape_radius"])

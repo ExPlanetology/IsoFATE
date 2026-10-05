@@ -37,7 +37,7 @@ class IsocalcOptions(eqx.Module):
         melt_fraction_override: Fixed mantle melt fraction; if False, it is instead calculated
             from Mp and T_surface.
         n_steps: Number of timesteps; convergence occurs at 1e6.
-        t0: Simulation start time [yr].
+        t_start: Simulation start time, i.e. system age at the start of the run [yr].
         thermal: Toggles planet radius contraction in the Lopez/Fortney equations (False removes
             the age term).
         n_atmodeller: Interval of timesteps between each Atmodeller call.
@@ -54,7 +54,7 @@ class IsocalcOptions(eqx.Module):
     # TODO: This can be removed once the JAX version is swapped in for the original isocalc.
     melt_fraction_override: ArrayLike | bool = False
     n_steps: int = int(1e5)
-    t0: ArrayLike = 1e6
+    t_start: ArrayLike = 1e6
     thermal: bool = True
     n_atmodeller: int = int(1e2)
     save_molecules: bool = False

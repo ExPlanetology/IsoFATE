@@ -59,13 +59,13 @@ SYSTEM = System(
 
 STATE = EscapeState(
     system=SYSTEM,
-    radius_p=6.5e6,
-    Vpot=5e7,
-    mu=3.3e-27,
-    radius_env=1e5,
-    f_atm=0.01,
-    t_now=3e13,
-    t_total=1.5e17,
+    escape_radius=6.5e6,
+    gravitational_potential=5e7,
+    mean_mu=3.3e-27,
+    convective_envelope_thickness=1e5,
+    atmosphere_mass_fraction=0.01,
+    t_current=3e13,
+    t_end=1.5e17,
 )
 
 
@@ -103,13 +103,18 @@ def test_combined_escape_sums_components():
 def test_xuv_escape_wraps_phi_e_and_phi_rr():
     escape = XUVEscape(F0=F0, RR=True)
     phi_energy_limited = phi_E(
-        STATE.t_now, STATE.Vpot, STATE.system.semi_major_axis, F0, eps=escape.eps, t0=escape.t0
+        STATE.t_current,
+        STATE.gravitational_potential,
+        STATE.system.semi_major_axis,
+        F0,
+        eps=escape.eps,
+        t0=escape.t0,
     )
     phi_recombination_limited = phi_RR(
-        STATE.radius_p,
+        STATE.escape_radius,
         STATE.system.planet.mass,
         STATE.system.equilibrium_temperature,
-        STATE.t_now,
+        STATE.t_current,
         F0,
         t0=escape.t0,
     )
@@ -120,8 +125,8 @@ def test_xuv_escape_wraps_phi_e_and_phi_rr():
     escape_no_rr = XUVEscape(F0=F0, RR=False)
     assert escape_no_rr.compute_mass_flux(STATE) == pytest.approx(
         phi_E(
-            STATE.t_now,
-            STATE.Vpot,
+            STATE.t_current,
+            STATE.gravitational_potential,
             STATE.system.semi_major_axis,
             F0,
             eps=escape_no_rr.eps,
@@ -137,10 +142,10 @@ def test_cpml_escape_wraps_phie_cp():
         STATE.system.planet.mass,
         escape.rho_rcb,
         escape.eps,
-        STATE.Vpot,
-        STATE.radius_p,
-        STATE.mu,
-        STATE.radius_env,
+        STATE.gravitational_potential,
+        STATE.escape_radius,
+        STATE.mean_mu,
+        STATE.convective_envelope_thickness,
     )
     assert escape.compute_mass_flux(STATE) == pytest.approx(expected)
 
@@ -148,7 +153,9 @@ def test_cpml_escape_wraps_phie_cp():
 def test_phi_kill_escape_wraps_phi_kill():
     escape = PhiKillEscape()
     expected = phi_kill(
-        STATE.system.planet.mass * STATE.f_atm, STATE.radius_p, STATE.t_total - STATE.t_now
+        STATE.system.planet.mass * STATE.atmosphere_mass_fraction,
+        STATE.escape_radius,
+        STATE.t_end - STATE.t_current,
     )
     assert escape.compute_mass_flux(STATE) == pytest.approx(expected)
 

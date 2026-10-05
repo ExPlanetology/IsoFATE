@@ -138,7 +138,7 @@ def _toy_isocalc_kwargs(**option_overrides):
     )
     return dict(
         parameters=parameters,
-        time=1e6,
+        t_end=1e6,
         # isofate_species_abund ordered per isofate.species.SYMBOLS: (H, He, D, O, C, N, S)
         isofate_species_abund=(1e45, 1e44, 1e41, 1.5e45, 1e44, 1e43, 1e43),
     )

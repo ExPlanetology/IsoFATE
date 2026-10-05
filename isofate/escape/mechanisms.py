@@ -40,18 +40,18 @@ class EscapeState(eqx.Module):
     """Star-planet system."""
     escape_radius: ArrayLike
     """Effective outer radius from which the atmosphere escapes [m]"""
-    Vpot: ArrayLike
-    """Gravitational potential at the outer layer [J/kg]."""
-    mu: ArrayLike
+    gravitational_potential: ArrayLike
+    """Gravitational potential at the escape radius, reduced by stellar tidal forces [J/kg]."""
+    mean_mu: ArrayLike
     """Mean atmospheric particle mass [kg]."""
-    radius_env: ArrayLike
-    """Envelope radius [m]."""
-    f_atm: ArrayLike
+    convective_envelope_thickness: ArrayLike
+    """Radial thickness of the convective envelope [m]."""
+    atmosphere_mass_fraction: ArrayLike
     """Atmospheric mass fraction [ndim]."""
-    t_now: ArrayLike
-    """Current simulation time [s]."""
-    t_total: ArrayLike
-    """Total simulation time [s]."""
+    t_current: ArrayLike
+    """Current time, i.e. system age [s]."""
+    t_end: ArrayLike
+    """End time of the simulation, i.e. system age at the end of the run [s]."""
 
 
 class EscapeMechanism(eqx.Module):
@@ -356,7 +356,7 @@ class XUVEscape(EscapeMechanism):
             every other `Fxuv` shape parameter below).
         eps: Heat transfer efficiency [ndim].
         t0: Reference start time for the XUV power-law flux model [yr]. Independent of
-            `IsocalcOptions.t0` (isocalc's own simulation-start-time knob), even though they
+            `IsocalcOptions.t_start` (isocalc's own simulation-start-time knob), even though they
             typically get set to the same value.
         t_sat, beta, step_fn, F_final, t_pms, pms_factor: `Fxuv` power-law shape params.
         flux_model: 'power law' | 'phoenix' | 'Johnstone'.
@@ -384,8 +384,8 @@ class XUVEscape(EscapeMechanism):
     @override
     def compute_mass_flux(self, state: EscapeState) -> ArrayLike:
         phi_energy_limited = phi_E(
-            state.t_now,
-            state.Vpot,
+            state.t_current,
+            state.gravitational_potential,
             state.system.semi_major_axis,
             self.F0,
             eps=self.eps,
@@ -406,7 +406,7 @@ class XUVEscape(EscapeMechanism):
             state.escape_radius,
             state.system.planet.mass,
             state.system.equilibrium_temperature,
-            state.t_now,
+            state.t_current,
             self.F0,
             t0=self.t0,
             t_sat=self.t_sat,
@@ -439,10 +439,10 @@ class CPMLEscape(EscapeMechanism):
             state.system.planet.mass,
             self.rho_rcb,
             self.eps,
-            state.Vpot,
+            state.gravitational_potential,
             state.escape_radius,
-            state.mu,
-            state.radius_env,
+            state.mean_mu,
+            state.convective_envelope_thickness,
         )
 
 
@@ -452,9 +452,9 @@ class PhiKillEscape(EscapeMechanism):
     @override
     def compute_mass_flux(self, state: EscapeState) -> ArrayLike:
         return phi_kill(
-            state.system.planet.mass * state.f_atm,
+            state.system.planet.mass * state.atmosphere_mass_fraction,
             state.escape_radius,
-            state.t_total - state.t_now,
+            state.t_end - state.t_current,
         )
 
 

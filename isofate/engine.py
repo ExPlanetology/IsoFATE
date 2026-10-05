@@ -9,6 +9,8 @@ functions and `IsocalcIntegrator`, which owns the time stepping - split out so i
 scaffolding, etc.), which isn't worth tracing.
 """
 
+from collections.abc import Mapping
+
 import diffrax
 import equinox as eqx
 import jax
@@ -229,7 +231,7 @@ class IsocalcIntegrator(eqx.Module):
 
     Args:
         parameters: Simulation parameters
-        t_total: Total simulation time [s]
+        t_end: End time of the simulation, i.e. system age at the end of the run [s]
         rtol: Relative tolerance of the step-size controller. Defaults to ``1e-6``.
         atol: Absolute tolerance of the step-size controller [atoms]. Defaults to ``1e3``.
         max_steps: Maximum number of solver steps. Defaults to ``100_000``.
@@ -240,13 +242,13 @@ class IsocalcIntegrator(eqx.Module):
     # TODO: Might not be best to have parameters live on the integrator, but rather be passed in?
     parameters: Parameters
     # An array rather than a Python float, so that a different `time` doesn't force a retrace
-    t_total: Array = eqx.field(converter=as_j64)
+    t_end: Array = eqx.field(converter=as_j64)
     rtol: float = 1e-6
     atol: float = 1e3
     max_steps: int = 100_000
     exhaustion_fraction: float = 1e-6
 
-    def algebraic(self, t: ArrayLike, y: Array) -> dict[str, Array]:
+    def algebraic(self, t: ArrayLike, y: Array) -> Mapping[str, ArrayLike]:
         """Everything derivable from `(t, y)` alone, given the run's fixed quantities.
 
         `M_atm` is not separate integrated state: dM_atm/dt is exactly dot(dy/dt, atomic_masses),
@@ -273,7 +275,7 @@ class IsocalcIntegrator(eqx.Module):
         planet_mass: Array = system.planet.mass
         equilibrium_temperature: Array = system.equilibrium_temperature
 
-        y: Array = jnp.maximum(y, 0.0)
+        y = jnp.maximum(y, 0.0)
         mu: Array = parameters.atmosphere_mean_mu(y)
         x: Array = parameters.atmosphere_atom_fractions(y)
 
@@ -283,22 +285,22 @@ class IsocalcIntegrator(eqx.Module):
         _convective_envelope_thickness: Array = convective_envelope_thickness(parameters, y, t)
         _escape_radius: Array = escape_radius(parameters, y, t)
 
-        Vpot = tidal_gravitational_potential(system, _escape_radius)
-        A = sphere_area(_escape_radius)
-        g = gravitational_acceleration(planet_mass, _escape_radius)
+        gravitational_potential: Array = tidal_gravitational_potential(system, _escape_radius)
+        area: ArrayLike = sphere_area(_escape_radius)
+        grav_acc: ArrayLike = gravitational_acceleration(planet_mass, _escape_radius)
 
-        state = EscapeState(
+        state: EscapeState = EscapeState(
             system=system,
             escape_radius=_escape_radius,
-            Vpot=Vpot,
-            mu=mu,
-            radius_env=_convective_envelope_thickness,
-            f_atm=atmosphere_mass_fraction,
-            t_now=t,
-            t_total=self.t_total,
+            gravitational_potential=gravitational_potential,
+            mean_mu=mu,
+            convective_envelope_thickness=_convective_envelope_thickness,
+            atmosphere_mass_fraction=atmosphere_mass_fraction,
+            t_current=t,
+            t_end=self.t_end,
         )
-        phi = escape.compute_mass_flux(state)
-        Phi, phi_c = escape_number_flux.get_number_flux(y, equilibrium_temperature, g, phi)
+        phi: ArrayLike = escape.compute_mass_flux(state)
+        Phi, phi_c = escape_number_flux.get_number_flux(y, equilibrium_temperature, grav_acc, phi)
 
         return dict(
             mu=mu,
@@ -307,8 +309,8 @@ class IsocalcIntegrator(eqx.Module):
             f_atm=atmosphere_mass_fraction,
             radius_env=_convective_envelope_thickness,
             escape_radius=_escape_radius,
-            Vpot=Vpot,
-            A=A,
+            Vpot=gravitational_potential,
+            A=area,
             phi=phi,
             phi_c=phi_c,
             Phi=Phi,
@@ -383,7 +385,7 @@ class IsocalcIntegrator(eqx.Module):
             diffrax.ODETerm(self.vector_field),
             diffrax.Tsit5(),
             t0=t0_seconds,
-            # Not `t0_seconds + t_total`: t_a's last entry runs one delta_t past that (a
+            # Not `self.t_end`: t_a's last entry runs one delta_t past that (a
             # pre-existing quirk of t_a's own formula, shared with isocalc, harmless there since
             # t_a is only a diagnostic label in the discrete loop) - diffrax requires saveat.ts to
             # lie within [t0, t1], so t1 is taken directly from t_a instead of re-derived.
