@@ -13,10 +13,14 @@ while isocalc is decoupled from Atmodeller/refactored towards a JAX driver - see
 comments in sim.py); update both together if sim.py's parameters change.
 """
 
+import dataclasses
+
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from isofate.constants import const
+from isofate.engine import EXHAUSTION_FRACTION, IsocalcIntegrator, integrate_segments
 from isofate.escape.mechanisms import XUVEscape
 from isofate.isofate_coupler import isocalc, isocalc_jax, isocalc_jax2
 from isofate.parameters import IsocalcOptions, Parameters
@@ -200,3 +204,149 @@ def test_isocalc_isocalc_jax2_cross_check():
 
     final = sol_jax2["atmodeller_final"]
     assert np.all(np.isfinite(list(final.values())))
+
+
+def _sim_integrator_setup(mass_loss_fraction=None):
+    """The LHS 1140 b scenario set up for direct `IsocalcIntegrator` use (no Atmodeller), with the
+    given `IsocalcOptions.mass_loss_fraction` (``None`` keeps the default). This scenario is
+    escape-dominated (about 17% of the atmospheric mass is lost over the run), unlike
+    test_pipeline's toy scenario.
+
+    Returns:
+        `(integrator, t_start, t_a, y0)`
+    """
+    kwargs = _sim_isocalc_kwargs(n_steps=200)
+    options = kwargs["parameters"].isocalc_options
+    if mass_loss_fraction is not None:
+        options = dataclasses.replace(options, mass_loss_fraction=mass_loss_fraction)
+    parameters = dataclasses.replace(kwargs["parameters"], isocalc_options=options)
+
+    t_start = options.t_start / const.s2yr
+    t_end = kwargs["t_end"] / const.s2yr
+    delta_t = (t_end - t_start) / options.n_steps
+    t_a = jnp.asarray(delta_t * np.linspace(1, options.n_steps + 1, options.n_steps) + t_start)
+    y0 = jnp.asarray(kwargs["isofate_species_abund"], dtype=float)
+
+    return IsocalcIntegrator(parameters, t_end), jnp.asarray(t_start), t_a, y0
+
+
+def _integrate_sim(mass_loss_fraction=None):
+    """One `IsocalcIntegrator.integrate` call on the LHS 1140 b scenario."""
+    integrator, t_start, t_a, y0 = _sim_integrator_setup(mass_loss_fraction)
+    y_a, _, stop = integrator.integrate(t_start, t_a, y0)
+
+    return integrator.parameters, np.asarray(t_a), y0, y_a, stop
+
+
+def _identity_hook(carry, t, y):
+    """`on_mass_lost` hook that leaves the state unchanged."""
+    return carry, y
+
+
+def test_integrator_mass_loss_event():
+    """With `mass_loss_fraction=0.05`, the integration stops once 5% of the initial atmospheric
+    mass is lost - slightly past it, since the boolean condition fires at the end of the step on
+    which it becomes true - and the outputs after the stop are held."""
+    parameters, t_a, y0, y_a, stop = _integrate_sim(0.05)
+
+    assert bool(stop.mass_lost)
+    assert float(stop.t) < t_a[-1]
+
+    mass_ratio = float(parameters.atmosphere_mass(stop.y) / parameters.atmosphere_mass(y0))
+    assert 0.9 < mass_ratio <= 0.95
+
+    assert np.all(np.isfinite(y_a))
+    i_stop = int(np.searchsorted(t_a, float(stop.t)))
+    assert np.all(y_a[i_stop:] == y_a[i_stop - 1])
+
+
+def test_integrator_default_runs_to_end():
+    """With the default `mass_loss_fraction` (stop only at exhaustion), this scenario never
+    exhausts, so the integration runs to the last output time."""
+    _, t_a, _, _, stop = _integrate_sim()
+
+    assert not bool(stop.mass_lost)
+    assert float(stop.t) == pytest.approx(t_a[-1])
+
+
+def test_integrate_segments_identity_hook_matches_single_solve():
+    """Plumbing check: restarting every 5% of mass loss with a hook that leaves the state unchanged
+    must reproduce one uninterrupted integration."""
+    integrator, t_start, t_a, y0 = _sim_integrator_setup(0.05)
+    parameters = integrator.parameters
+
+    y_a, _, restarts, _ = integrate_segments(
+        integrator, t_start, t_a, y0, on_mass_lost=_identity_hook
+    )
+
+    reference_integrator, _, _, _ = _sim_integrator_setup()
+    y_reference, _, _ = reference_integrator.integrate(t_start, t_a, y0)
+
+    assert len(restarts) >= 3
+    segment_start_mass = parameters.atmosphere_mass(y0)
+    for restart in restarts:
+        assert np.all(restart.y_after == restart.y_before)
+        # Slightly past 5%: the boolean condition fires at the end of the step on which it becomes
+        # true, and later segments take larger steps
+        mass = parameters.atmosphere_mass(restart.y_before)
+        assert 0.9 < float(mass / segment_start_mass) <= 0.95
+        segment_start_mass = parameters.atmosphere_mass(restart.y_after)
+
+    assert np.all(np.isfinite(y_a))
+    np.testing.assert_allclose(y_a, y_reference, rtol=1e-4)
+
+
+def test_integrate_segments_placeholder_hook():
+    """The default placeholder hook removes 1% of every abundance at each restart, and the next
+    segment continues from the reduced state."""
+    integrator, t_start, t_a, y0 = _sim_integrator_setup(0.05)
+    parameters = integrator.parameters
+
+    y_a, _, restarts, _ = integrate_segments(integrator, t_start, t_a, y0)
+    y_identity, _, restarts_identity, _ = integrate_segments(
+        integrator, t_start, t_a, y0, on_mass_lost=_identity_hook
+    )
+
+    assert len(restarts) >= len(restarts_identity) >= 3
+    for restart in restarts:
+        np.testing.assert_allclose(restart.y_after, 0.99 * restart.y_before)
+        i_next = int(np.searchsorted(np.asarray(t_a), float(restart.t), side="right"))
+        if i_next < t_a.shape[0]:
+            assert float(parameters.atmosphere_mass(y_a[i_next])) < float(
+                parameters.atmosphere_mass(restart.y_before)
+            )
+
+    assert np.all(np.isfinite(y_a))
+    assert float(parameters.atmosphere_mass(y_a[-1])) < float(
+        parameters.atmosphere_mass(y_identity[-1])
+    )
+
+
+def test_integrate_segments_hook_and_floor():
+    """The hook is called once per restart with its carried state threaded through, and a hook
+    that removes almost all of the atmosphere ends the integration at the exhaustion floor."""
+    integrator, t_start, t_a, y0 = _sim_integrator_setup(0.05)
+    parameters = integrator.parameters
+
+    def counting_hook(carry, t, y):
+        return carry + 1, y
+
+    _, _, restarts, n_calls = integrate_segments(
+        integrator, t_start, t_a, y0, on_mass_lost=counting_hook, carry=0
+    )
+    assert n_calls == len(restarts) >= 3
+
+    def removing_hook(carry, t, y):
+        return carry, 1e-7 * y
+
+    y_a, _, restarts, _ = integrate_segments(
+        integrator, t_start, t_a, y0, on_mass_lost=removing_hook
+    )
+    assert len(restarts) == 1
+    i_next = int(np.searchsorted(np.asarray(t_a), float(restarts[0].t), side="right"))
+    np.testing.assert_allclose(
+        y_a[i_next:], np.broadcast_to(restarts[0].y_after, y_a[i_next:].shape)
+    )
+    assert float(parameters.atmosphere_mass(restarts[0].y_after)) <= EXHAUSTION_FRACTION * float(
+        parameters.atmosphere_mass(y0)
+    )

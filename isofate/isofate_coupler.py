@@ -22,6 +22,7 @@ from isofate.atmodeller_coupler import (
 )
 from isofate.constants import const
 from isofate.engine import (
+    EXHAUSTION_FRACTION,
     IsocalcIntegrator,
     bondi_radius,
     tidal_gravitational_potential,
@@ -674,7 +675,7 @@ def isocalc_jax(
 
     ###_____Integrate_____###
 
-    y_a, alg_a = IsocalcIntegrator(parameters, t_end_seconds).integrate(
+    y_a, alg_a, _ = IsocalcIntegrator(parameters, t_end_seconds).integrate(
         jnp.asarray(t_start_seconds),
         jnp.asarray(t_a),
         jnp.asarray(isofate_species_abund),
@@ -953,7 +954,7 @@ def isocalc_jax2(
     integrator = IsocalcIntegrator(parameters, t_end_seconds)
 
     if options.n_atmodeller == 0:
-        y_a, alg_a = integrator.integrate(
+        y_a, alg_a, _ = integrator.integrate(
             jnp.asarray(t_start_seconds),
             jnp.asarray(t_a),
             jnp.asarray(isofate_species_abund),
@@ -986,13 +987,10 @@ def isocalc_jax2(
         x_a = np.zeros((n_tot, 7))
         y_a = np.zeros((n_tot, 7))
 
-        # 1e-6 matches IsocalcIntegrator.exhaustion_fraction's default (engine.py), applied here
-        # against the run's true initial mass/count - IsocalcIntegrator.integrate's internal event
-        # is relative to each segment's own (shrinking) y0 and would otherwise under-detect
-        # exhaustion late in a run.
-        exhaustion_fraction = 1e-6
+        # EXHAUSTION_FRACTION (engine.py) applied here against the run's true initial mass -
+        # IsocalcIntegrator.integrate's internal event is relative to each segment's own
+        # (shrinking) y0 and would otherwise under-detect exhaustion late in a run.
         M_atm0_run = float(np.dot(y, atomic_masses))
-        sum_y0_run = float(np.sum(y))
 
         def _fill_exhausted(start: int) -> None:
             """Fills [start:n_tot) with isocalc's exact post-exhaustion convention (see
@@ -1024,11 +1022,7 @@ def isocalc_jax2(
 
             ### Stop simulation when entire atmosphere is lost
             M_atm_current = float(np.dot(y, atomic_masses))
-            sum_y_current = float(np.sum(y))
-            if (
-                M_atm_current <= exhaustion_fraction * M_atm0_run
-                or sum_y_current <= exhaustion_fraction * sum_y0_run
-            ):
+            if M_atm_current <= EXHAUSTION_FRACTION * M_atm0_run:
                 _fill_exhausted(b)
                 atmod_full_output = nan_full_output()
                 exhausted = True
@@ -1097,7 +1091,7 @@ def isocalc_jax2(
                         melt_num_a[sp.label][b:end] = 0.0  # no solubility model / melt reservoir
                 fO2_a[b:end] = step.atmod_full["O2_g"]["gas"]["activity"][0][0]
 
-            y_a_chunk, alg_a_chunk = integrator.integrate(
+            y_a_chunk, alg_a_chunk, _ = integrator.integrate(
                 jnp.asarray(t0_chunk),
                 jnp.asarray(t_a[b:end]),
                 jnp.asarray(y),
@@ -1108,10 +1102,7 @@ def isocalc_jax2(
             # robust whether or not that internal event fired early (see isocalc_jax2 design
             # notes / the project plan).
             M_atm_chunk = np.asarray(alg_a_chunk["M_atm"])
-            sum_y_chunk = np.asarray(jnp.sum(y_a_chunk, axis=1))
-            exhausted_mask = (M_atm_chunk <= exhaustion_fraction * M_atm0_run) | (
-                sum_y_chunk <= exhaustion_fraction * sum_y0_run
-            )
+            exhausted_mask = M_atm_chunk <= EXHAUSTION_FRACTION * M_atm0_run
 
             if exhausted_mask.any():
                 k_rel = int(np.argmax(exhausted_mask))

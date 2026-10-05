@@ -9,7 +9,8 @@ functions and `IsocalcIntegrator`, which owns the time stepping - split out so i
 scaffolding, etc.), which isn't worth tracing.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable
+from typing import Any
 
 import diffrax
 import equinox as eqx
@@ -30,6 +31,21 @@ from isofate.utils import (
     scale_height,
     sphere_area,
 )
+
+EXHAUSTION_FRACTION: float = 1e-6
+"""Fraction of the initial atmospheric mass below which the atmosphere counts as exhausted.
+
+Not exactly zero: as the dominant species' abundance -> 0, the ODE's right-hand side becomes
+effectively singular (Phi_minor_species' N_2/N_1 term blows up), which stalls Tsit5's adaptive
+step-size controller (the step size underflows before the exact zero is ever reached). A small but
+nonzero floor still means "the atmosphere is gone" to any reasonable tolerance.
+"""
+
+_PLACEHOLDER_REDUCTION: float = 0.01
+"""Fractional reduction of every abundance applied by `placeholder_reequilibration`."""
+
+_RESTART_DT0_FRACTION: float = 1e-6
+"""Initial step on restarts in `integrate_segments`, as a fraction of the remaining time span."""
 
 
 def convective_envelope_thickness(parameters: Parameters, y: Array, age: ArrayLike) -> Array:
@@ -216,6 +232,20 @@ def _hold_last_finite(y_a: Array, y0: Array) -> Array:
     return jnp.where(finite_mask[:, None], y_a, y_fallback)
 
 
+class IntegrationStop(eqx.Module):
+    """Where and why an `IsocalcIntegrator.integrate` call stopped.
+
+    Args:
+        t: Stop time [s] - the end of the requested output times if the event did not fire
+        y: Per-species abundances at the stop time [atoms]
+        mass_lost: True if the mass-loss event fired (see `IsocalcIntegrator.mass_lost`)
+    """
+
+    t: Array
+    y: Array
+    mass_lost: Array
+
+
 class IsocalcIntegrator(eqx.Module):
     """Time integration of the atmospheric-escape ODE for one isocalc run.
 
@@ -235,8 +265,6 @@ class IsocalcIntegrator(eqx.Module):
         rtol: Relative tolerance of the step-size controller. Defaults to ``1e-6``.
         atol: Absolute tolerance of the step-size controller [atoms]. Defaults to ``1e3``.
         max_steps: Maximum number of solver steps. Defaults to ``100_000``.
-        exhaustion_fraction: Fraction of the initial atmospheric mass/particle count below which
-            the atmosphere counts as lost. Defaults to ``1e-6``.
     """
 
     # TODO: Might not be best to have parameters live on the integrator, but rather be passed in?
@@ -246,9 +274,8 @@ class IsocalcIntegrator(eqx.Module):
     rtol: float = 1e-6
     atol: float = 1e3
     max_steps: int = 100_000
-    exhaustion_fraction: float = 1e-6
 
-    def algebraic(self, t: ArrayLike, y: Array) -> Mapping[str, ArrayLike]:
+    def algebraic(self, t: ArrayLike, y: Array) -> dict[str, ArrayLike]:
         """Everything derivable from `(t, y)` alone, given the run's fixed quantities.
 
         `M_atm` is not separate integrated state: dM_atm/dt is exactly dot(dy/dt, atomic_masses),
@@ -328,42 +355,46 @@ class IsocalcIntegrator(eqx.Module):
         Returns:
             dy/dt [atoms/s]
         """
+        del args
+
         alg: dict = self.algebraic(t, y)
 
         return -alg["Phi"] * alg["A"]
 
-    def exhausted(self, t: ArrayLike, y: Array, args: tuple[Array, Array], **kwargs) -> Array:
-        """Event condition: entire atmosphere lost - replaces isocalc's `if M_atm <= 0 or sum(y) <=
-        0: break`.
+    def mass_lost(self, t: ArrayLike, y: Array, args: Array, **kwargs) -> Array:
+        """Event condition: the atmospheric mass has dropped by
+        `parameters.isocalc_options.mass_loss_fraction` of its value at the start of the
+        integration.
 
-        Exact `M_atm <= 0`/`sum(y) <= 0` makes the ODE's right-hand side effectively singular as
-        the dominant species' abundance -> 0 (Phi_minor_species' N_2/N_1 term blows up), which
-        stalls Tsit5's adaptive step-size controller (step size underflows before the exact zero is
-        ever reached, rather than converging). Firing once M_atm/sum(y) drop below
-        `exhaustion_fraction` of their reference values avoids this while still meaning "the
-        atmosphere is gone" to any reasonable tolerance.
+        With the default fraction, ``1 - EXHAUSTION_FRACTION``, this fires once the atmosphere is
+        effectively exhausted (see `EXHAUSTION_FRACTION` for why the threshold is not exactly
+        zero). A smaller fraction (e.g. ``0.05``) stops the integration earlier, so that it can be
+        restarted (see `integrate_segments`).
 
         Args:
             t: Time [s]
             y: Per-species abundances [atoms]
-            args: `(M_atm0, sum_y0)` - reference atmospheric mass [kg] and particle count [atoms]
+            args: Atmospheric mass at the start of the integration [kg]
             **kwargs: Passed by `diffrax.Event`; unused
 
         Returns:
-            True once the atmosphere counts as lost
+            True once the given fraction of the atmospheric mass has been lost
         """
-        M_atm0, sum_y0 = args
-        M_atm = self.parameters.atmosphere_mass(y)
+        del kwargs
 
-        return (M_atm <= self.exhaustion_fraction * M_atm0) | (
-            self.parameters.atmosphere_atoms(y) <= self.exhaustion_fraction * sum_y0
-        )
+        mass_loss_fraction: float = self.parameters.isocalc_options.mass_loss_fraction
+
+        return self.parameters.atmosphere_mass(y) <= (1 - mass_loss_fraction) * args
 
     @eqx.filter_jit
     def integrate(
-        self, t0_seconds: ArrayLike, t_a: Array, y0: Array
-    ) -> tuple[Array, dict[str, Array]]:
+        self, t0_seconds: ArrayLike, t_a: Array, y0: Array, dt0: ArrayLike | None = None
+    ) -> tuple[Array, dict[str, Array], IntegrationStop]:
         """Integrates `y` from `t0_seconds` and back-computes the diagnostics on `t_a`.
+
+        The integration stops early if the `mass_lost` event fires: loss of
+        `parameters.isocalc_options.mass_loss_fraction` of the atmospheric mass at `t0_seconds`
+        (by default, effective exhaustion).
 
         Jitted so that repeated calls (e.g. across an MCMC/optimization loop, or the segments of
         `isocalc_jax2`) reuse one compiled program instead of dispatching every jnp op
@@ -375,11 +406,12 @@ class IsocalcIntegrator(eqx.Module):
             t0_seconds: Integration start time [s]
             t_a: Output times [s]
             y0: Initial per-species abundances [atoms]
+            dt0: Initial step size [s]. Defaults to ``None``, meaning diffrax chooses it.
 
         Returns:
-            `(y_a, alg_a)`: the saved trajectory (with the held terminal state past the exhaustion
-            event) and the `algebraic` diagnostics for every `t_a` entry (including the derived
-            `M_atm`/`f_atm`).
+            `(y_a, alg_a, stop)`: the saved trajectory (with the held terminal state past an
+            event), the `algebraic` diagnostics for every `t_a` entry (including the derived
+            `M_atm`/`f_atm`), and where and why the integration stopped.
         """
         sol = diffrax.diffeqsolve(
             diffrax.ODETerm(self.vector_field),
@@ -390,18 +422,150 @@ class IsocalcIntegrator(eqx.Module):
             # t_a is only a diagnostic label in the discrete loop) - diffrax requires saveat.ts to
             # lie within [t0, t1], so t1 is taken directly from t_a instead of re-derived.
             t1=t_a[-1],
-            dt0=None,
+            dt0=dt0,
             y0=y0,
-            args=(self.parameters.atmosphere_mass(y0), self.parameters.atmosphere_atoms(y0)),
+            args=self.parameters.atmosphere_mass(y0),
             stepsize_controller=diffrax.PIDController(rtol=self.rtol, atol=self.atol),
-            saveat=diffrax.SaveAt(ts=t_a),
-            event=diffrax.Event(cond_fn=self.exhausted),
+            # Separate sub-saves: the t_a outputs, and the state at the stop time (the event time,
+            # if one fired). A single SaveAt(ts=..., t1=True) would not do, because after an event
+            # diffrax writes the t1 state into the first unused ts slot rather than the last.
+            saveat=diffrax.SaveAt(subs=(diffrax.SubSaveAt(ts=t_a), diffrax.SubSaveAt(t1=True))),
+            event=diffrax.Event(cond_fn=self.mass_lost),
             max_steps=self.max_steps,
         )
-        y_a = _hold_last_finite(sol.ys, y0)  # pyright: ignore[reportArgumentType]
+        ys_out, ys_stop = sol.ys  # pyright: ignore[reportGeneralTypeIssues]
+        _, ts_stop = sol.ts  # pyright: ignore[reportGeneralTypeIssues]
+        mass_lost: Array = sol.event_mask  # pyright: ignore[reportAssignmentType]
+        stop = IntegrationStop(t=ts_stop[0], y=ys_stop[0], mass_lost=mass_lost)
+
+        y_a = _hold_last_finite(ys_out, y0)
 
         # Back-compute every diagnostic (including the derived M_atm) from the saved trajectory in
         # one vmapped pass, rather than a per-timestep Python loop.
         alg_a = jax.vmap(self.algebraic)(t_a, y_a)
 
-        return y_a, alg_a
+        return y_a, alg_a, stop
+
+
+class Restart(eqx.Module):
+    """A restart of the segmented integration (see `integrate_segments`).
+
+    Args:
+        t: Restart time [s]
+        y_before: Per-species abundances when the mass-loss event fired [atoms]
+        y_after: Per-species abundances after the `on_mass_lost` hook, from which the integration
+            restarted [atoms]
+    """
+
+    t: Array
+    y_before: Array
+    y_after: Array
+
+
+def placeholder_reequilibration(carry: Any, t: Array, y: Array) -> tuple[Any, Array]:
+    """Placeholder `on_mass_lost` hook for `integrate_segments`: reduces every abundance by
+    `_PLACEHOLDER_REDUCTION`.
+
+    Stands in for the Atmodeller re-equilibration, which will update the atmospheric abundances at
+    the fixed time `t` and carry interior state (reservoirs, warm start, ...) between restarts in
+    `carry`. The reduction only exists so that the restart is visible (e.g. in tests).
+
+    Args:
+        carry: State carried between restarts; returned unchanged
+        t: Restart time [s]; unused
+        y: Per-species abundances when the mass-loss event fired [atoms]
+
+    Returns:
+        `(carry, y_new)`
+    """
+    # TODO: Replace with the Atmodeller re-equilibration
+    del t
+
+    return carry, (1 - _PLACEHOLDER_REDUCTION) * y
+
+
+def integrate_segments(
+    integrator: IsocalcIntegrator,
+    t0_seconds: ArrayLike,
+    t_a: Array,
+    y0: Array,
+    on_mass_lost: Callable[[Any, Array, Array], tuple[Any, Array]] = placeholder_reequilibration,
+    carry: Any = None,
+    max_segments: int = 1000,
+) -> tuple[Array, dict[str, ArrayLike], list[Restart], Any]:
+    """Integrates in segments, restarting after each mass-loss event.
+
+    diffrax events can only end a solve, so each restart is a new `integrator.integrate` call. With
+    `parameters.isocalc_options.mass_loss_fraction` set to e.g. ``0.05``, every segment ends once
+    5% of the atmospheric mass at its start has been lost. `on_mass_lost(carry, t, y)` then updates
+    `y` at the fixed time `t` (e.g. by re-equilibrating with Atmodeller) and the integration
+    restarts from `(t, y_new)`. Only the time and the updated state are passed on: no solver state,
+    so the derivative is recomputed after the jump in `y`, and no step-size controller state (it
+    only holds error ratios, not the step size).
+
+    Restarts use an explicit initial step, `_RESTART_DT0_FRACTION` of the remaining time span,
+    rather than diffrax's automatic choice: at late times (e.g. t ~ 1e16 s) that choice can be
+    effectively zero, and since the PID controller scales each new step from the previous one, the
+    solve then never advances. The controller adapts the explicit step from there.
+
+    The integration finishes at the last output time, or once the atmospheric mass drops below
+    `EXHAUSTION_FRACTION` of its value at `t0_seconds` (checked both when the event fires and after
+    the hook).
+
+    Every segment saves on the full output grid, clipped to its own start time, so the shape is
+    fixed and `integrate` compiles once. Each segment overwrites the rows from its start time
+    onwards, so an output time exactly at a restart holds the post-hook state. The diagnostics are
+    computed once over the assembled trajectory; the per-segment diagnostics computed inside
+    `integrate` are discarded.
+
+    A Python loop for now, because the hook will call Atmodeller; each `integrate` call is jitted.
+
+    Args:
+        integrator: Integrator, reused for every segment
+        t0_seconds: Integration start time [s]
+        t_a: Output times [s]
+        y0: Initial per-species abundances [atoms]
+        on_mass_lost: Hook `(carry, t, y) -> (carry, y_new)` called at each restart. Defaults to
+            `placeholder_reequilibration`.
+        carry: Initial state carried between calls of `on_mass_lost`. Defaults to ``None``.
+        max_segments: Maximum number of segments. Defaults to ``1000``.
+
+    Returns:
+        `(y_a, alg_a, restarts, carry)`: the trajectory on `t_a`, the `algebraic` diagnostics for
+        every `t_a` entry, one `Restart` per restart, and the final carried state
+
+    Raises:
+        RuntimeError: If the integration has not finished after `max_segments` segments
+    """
+    parameters: Parameters = integrator.parameters
+    floor: Array = EXHAUSTION_FRACTION * parameters.atmosphere_mass(y0)
+
+    t_start: Array = jnp.asarray(t0_seconds)
+    y: Array = y0
+    y_a: Array = jnp.zeros((t_a.shape[0], y0.shape[0]))
+    restarts: list[Restart] = []
+
+    for _ in range(max_segments):
+        # diffrax chooses the first segment's initial step, as in a single `integrate` call
+        dt0: Array | None = None if not restarts else _RESTART_DT0_FRACTION * (t_a[-1] - t_start)
+        y_segment, _, stop = integrator.integrate(t_start, jnp.maximum(t_a, t_start), y, dt0)
+        y_a = jnp.where((t_a >= t_start)[:, None], y_segment, y_a)
+
+        if not bool(stop.mass_lost) or bool(parameters.atmosphere_mass(stop.y) <= floor):
+            break
+
+        carry, y = on_mass_lost(carry, stop.t, stop.y)
+        restarts.append(Restart(t=stop.t, y_before=stop.y, y_after=y))
+
+        if bool(parameters.atmosphere_mass(y) <= floor):
+            y_a = jnp.where((t_a > stop.t)[:, None], y, y_a)
+            break
+
+        t_start = stop.t
+    else:
+        raise RuntimeError(f"Segmented integration did not finish within {max_segments} segments")
+
+    alg_a: dict[str, ArrayLike] = jax.vmap(integrator.algebraic)(t_a, y_a)
+
+    return y_a, alg_a, restarts, carry
+

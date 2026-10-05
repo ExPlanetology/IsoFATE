@@ -48,6 +48,11 @@ class IsocalcOptions(eqx.Module):
             `fe_mass_fraction`. None disables this.
         dynamic_phi: Toggle dynamic phi calculation based on the most abundant species (True) or
             static phi calculation (False).
+        mass_loss_fraction: Fraction of the atmospheric mass at the start of an integration whose
+            loss stops the integration (a diffrax event). The default ``1 - 1e-6`` stops it once
+            the atmosphere is effectively exhausted; a smaller value (e.g. ``0.05``) stops it
+            earlier so that it can be restarted, e.g. after re-equilibrating with Atmodeller (see
+            `isofate.engine.integrate_segments`). Defaults to ``1 - 1e-6``.
     """
 
     rad_evol: bool = True
@@ -60,6 +65,8 @@ class IsocalcOptions(eqx.Module):
     save_molecules: bool = False
     mantle_iron: MantleIronConfig | None = None
     dynamic_phi: bool = False
+    # 1 - isofate.engine.EXHAUSTION_FRACTION (not imported, to avoid an import cycle)
+    mass_loss_fraction: float = 1 - 1e-6
 
 
 class Parameters(eqx.Module):
