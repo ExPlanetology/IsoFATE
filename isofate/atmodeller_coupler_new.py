@@ -6,6 +6,7 @@
 """Atmodeller coupler for IsoFATE."""
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from atmodeller import ChemicalSpecies, EquilibriumModel, ReservoirSpecies
 from atmodeller import Planet as AtmodellerPlanet
@@ -15,6 +16,7 @@ from atmodeller.solubility import get_solubility_models
 from jax.typing import ArrayLike
 from jaxtyping import Array
 
+from isofate.constants import const
 from isofate.mantle_iron import MantleIronState
 from isofate.parameters import Parameters
 from isofate.species import SYMBOLS
@@ -65,10 +67,10 @@ class AtmodellerCoupler(eqx.Module):
 
     parameters: Parameters
     equilibrium_model: EquilibriumModel
-    max_surface_temperature: float
+    max_surface_temperature: ArrayLike
     tracked_species: tuple[TrackedGasSpecies, ...]
 
-    def __init__(self, parameters: Parameters, max_surface_temperature: float = 6000):
+    def __init__(self, parameters: Parameters, max_surface_temperature: ArrayLike = 6000):
         self.parameters = parameters
         self.equilibrium_model = self.construct_equilibrium_model()
         self.max_surface_temperature = max_surface_temperature
@@ -226,6 +228,21 @@ class AtmodellerCoupler(eqx.Module):
 
         return tuple(tracked)
 
+    def mantle_melt_fraction(self, temperature: ArrayLike) -> Array:
+        """Mantle melt fraction at the given surface temperature.
+
+        Delegates to `Planet.mantle_melt_fraction` (the planet's cached melt-fraction grid
+        interpolator, or its supplied override). The temperature is clipped to ``10``-``16000`` K,
+        as the legacy coupler did, so it stays within the grid.
+
+        Args:
+            temperature: Surface temperature [K]
+
+        Returns:
+            Melt fraction of the silicate layer [ndim]
+        """
+        return self.parameters.system.planet.mantle_melt_fraction(jnp.clip(temperature, 10, 16000))
+
     @eqx.filter_jit
     def update_solve_extract(
         self,
@@ -325,25 +342,127 @@ class AtmodellerCoupler(eqx.Module):
 
     def run(
         self,
-        Teq,
         Rp,
         mu,
-        melt_fraction,
         mantle_iron_state: MantleIronState | None,
-        N_H_atm,
-        N_He_atm,
-        N_O_atm,
-        N_C_atm,
-        N_N_atm,
-        N_S_atm,
-        N_H_int,
-        N_He_int,
-        N_O_int,
-        N_C_int,
-        N_N_int,
-        N_S_int,
-        interior_atmosphere: EquilibriumModel,
+        y: ArrayLike,
+        y_int: ArrayLike,
         initial_guess=None,
         full_output: bool = True,
     ):
-        """To mimic AtmodellerCoupler arguments"""
+        """Re-equilibrates the atmosphere and interior with Atmodeller.
+
+        Args:
+            Rp: Planet radius at the top of the atmosphere [m]
+            mu: Mean atmospheric particle mass [kg]
+            mantle_iron_state: Mantle iron state; not used yet and returned unchanged
+            y: Atmospheric abundances [atoms], ordered per `isofate.species.SYMBOLS` (H, He, D, O,
+                C, N, S)
+            y_int: Interior (dissolved) abundances [atoms], ordered as `y`
+            initial_guess: Previous solution to warm-start from. Defaults to ``None`` (cold start).
+            full_output: Extract the full species-level output (True) or only what the coupling
+                needs (False). Defaults to ``True``.
+
+        Returns:
+            `(results, sol, mantle_iron_state, solution)`: the per-element atom numbers in the gas
+            and melt and surface temperatures, the extracted Atmodeller output, the (unchanged)
+            mantle iron state, and the solution array (for warm-starting the next call)
+        """
+
+        # TODO: Hacky refactor to get something that works for now.
+
+        results = {}
+
+        # Fixed for the whole run; the planet values are the ones construct_equilibrium_model used
+        Teq: Array = self.parameters.system.equilibrium_temperature
+        Mp: Array = self.parameters.system.planet.mass
+        rocky_radius: Array = self.parameters.system.planet.rocky_radius
+
+        # TODO: P_surface is not extracted here? Required for self-consistency with Atmodeller?
+        _, T_surface, _ = self.parameters.atmosphere.make_atmosphere_descent(
+            Teq, mu, Rp, Mp, rocky_radius
+        )
+
+        surface_temperature = jnp.minimum(self.max_surface_temperature, T_surface)
+        # Prescribed on the Planet, or interpolated from the uncapped surface temperature (as in
+        # the legacy coupler); replaces the legacy `melt_fraction`/`melt_fraction_override` input
+        mantle_melt_fraction: Array = self.mantle_melt_fraction(T_surface)
+
+        # Total atoms per coupling element (atmosphere + interior), with D folded into H:
+        # Atmodeller has no separate D reservoir, so D atoms count as H atoms (atom-conserving, as
+        # in the legacy coupler)
+        element_atoms: Array = self.aggregate_D_into_H(jnp.asarray(y) + jnp.asarray(y_int))
+        # Mass per atom [kg] of each coupling element, from the IsoFATE species
+        atomic_masses: Array = self.parameters.isofate_species.atomic_masses[
+            jnp.array(_COUPLING_ELEMENT_INDICES)
+        ]
+        # Total mass [kg] of each element, floored so the solve stays well-posed for trace
+        # inventories
+        MASS_CUTOFF: float = 1e9
+        element_total_mass: Array = jnp.maximum(MASS_CUTOFF, element_atoms * atomic_masses)
+        mass_constraints: dict[str, Array] = {
+            element: element_total_mass[i] for i, element in enumerate(_COUPLING_ELEMENTS)
+        }
+
+        # eqx.filter_jit only treats actual jax/numpy arrays as traced (dynamic) inputs; plain
+        # Python floats are treated as *static* arguments (hashed by value), which would force a
+        # full retrace on every call since these values change every timestep. Casting to jnp
+        # arrays here keeps update_solve_extract's compiled trace reused across calls.
+        mantle_melt_fraction = jnp.asarray(mantle_melt_fraction)
+        surface_temperature = jnp.asarray(surface_temperature)
+        mass_constraints = {key: jnp.asarray(value) for key, value in mass_constraints.items()}
+
+        extract_fn = self.update_solve_extract if full_output else self.update_solve_extract_narrow
+
+        # The default cold-start guess (all-NaN). dtype=jnp.float64 (x64 is enabled process-wide,
+        # see isofate/__init__.py) matters here: without it, jnp.full(..., jnp.nan) is
+        # weakly-typed, while a real solved `solution` array (returned below) is not -
+        # eqx.filter_jit treats weak_type as part of the trace signature, so a weak cold guess and
+        # a strong warm guess would each force their own compile of update_solve_extract instead
+        # of sharing one.
+        cold_guess: Array = jnp.full(
+            (
+                self.equilibrium_model.parameters.batch_size,
+                self.equilibrium_model.parameters.reaction_system.species.number_species * 2,
+            ),
+            jnp.nan,
+            dtype=jnp.float64,
+        )
+
+        def solve(guess: Array):
+            return extract_fn(mantle_melt_fraction, surface_temperature, mass_constraints, guess)
+
+        if initial_guess is None:
+            # Cold start: retrying from the same cold guess could not help, so solve once
+            sol, solution, success = solve(cold_guess)
+        else:
+            # Warm-starting from the previous call's converged solution (a tiny physical
+            # perturbation away) avoids re-solving the full nonlinear equilibrium system from
+            # scratch every call; fall back to the cold guess if the warm start fails to converge.
+            # jax.lax.cond rather than a Python `if` on `success`, which would fail on traced
+            # arrays.
+            warm = solve(initial_guess)
+            sol, solution, success = jax.lax.cond(
+                jnp.all(warm[2]), lambda warm: warm, lambda warm: solve(cold_guess), warm
+            )
+
+        results["N_H_atm"] = sol["H"]["gas"]["number_moles"][0, 0] * const.avogadro
+        results["N_H_int"] = sol["H"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
+        results["N_He_atm"] = sol["He"]["gas"]["number_moles"][0, 0] * const.avogadro
+        results["N_He_int"] = sol["He"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
+        # TODO: The mantle-iron (Fe2+ + O2) reaction is not migrated yet: O always passes straight
+        # from the equilibrium solve to results (the legacy `_passthrough_o` path), and
+        # mantle_iron_state is returned unchanged.
+        results["N_O_atm"] = sol["O"]["gas"]["number_moles"][0, 0] * const.avogadro
+        results["N_O_int"] = sol["O"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
+        results["N_C_atm"] = sol["C"]["gas"]["number_moles"][0, 0] * const.avogadro
+        results["N_C_int"] = sol["C"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
+        results["N_N_atm"] = sol["N"]["gas"]["number_moles"][0, 0] * const.avogadro
+        results["N_N_int"] = sol["N"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
+        results["N_S_atm"] = sol["S"]["gas"]["number_moles"][0, 0] * const.avogadro
+        results["N_S_int"] = sol["S"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
+        results["M_atm"] = sol["gas"]["phase"]["mass"][0, 0]
+        results["T_surface"] = T_surface
+        results["T_surface_atmod"] = surface_temperature
+
+        return results, sol, mantle_iron_state, solution
