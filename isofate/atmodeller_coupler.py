@@ -399,13 +399,17 @@ def AtmodellerCoupler(
     elif melt_fraction == False:
         mantle_melt_fraction: float = MeltFraction(Mp, np.clip(T_surface, 10, 16000))
 
-    # element masses
-    mass_H: float = (N_H_atm + N_H_int) * const.mu_H
-    mass_O: float = (N_O_atm + N_O_int) * const.mu_O
-    mass_C: float = (N_C_atm + N_C_int) * const.mu_C
-    mass_He: float = (N_He_atm + N_He_int) * const.mu_He
-    mass_N: float = (N_N_atm + N_N_int) * const.mu_N
-    mass_S: float = (N_S_atm + N_S_int) * const.mu_S
+    # element masses, using the species' atomic masses (molmass-based, consistent with
+    # Atmodeller's own molar masses) rather than const.mu_X: the mismatch with const.mu_X made each
+    # solve create/destroy a few parts in 1e5 of every element, compounding over a run. Matches
+    # atmodeller_coupler_new.AtmodellerCoupler.run.
+    atomic_mass: dict[str, float] = DEFAULT_SPECIES.mass_by_symbol
+    mass_H: float = (N_H_atm + N_H_int) * atomic_mass["H"]
+    mass_O: float = (N_O_atm + N_O_int) * atomic_mass["O"]
+    mass_C: float = (N_C_atm + N_C_int) * atomic_mass["C"]
+    mass_He: float = (N_He_atm + N_He_int) * atomic_mass["He"]
+    mass_N: float = (N_N_atm + N_N_int) * atomic_mass["N"]
+    mass_S: float = (N_S_atm + N_S_int) * atomic_mass["S"]
     mass_constraints = {
         "H": mass_H,
         "O": mass_O,
