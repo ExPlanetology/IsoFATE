@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from atmodeller import ChemicalSpecies, EquilibriumModel, ReservoirSpecies
 from atmodeller import Planet as AtmodellerPlanet
 from atmodeller.constants import GAS_PHASE_INDEX, SILICATE_MELT_PHASE_INDEX
+from atmodeller.jax_utils import safe_divide
 from atmodeller.output_base import OutputNamedArraysDict
 from atmodeller.solubility import get_solubility_models
 from jax.typing import ArrayLike
@@ -33,7 +34,38 @@ _COUPLING_ELEMENT_INDICES: tuple[int, ...] = tuple(
     SYMBOLS.index(element) for element in _COUPLING_ELEMENTS
 )
 _D_INDEX: int = SYMBOLS.index("D")
+_H_INDEX: int = SYMBOLS.index("H")
 _H_POSITION: int = _COUPLING_ELEMENTS.index("H")
+
+
+class AtmodellerResult(eqx.Module):
+    """Result of one Atmodeller re-equilibration (see `AtmodellerCoupler.run`).
+
+    Args:
+        y: Atmospheric abundances after re-equilibration [atoms], ordered per
+            `isofate.species.SYMBOLS`
+        y_int: Interior (dissolved) abundances after re-equilibration [atoms], ordered as `y`
+        atmosphere_mass: Atmospheric mass [kg]. Derived from `y` (the gas phase's total mass is
+            exactly the sum of its constituent atoms' masses) rather than Atmodeller's own gas
+            phase mass, which is computed before the H/D split and so treats the aggregated H+D
+            count as pure H (one atomic mass) instead of the correct per-isotope split.
+        surface_temperature: Surface temperature from the atmosphere descent [K]
+        surface_temperature_atmodeller: Surface temperature used by Atmodeller, capped at
+            `AtmodellerCoupler.max_surface_temperature` [K]
+        solution: Atmodeller solution array, for warm-starting the next call
+        output: Extracted Atmodeller output (full or narrow, see `AtmodellerCoupler.run`)
+        mantle_iron_state: Mantle iron state; returned unchanged until the Fe-O2 reaction is
+            migrated
+    """
+
+    y: Array
+    y_int: Array
+    atmosphere_mass: Array
+    surface_temperature: Array
+    surface_temperature_atmodeller: Array
+    solution: Array
+    output: dict
+    mantle_iron_state: MantleIronState | None
 
 
 class TrackedGasSpecies(eqx.Module):
@@ -196,6 +228,30 @@ class AtmodellerCoupler(eqx.Module):
 
         return coupled
 
+    def disaggregate_H_into_D(self, element_values: ArrayLike, X_DH: ArrayLike) -> Array:
+        """Maps per-element values (ordered per :data:`_COUPLING_ELEMENTS`) back onto the isocalc
+        per-species layout (ordered per :data:`isofate.species.SYMBOLS`) - the inverse of
+        `aggregate_D_into_H`.
+
+        H is split into H and D with the D/H ratio `X_DH`, assuming the same D/H in every
+        reservoir.
+
+        Args:
+            element_values: Per-element values (e.g. number of atoms), ordered per
+                :data:`_COUPLING_ELEMENTS`
+            X_DH: D/H ratio, as the fraction D / (H + D) [ndim]
+
+        Returns:
+            Per-species values ordered per :data:`isofate.species.SYMBOLS`
+        """
+        element_values = jnp.asarray(element_values, dtype=float)
+        values: Array = (
+            jnp.zeros(len(SYMBOLS)).at[jnp.array(_COUPLING_ELEMENT_INDICES)].set(element_values)
+        )
+        hydrogen: Array = element_values[_H_POSITION]
+
+        return values.at[_H_INDEX].set((1 - X_DH) * hydrogen).at[_D_INDEX].set(X_DH * hydrogen)
+
     def set_tracked_gas_species(self) -> tuple[TrackedGasSpecies, ...]:
         """Ordered set of gas-phase species isofate tracks as molecular output - every gas species
         except He, which isofate tracks separately as one of its own 7 core H/He/D/O/C/N/S species.
@@ -349,7 +405,7 @@ class AtmodellerCoupler(eqx.Module):
         y_int: ArrayLike,
         initial_guess=None,
         full_output: bool = True,
-    ):
+    ) -> AtmodellerResult:
         """Re-equilibrates the atmosphere and interior with Atmodeller.
 
         Args:
@@ -364,15 +420,10 @@ class AtmodellerCoupler(eqx.Module):
                 needs (False). Defaults to ``True``.
 
         Returns:
-            `(results, sol, mantle_iron_state, solution)`: the per-element atom numbers in the gas
-            and melt and surface temperatures, the extracted Atmodeller output, the (unchanged)
-            mantle iron state, and the solution array (for warm-starting the next call)
+            The re-equilibrated atmospheric and interior abundances, with the surface
+            temperatures, the Atmodeller output and the solution array for warm-starting the next
+            call
         """
-
-        # TODO: Hacky refactor to get something that works for now.
-
-        results = {}
-
         # Fixed for the whole run; the planet values are the ones construct_equilibrium_model used
         Teq: Array = self.parameters.system.equilibrium_temperature
         Mp: Array = self.parameters.system.planet.mass
@@ -391,9 +442,15 @@ class AtmodellerCoupler(eqx.Module):
         # Total atoms per coupling element (atmosphere + interior), with D folded into H:
         # Atmodeller has no separate D reservoir, so D atoms count as H atoms (atom-conserving, as
         # in the legacy coupler)
-        element_atoms: Array = self.aggregate_D_into_H(jnp.asarray(y) + jnp.asarray(y_int))
+        total: Array = jnp.asarray(y) + jnp.asarray(y_int)
+        element_atoms: Array = self.aggregate_D_into_H(total)
+        # D/H ratio of the whole inventory, D / (H + D), assuming the same D/H in the atmosphere
+        # and interior; zero if there is no hydrogen
+        X_DH: Array = safe_divide(total[_D_INDEX], total[_H_INDEX] + total[_D_INDEX])
         # Mass per atom [kg] of each coupling element, from the IsoFATE species
-        atomic_masses: Array = self.parameters.isofate_species.atomic_masses[
+        # (jnp.asarray first: the species' masses are a NumPy array, which can't be indexed by a
+        # JAX array under jit)
+        atomic_masses: Array = jnp.asarray(self.parameters.isofate_species.atomic_masses)[
             jnp.array(_COUPLING_ELEMENT_INDICES)
         ]
         # Total mass [kg] of each element, floored so the solve stays well-posed for trace
@@ -446,23 +503,26 @@ class AtmodellerCoupler(eqx.Module):
                 jnp.all(warm[2]), lambda warm: warm, lambda warm: solve(cold_guess), warm
             )
 
-        results["N_H_atm"] = sol["H"]["gas"]["number_moles"][0, 0] * const.avogadro
-        results["N_H_int"] = sol["H"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
-        results["N_He_atm"] = sol["He"]["gas"]["number_moles"][0, 0] * const.avogadro
-        results["N_He_int"] = sol["He"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
+        # Atoms of each coupling element in the gas and the melt, split back into H and D.
         # TODO: The mantle-iron (Fe2+ + O2) reaction is not migrated yet: O always passes straight
-        # from the equilibrium solve to results (the legacy `_passthrough_o` path), and
-        # mantle_iron_state is returned unchanged.
-        results["N_O_atm"] = sol["O"]["gas"]["number_moles"][0, 0] * const.avogadro
-        results["N_O_int"] = sol["O"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
-        results["N_C_atm"] = sol["C"]["gas"]["number_moles"][0, 0] * const.avogadro
-        results["N_C_int"] = sol["C"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
-        results["N_N_atm"] = sol["N"]["gas"]["number_moles"][0, 0] * const.avogadro
-        results["N_N_int"] = sol["N"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
-        results["N_S_atm"] = sol["S"]["gas"]["number_moles"][0, 0] * const.avogadro
-        results["N_S_int"] = sol["S"]["silicate_melt"]["number_moles"][0, 0] * const.avogadro
-        results["M_atm"] = sol["gas"]["phase"]["mass"][0, 0]
-        results["T_surface"] = T_surface
-        results["T_surface_atmod"] = surface_temperature
+        # from the equilibrium solve (the legacy `_passthrough_o` path), and mantle_iron_state is
+        # returned unchanged.
+        gas_atoms: Array = jnp.stack(
+            [sol[element]["gas"]["number_moles"][0, 0] for element in _COUPLING_ELEMENTS]
+        )
+        melt_atoms: Array = jnp.stack(
+            [sol[element]["silicate_melt"]["number_moles"][0, 0] for element in _COUPLING_ELEMENTS]
+        )
+        y_new: Array = self.disaggregate_H_into_D(gas_atoms * const.avogadro, X_DH)
+        y_int_new: Array = self.disaggregate_H_into_D(melt_atoms * const.avogadro, X_DH)
 
-        return results, sol, mantle_iron_state, solution
+        return AtmodellerResult(
+            y=y_new,
+            y_int=y_int_new,
+            atmosphere_mass=self.parameters.atmosphere_mass(y_new),
+            surface_temperature=T_surface,
+            surface_temperature_atmodeller=surface_temperature,
+            solution=solution,
+            output=sol,
+            mantle_iron_state=mantle_iron_state,
+        )
