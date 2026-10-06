@@ -9,7 +9,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from atmodeller import ChemicalSpecies, EquilibriumModel, ReservoirSpecies
 from atmodeller import Planet as AtmodellerPlanet
-from atmodeller.constants import SILICATE_MELT_PHASE_INDEX
+from atmodeller.constants import GAS_PHASE_INDEX, SILICATE_MELT_PHASE_INDEX
+from atmodeller.output_base import OutputNamedArraysDict
 from atmodeller.solubility import get_solubility_models
 from jax.typing import ArrayLike
 from jaxtyping import Array
@@ -224,6 +225,103 @@ class AtmodellerCoupler(eqx.Module):
             )
 
         return tuple(tracked)
+
+    @eqx.filter_jit
+    def update_solve_extract(
+        self,
+        mantle_melt_fraction: Array,
+        temperature: Array,
+        mass_constraints: dict,
+        base_solution_array: Array,
+    ):
+        """Fuses state/constraint updates, the solve, and output extraction into one jitted call.
+
+        ``planet_mass``/``surface_radius`` are deliberately not updated here: both are fixed for
+        the whole isocalc run and already set on ``self.equilibrium_model`` by
+        ``construct_equilibrium_model``, so leaving them out of ``update_state`` (which defaults
+        each omitted field to "no change") avoids re-asserting a value that never differs from
+        what the model already holds.
+
+        ``update_state``/``update_constraints`` are built on ``eqx.tree_at``, which does several
+        full Python-level traversals of the whole model pytree per call (O(num_leaves); ~3479
+        leaves here) - calling them un-jitted cost ~40ms/call regardless of how much the actual
+        solve needed to change. Wrapping the whole update+solve+extract sequence in one
+        eqx.filter_jit call instead pays that Python-level tree rebuilding cost once, at trace
+        time; every later call just replays the compiled XLA graph (~9ms/call: solve +
+        extraction). This mirrors atmodeller's own tested idiom for this exact situation (see
+        atmodeller/tests/test_retracing.py's `call_solver`/`workflow` pattern). ``self`` is
+        partitioned by eqx.filter_jit like any other argument, so reusing one coupler instance
+        per run compiles once.
+
+        `solve_with_default()` is exactly `solve(all-NaN array of this shape)` (see
+        atmodeller/classes.py), so passing an all-NaN `base_solution_array` reproduces the cold-
+        start path without needing a separate branch inside this jitted method.
+        """
+        model = self.equilibrium_model.update_state(
+            mantle_melt_fraction=mantle_melt_fraction, temperature=temperature
+        ).update_constraints(mass_constraints=mass_constraints)
+        output = model.solve(base_solution_array)
+        sol = output.to_dict(output_format="elements_species", to_numpy=False)
+
+        return sol, output.solution, output.multi_attempt_solution.success
+
+    @eqx.filter_jit
+    def update_solve_extract_narrow(
+        self,
+        mantle_melt_fraction: Array,
+        temperature: Array,
+        mass_constraints: dict,
+        base_solution_array: Array,
+    ):
+        """Like ``update_solve_extract``, but skips every diagnostic the coupling never reads.
+
+        ``to_dict("elements_species")`` computes, for *every* species in *every* phase: activity
+        (a real-gas EOS volume root-find for non-ideal species), mass/mole fractions, partial
+        pressure, phase volume, log10dIW, and metallicity. The coupling only ever reads element
+        ``number_moles`` (gas + silicate_melt) for the six mass-constrained elements, the gas
+        phase's total mass, and O2_g's number_moles (for the iron-buffer branches). All of those
+        need only ``log_number_moles`` and the (static) formula matrix - no EOS, no activity.
+        Building only these keeps the traced graph much smaller without changing any value the
+        coupling actually uses from this path.
+
+        Not a substitute for ``update_solve_extract`` when species-level diagnostics are wanted
+        (``save_molecules=True``, or the end-of-run full snapshot) - those still need the full
+        ``to_dict`` output.
+        """
+        model = self.equilibrium_model.update_state(
+            mantle_melt_fraction=mantle_melt_fraction, temperature=temperature
+        ).update_constraints(mass_constraints=mass_constraints)
+        output = model.solve(base_solution_array)
+
+        out_dict = OutputNamedArraysDict(output.parameters, output.multi_attempt_solution)
+        gas_output = out_dict.get_phase_output_from_index(GAS_PHASE_INDEX)
+        melt_output = out_dict.get_phase_output_from_index(SILICATE_MELT_PHASE_INDEX)
+
+        sol: dict = {}
+        for element in _COUPLING_ELEMENTS:
+            gas_idx = gas_output.phase.species.get_element_index(element)
+            melt_idx = melt_output.phase.species.get_element_index(element)
+            if gas_idx == -1 or melt_idx == -1:
+                raise ValueError(
+                    f"Element {element!r} missing from the gas or silicate_melt phase species; "
+                    "the narrow extraction assumes both phases carry all six coupling elements."
+                )
+            sol[element] = {
+                "gas": {
+                    "number_moles": gas_output.element_number_moles[..., gas_idx : gas_idx + 1]
+                },
+                "silicate_melt": {
+                    "number_moles": melt_output.element_number_moles[..., melt_idx : melt_idx + 1]
+                },
+            }
+
+        o2_index: int = gas_output.phase.species_names.index("O2_g")
+        sol["O2_g"] = {
+            "gas": {"number_moles": gas_output.species_number_moles[..., o2_index : o2_index + 1]}
+        }
+        sol["gas"] = {"phase": {"mass": gas_output.phase_mass}}
+
+        return sol, output.solution, output.multi_attempt_solution.success
 
     def run(
         self,

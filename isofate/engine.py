@@ -579,7 +579,7 @@ def integrate_segments(
         return stop.mass_lost & (parameters.atmosphere_mass(stop.y) > floor) & (stop.t < t_last)
 
     # First segment, before the loop
-    sol: diffrax.Solution = integrator.integrate(t_start, jnp.maximum(t_a, t_start), y0)
+    sol: diffrax.Solution = integrator.integrate(t_start, t_a, y0)
     y_segment: Array = sol.ys[0]  # pyright: ignore[reportOptionalSubscript]
     stop: IntegrationStop = IntegrationStop.from_solution(sol)
     nan_buffer: Array = jnp.full((max_restarts, y0.shape[0]), jnp.nan)
