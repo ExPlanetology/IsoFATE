@@ -5,6 +5,7 @@
 
 """Main IsoFATE script for coupled model."""
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -20,12 +21,16 @@ from isofate.atmodeller_coupler import (
     nan_full_output,
     run_atmodeller_step,
 )
+from isofate.atmodeller_coupler_new import AtmodellerCoupler as EventAtmodellerCoupler
+from isofate.atmodeller_coupler_new import CouplerState
 from isofate.constants import const
 from isofate.engine import (
     EXHAUSTION_FRACTION,
     IntegrationStop,
     IsocalcIntegrator,
     bondi_radius,
+    escape_radius,
+    integrate_segments,
     tidal_gravitational_potential,
 )
 from isofate.escape.fractionation import Phi_1_2, Phi_minor_species
@@ -157,8 +162,6 @@ def isocalc(
     if options.n_atmodeller == 0:
         T_surf_analytic = 0
         T_surf_atmod = 0
-    if N_H != 0 and N_D != 0:  # needed to allow D and H to outgas from mantle
-        X_DH = N_D / (N_H + N_D)  # ignores D in mantle
 
     # build atmodeller model for interior-atmosphere coupling
     interior_atmosphere = build_atmodeller(Mp, surface_radius=planet.rocky_radius)
@@ -405,6 +408,12 @@ def isocalc(
                 )[1]
                 atmod_full_output = extract_full_output(atmod_sol)
             if n % options.n_atmodeller == 0:  # run atmodeller every n_atmodeller steps.
+                # D/H fraction of the whole inventory (atmosphere + interior) at this solve,
+                # assuming the same D/H in both - computed from the current state, as in
+                # isocalc_jax3, so the H/D split after the solve conserves D exactly (zero if
+                # there is no hydrogen)
+                total_HD = y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2]
+                X_DH = (y[2] + isofate_species_abund_int[2]) / total_HD if total_HD != 0 else 0.0
                 # Species-level diagnostics (step.atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
                 # are only read below when save_molecules is True; otherwise the narrow extraction
                 # (element number_moles + gas mass only) is all this loop needs.
@@ -450,12 +459,6 @@ def isocalc(
                 fO2_a[n] = fO2_a[n - 1]
         T_surf_analytic_a[n] = T_surf_analytic
         T_surf_atmod_a[n] = T_surf_atmod
-
-        # needed to allow D and H to outgas from mantle
-        if y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2] != 0:
-            X_DH = (y[2] + isofate_species_abund_int[2]) / (
-                y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2]
-            )  # assumes D/H is in equilibrium between interior and atmosphere
 
         # advance to next step - M_atm/f_atm are not updated here: next iteration re-derives them
         # fresh from this same y (see the top of the loop above).
