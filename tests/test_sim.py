@@ -14,6 +14,7 @@ values if these change.
 """
 
 import dataclasses
+import os
 
 import jax.numpy as jnp
 import numpy as np
@@ -28,19 +29,26 @@ from isofate.integrators import (
 )
 from isofate.escape.mechanisms import XUVEscape
 from isofate.atmodeller_coupler_new import AtmodellerCoupler
-from isofate.isofate_coupler import isocalc, isocalc_jax, isocalc_jax2, isocalc_jax3
+from isofate.isofate_coupler import isocalc, isocalc_jax3
 from isofate.parameters import IsocalcOptions, Parameters
 from isofate.presets import LHS1140b, LHS1140Star
+from isofate.species import SYMBOLS
 from isofate.system import System
 
 
-def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0):
-    """Reconstructs isofate/sim.py's isocalc() call, as of the current version of that script.
+# isofate/sim.py's current run settings, kept in sync with that script by hand (the remaining
+# inputs are reconstructed by _sim_isocalc_kwargs)
+SIM_PY = dict(n_steps=int(1e5), n_atmodeller=int(1e4), f_atm=0.00085, dynamic_phi=True)
+
+
+def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_phi=False):
+    """Reconstructs isofate/sim.py's isocalc() call.
 
     `n_steps` defaults to sim.py's own value but can be overridden (e.g. by the isocalc/
-    isocalc_jax cross-check below, which doesn't need full resolution to confirm agreement).
-    `n_atmodeller` defaults to sim.py's current value (0, Atmodeller disabled) but can be
-    overridden to exercise isocalc_jax2's segmented-diffeqsolve Atmodeller coupling.
+    isocalc_jax3 cross-checks below, which don't need full resolution to confirm agreement).
+    `n_atmodeller` defaults to 0 (Atmodeller disabled) but can be overridden to exercise the
+    Atmodeller coupling. `f_atm` and `dynamic_phi` default to the values the regression tests
+    were pinned with; `SIM_PY` holds sim.py's current values.
     """
     star = LHS1140Star
     planet = LHS1140b
@@ -48,7 +56,6 @@ def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0):
 
     # Not a Planet field (removed) - matches sim.py's own scripting-level constant, used only to
     # scale this function's solar-abundance-ratio construction of N_H/N_He/etc. below.
-    f_atm = 0.01
     Mp = planet.mass
     t_jump = star.t_jump
 
@@ -69,7 +76,6 @@ def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0):
     melt_fraction_override = False
     save_molecules = False
     mantle_iron = None
-    dynamic_phi = False
 
     M_atm = Mp * f_atm  # initial atmospheric mass [kg]
     OtoH_enhanced_mass = const.OtoH_protosolar * (const.mu_O / const.mu_H)
@@ -140,16 +146,17 @@ def test_sim_regression():
 
     Re-pinned again when isocalc stopped seeding the initial atmosphere mass from
     `Mp * planet.f_atm` and instead derives M_atm/f_atm fresh from y every iteration (matching
-    isocalc_jax) - `dot(isofate_species_abund, atomic_masses)` differs from `Mp * planet.f_atm` by
-    ~3e-4 relative here, traced to sim.py's N_N abundance formula omitting the
+    the JAX drivers) - `dot(isofate_species_abund, atomic_masses)` differs from
+    `Mp * planet.f_atm` by ~3e-4 relative here, traced to sim.py's N_N abundance formula omitting the
     `/(1 + HetoH_protosolar_mass)` normalization every other species' formula has. A deliberate
     accuracy improvement (removes a redundant, slightly-inconsistent second bookkeeping of
     atmosphere mass), not a regression.
 
     Re-pinned again (~2e-5 relative) when isocalc started evaluating its age-dependent physics
     (R_env's contraction term, the XUV flux history) at the integration time t0 + n*delta_t rather
-    than the output label t_a[n], which runs about one step ahead. This moves isocalc towards
-    isocalc_jax (final Matm difference 6.7e-5 -> 4.7e-5), so it is a correction, not a regression.
+    than the output label t_a[n], which runs about one step ahead. This moves isocalc towards the
+    adaptive JAX driver (final Matm difference 6.7e-5 -> 4.7e-5), so it is a correction, not a
+    regression.
     """
     sol = isocalc(**_sim_isocalc_kwargs())
 
@@ -165,56 +172,74 @@ def test_sim_regression():
     assert sol["Vpot"][-1] == pytest.approx(153883944.20291469, rel=1e-6)
 
 
-def test_isocalc_isocalc_jax_cross_check():
-    """isocalc and isocalc_jax should agree closely on the same scenario: both now derive
-    M_atm/f_atm fresh from y (see isocalc's and IsocalcIntegrator's docstrings), so the only
-    remaining difference is the integration scheme itself - isocalc's fixed-step Euler loop vs.
-    isocalc_jax's adaptive Tsit5 (diffrax). They also now share the exact same call signature
-    (`parameters`, `time`, `isofate_species_abund`), so the same kwargs work for both.
+def test_isocalc_isocalc_jax3_cross_check():
+    """Without Atmodeller, isocalc and isocalc_jax3 differ only in the integration scheme:
+    isocalc's fixed-step Euler loop vs. adaptive Tsit5 (diffrax). Both derive M_atm/f_atm fresh
+    from y and share the same call signature and output grid.
 
-    Uses n_steps=2000 rather than test_sim_regression's full 1e5 - at 1e5 the two agree to
-    ~2e-5 relative (verified by hand), but that isocalc run alone takes ~5 minutes; this only
-    needs enough resolution to confirm the two implementations agree, not to test isocalc's own
-    convergence. At n_steps=2000, isocalc runs in a few seconds and the two agree to ~5e-4
-    relative - rel=1e-2 below leaves ample margin without being sensitive to incidental changes
-    in either integrator.
+    Uses n_steps=2000 rather than test_sim_regression's full 1e5: at 2000 steps isocalc runs in a
+    few seconds and the two agree to about 6e-4 relative (isocalc's Euler error), so rel=1e-2
+    leaves ample margin.
     """
     kwargs = _sim_isocalc_kwargs(n_steps=2000)
     sol_isocalc = isocalc(**kwargs)
-    sol_jax = isocalc_jax(**kwargs)
+    sol_jax3 = isocalc_jax3(**kwargs)
 
     for key in ("Matm", "N_H", "N_He", "N_D", "N_O", "N_C", "N_N", "N_S", "Rp", "Vpot"):
-        assert sol_jax[key][-1] == pytest.approx(sol_isocalc[key][-1], rel=1e-2), key
+        assert sol_jax3[key][-1] == pytest.approx(sol_isocalc[key][-1], rel=1e-2), key
 
 
-def test_isocalc_isocalc_jax2_cross_check():
-    """isocalc_jax2 counterpart of test_isocalc_isocalc_jax_cross_check, on the more realistic
-    LHS 1140 b scenario (n_atmodeller=100 with n_steps=2000 forces 20 segments) - a structural
-    check only, not a close numerical cross-check.
-
-    Close agreement isn't achievable here: this combination of escape-dominated dynamics and
-    periodic Atmodeller re-equilibration exhibits genuine sensitive dependence on tiny input
-    differences (confirmed by hand - isocalc/isocalc_jax2 land on different trajectory branches
-    that diverge by ~15-17% by the end, an effect that does *not* shrink with resolution: both
-    isocalc and isocalc_jax2 are already independently well-converged to their own respective
-    trajectories at n_steps=2000, e.g. re-running isocalc at n_steps=20000 changes its own final
-    Matm by <0.01%). This mirrors the same "trajectories diverge by orders of magnitude between
-    otherwise equivalent runs" sensitivity this module's docstring already documents for
-    escape-dominated long runs (`n_atmodeller=0` case) - Atmodeller re-coupling just gives it
-    more opportunities (each call boundary) to inject the tiny perturbations that trigger it.
+def test_isocalc_isocalc_jax3_coupled_cross_check():
+    """With Atmodeller re-equilibrating every 100 of 2000 steps, isocalc and isocalc_jax3 follow
+    the same schedule and coupling, so they again differ only in the integration scheme: over the
+    whole run they agree to about 6e-4 relative for the bulk quantities and 4e-3 for the trace
+    species N and S (isocalc's Euler error at 2000 steps), within rel=1e-2.
     """
     kwargs = _sim_isocalc_kwargs(n_steps=2000, n_atmodeller=100)
     sol_isocalc = isocalc(**kwargs)
-    sol_jax2 = isocalc_jax2(**kwargs)
+    sol_jax3 = isocalc_jax3(**kwargs)
 
-    for key in ("Matm", "N_H", "N_He", "N_D", "N_O", "N_C", "N_N", "N_S", "Rp", "Vpot"):
-        assert np.all(np.isfinite(sol_jax2[key]))
-        assert sol_jax2[key][-1] > 0, key
-        # Same order of magnitude, not close agreement - see docstring above.
-        assert sol_jax2[key][-1] == pytest.approx(sol_isocalc[key][-1], rel=1.0), key
+    keys = [f"N_{symbol}" for symbol in SYMBOLS] + [f"N_{symbol}_int" for symbol in SYMBOLS]
+    for key in keys + ["Matm", "Rp", "Vpot", "T_surf_atmod"]:
+        np.testing.assert_allclose(sol_jax3[key], sol_isocalc[key], rtol=1e-2, err_msg=key)
 
-    final = sol_jax2["atmodeller_final"]
-    assert np.all(np.isfinite(list(final.values())))
+
+@pytest.mark.parametrize("euler", [False, True])
+def test_isocalc_jax3_empty_atmosphere(euler):
+    """An empty initial atmosphere is not equilibrated (as in isocalc), so no atmosphere is
+    created from nothing: the atmosphere stays empty (rows are 0, or inf for the adaptive solver,
+    which marks exhausted rows that way), the interior stays empty, and atmodeller_final is NaN.
+    """
+    kwargs = _sim_isocalc_kwargs(n_steps=40, n_atmodeller=10)
+    kwargs["isofate_species_abund"] = (0.0,) * 7
+    sol = isocalc_jax3(**kwargs, euler=euler)
+    sol_isocalc = isocalc(**kwargs)
+
+    assert len(sol["t_atmodeller"]) == 0
+    for symbol in SYMBOLS:
+        assert np.all((sol[f"N_{symbol}"] == 0) | np.isinf(sol[f"N_{symbol}"])), symbol
+        assert np.all(sol[f"N_{symbol}_int"] == 0), symbol
+        assert np.all(sol_isocalc[f"N_{symbol}"] == 0), symbol
+    assert np.all(np.isnan(list(sol["atmodeller_final"].values())))
+    assert np.all(np.isnan(list(sol_isocalc["atmodeller_final"].values())))
+
+
+def test_reequilibrate_warm_start_matches_cold_start():
+    """`AtmodellerCoupler.reequilibrate` warm-starts from the previous solution in its carry; the
+    result is the same equilibrium as a cold start."""
+    integrator, t_start, _, y0 = _sim_integrator_setup()
+    coupler = AtmodellerCoupler(integrator.parameters)
+    state, y_eq = coupler.reequilibrate(coupler.initial_state(), t_start, y0)
+    assert np.all(np.isfinite(np.asarray(state.solution)))  # a real solution to warm-start from
+
+    # A later re-equilibration after some escape (5% of every species lost)
+    y_lost = 0.95 * y_eq
+    warm_state, y_warm = coupler.reequilibrate(state, t_start, y_lost)
+    cold = dataclasses.replace(state, solution=coupler.cold_guess())
+    cold_state, y_cold = coupler.reequilibrate(cold, t_start, y_lost)
+
+    np.testing.assert_allclose(np.asarray(y_warm), np.asarray(y_cold), rtol=1e-6)
+    np.testing.assert_allclose(np.asarray(warm_state.y_int), np.asarray(cold_state.y_int), rtol=1e-6)
 
 
 def _sim_integrator_setup(mass_loss_fraction=None):
@@ -458,3 +483,47 @@ def test_isocalc_jax3_euler_reproduces_isocalc(n_atmodeller):
         if key == "atmodeller_final":
             continue
         np.testing.assert_allclose(sol[key], expected, rtol=1e-10, atol=0, err_msg=key)
+
+
+@pytest.mark.parametrize(
+    "n_steps,n_atmodeller",
+    [
+        # sim.py's physics and its 10 re-equilibrations, at 1/50 of its resolution
+        pytest.param(SIM_PY["n_steps"] // 50, SIM_PY["n_atmodeller"] // 50, id="reduced"),
+        # exactly sim.py's run (about 6 minutes, mostly isocalc)
+        pytest.param(
+            SIM_PY["n_steps"],
+            SIM_PY["n_atmodeller"],
+            id="full",
+            marks=pytest.mark.skipif(
+                not os.environ.get("ISOFATE_SLOW_TESTS"), reason="set ISOFATE_SLOW_TESTS=1"
+            ),
+        ),
+    ],
+)
+def test_isocalc_jax3_euler_matches_isocalc_sim_py(n_steps, n_atmodeller):
+    """Anchors the two implementations of the same scheme against each other with sim.py's
+    current settings (`SIM_PY`: dynamic phi, Atmodeller re-equilibrating every n_atmodeller
+    steps): isocalc_jax3(euler=True) must reproduce the legacy isocalc to round-off on every
+    output, including the final Atmodeller snapshot, so that the two can't drift apart.
+
+    Uses f_atm = 0.01 rather than sim.py's 0.00085: with the smaller atmosphere, some Atmodeller
+    solves sit on the edge of convergence (success flips with input changes of 1e-12), so
+    round-off between the two drivers decides whether a solve converges (both now raise if it
+    doesn't).
+    """
+    settings = {**SIM_PY, "n_steps": n_steps, "n_atmodeller": n_atmodeller, "f_atm": 0.01}
+    kwargs = _sim_isocalc_kwargs(**settings)
+    sol_isocalc = isocalc(**kwargs)
+    sol = isocalc_jax3(**kwargs, euler=True)
+
+    assert set(sol) == set(sol_isocalc) | {"t_atmodeller"}
+    for key, expected in sol_isocalc.items():
+        if key == "atmodeller_final":
+            continue
+        np.testing.assert_allclose(sol[key], expected, rtol=1e-10, atol=0, err_msg=key)
+
+    final, expected_final = sol["atmodeller_final"], sol_isocalc["atmodeller_final"]
+    assert set(final) == set(expected_final)
+    for key, expected in expected_final.items():
+        np.testing.assert_allclose(final[key], expected, rtol=1e-10, atol=1e-300, err_msg=key)
