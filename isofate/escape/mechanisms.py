@@ -23,8 +23,12 @@ from jaxtyping import ArrayLike
 from isofate import override
 from isofate.constants import const
 from isofate.isofunks import R_rocky
+from isofate.species import DEFAULT_SPECIES
 from isofate.system import System
 from isofate.utils import gravitational_acceleration
+
+_MASS_H: float = DEFAULT_SPECIES.mass_by_symbol["H"]
+"""Mass of an H atom [kg]."""
 
 
 class EscapeState(eqx.Module):
@@ -264,7 +268,7 @@ def phiE_CP(Teq, Mp, rho_rcb, eps, Vpot, Rp, mu, R_env):
     L = 64 * np.pi * const.sbc * Teq**4 * R_B / (3 * kappa * rho_rcb)  # planetary core luminosity
     phi_L = L / (V_pot * area)  # mass flux
 
-    c_s = np.sqrt(const.kb * Teq / const.mu_H)  # sound speed [m/s]
+    c_s = np.sqrt(const.kb * Teq / _MASS_H)  # sound speed [m/s]
     R_rcb = R_c + R_env  # rcb radius [m]
     phi_B = (
         c_s * rho_rcb * np.exp(-const.G * Mp / (c_s**2 * R_rcb))
@@ -324,7 +328,7 @@ def phi_RR(
     # H_base = kb*Teq/mu_solar/g # scale height at base of flow [m]
     # n_wind = np.sqrt(Fxuv/h/nu_0/H_base/alpha_rec) # number density at flow base [particles/m3]
     c_s = jnp.sqrt(
-        2 * const.kb * T / const.mu_H
+        2 * const.kb * T / _MASS_H
     )  # sounds speed at sonic point [m/s] Murray-Clay et al 2009
     R_s = const.G * Mp / (2 * c_s**2)  # sonic point [m] Murray-Clay et al 2009
 
@@ -336,7 +340,7 @@ def phi_RR(
 
     ### Murray-Clay et al 2009 formulation
     p1 = 4 * jnp.pi * R_s**2 * c_s
-    p2 = jnp.sqrt(F * const.mu_H**3 * g / (const.h * nu_0 * alpha_rec * 2 * const.kb * Teq))
+    p2 = jnp.sqrt(F * _MASS_H**3 * g / (const.h * nu_0 * alpha_rec * 2 * const.kb * Teq))
     p3 = jnp.exp((Rp / R_s - 1) * const.G * Mp / Rp / c_s**2)
 
     return p1 * p2 * p3 / (4 * jnp.pi * Rp**2)

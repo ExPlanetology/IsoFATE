@@ -2,7 +2,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from isofate.isofunks import *
 from isofate.constants import const
-from isofate.species import DEFAULT_BINARY_DIFFUSION
+from isofate.initial_condition import ProtosolarInitialCondition
+from isofate.species import DEFAULT_BINARY_DIFFUSION, DEFAULT_SPECIES
+
+atomic_mass = DEFAULT_SPECIES.mass_by_symbol  # [kg/atom], by symbol
 
 def isoplot(sol,n_atmodeller,Mp,f_atm,Fp,T,M_star,d):
 
@@ -62,13 +65,13 @@ def isoplot(sol,n_atmodeller,Mp,f_atm,Fp,T,M_star,d):
         # print('x_CH4 =', x_CH4)
     # calculate mass fraction of He
 
-    Y = NHe_a*const.mu_He/(NH_a*const.mu_H + NHe_a*const.mu_He + ND_a*const.mu_D + NO_a*const.mu_O + NC_a*const.mu_C)
+    Y = NHe_a*atomic_mass["He"]/(NH_a*atomic_mass["H"] + NHe_a*atomic_mass["He"] + ND_a*atomic_mass["D"] + NO_a*atomic_mass["O"] + NC_a*atomic_mass["C"])
 
     # print('\n')
     # print('final f_atm =', fenv_a[-1])
-    # print('final f_atm by species =', (NH_a[-1]*const.mu_H + NHe_a[-1]*const.mu_He + ND_a[-1]*const.mu_D + NO_a[-1]*const.mu_O + NC_a[-1]*const.mu_C)/Mp)
+    # print('final f_atm by species =', (NH_a[-1]*atomic_mass["H"] + NHe_a[-1]*atomic_mass["He"] + ND_a[-1]*atomic_mass["D"] + NO_a[-1]*atomic_mass["O"] + NC_a[-1]*atomic_mass["C"])/Mp)
     # print('initial f_atm =', fenv_a[0])
-    # print('initial f_atm by species =', (N_H*const.mu_H + N_He*const.mu_He + N_D*const.mu_D + N_O*const.mu_O + N_C*const.mu_C)/Mp)
+    # print('initial f_atm by species =', (N_H*atomic_mass["H"] + N_He*atomic_mass["He"] + N_D*atomic_mass["D"] + N_O*atomic_mass["O"] + N_C*atomic_mass["C"])/Mp)
     # print('final D/H =', ND_a[-1]/NH_a[-1]/DtoH_solar, '[Solar]')
     # print('final O/H =', NO_a[-1]/NH_a[-1]/OtoH_protosolar, '[Solar]')
     # print('final X_He (molar concn) =', NHe_a[-1]/(NH_a[-1] + NHe_a[-1] + ND_a[-1] + NO_a[-1] + NC_a[-1])) # molar concentration
@@ -106,20 +109,20 @@ def isoplot(sol,n_atmodeller,Mp,f_atm,Fp,T,M_star,d):
 
     # phi
     g = const.G*Mp/rp_a**2
-    H_H = const.R_gas*T/(const.M_H*g) # D scale height [m]
-    H_D = const.R_gas*T/(const.M_D*g) # D scale height [m]
-    ax1.plot(t_a*const.s2yr, PhiH_a*const.mu_H, color = 'black', label = 'H flux')
-    ax1.plot(t_a*const.s2yr, PhiHe_a*const.mu_He, color = 'grey', label = 'He flux')
+    H_H = const.kb*T/(atomic_mass["H"]*g) # D scale height [m]
+    H_D = const.kb*T/(atomic_mass["D"]*g) # D scale height [m]
+    ax1.plot(t_a*const.s2yr, PhiH_a*atomic_mass["H"], color = 'black', label = 'H flux')
+    ax1.plot(t_a*const.s2yr, PhiHe_a*atomic_mass["He"], color = 'grey', label = 'He flux')
     ax1.plot(t_a*const.s2yr, phic_a, '--', color = 'grey', label = 'He critical')
     if ND_a[0] != 0:
-        ax1.plot(t_a*const.s2yr, PhiD_a*const.mu_D, color = 'orangered', label = 'D flux')
-        ax1.plot(t_a*const.s2yr, DEFAULT_BINARY_DIFFUSION.get("H", "D", T)*x1_a*(const.mu_D - const.mu_H)/H_H, '--', color = 'orangered', label = 'D critical') # D/H critical flux
+        ax1.plot(t_a*const.s2yr, PhiD_a*atomic_mass["D"], color = 'orangered', label = 'D flux')
+        ax1.plot(t_a*const.s2yr, DEFAULT_BINARY_DIFFUSION.get("H", "D", T)*x1_a*(atomic_mass["D"] - atomic_mass["H"])/H_H, '--', color = 'orangered', label = 'D critical') # D/H critical flux
     if NO_a[0] != 0:
-        ax1.plot(t_a*const.s2yr, PhiO_a*const.mu_O, color = 'green', label = 'O flux')
-        ax1.plot(t_a*const.s2yr, DEFAULT_BINARY_DIFFUSION.get("H", "O", T)*x1_a*(const.mu_O - const.mu_H)/H_H, '--', color = 'green', label = 'O critical') # O/H critical flux
+        ax1.plot(t_a*const.s2yr, PhiO_a*atomic_mass["O"], color = 'green', label = 'O flux')
+        ax1.plot(t_a*const.s2yr, DEFAULT_BINARY_DIFFUSION.get("H", "O", T)*x1_a*(atomic_mass["O"] - atomic_mass["H"])/H_H, '--', color = 'green', label = 'O critical') # O/H critical flux
     if NC_a[0] != 0:
-        ax1.plot(t_a*const.s2yr, PhiC_a*const.mu_C, color = 'gold', label = 'C flux')
-        ax1.plot(t_a*const.s2yr, DEFAULT_BINARY_DIFFUSION.get("H", "C", T)*x1_a*(const.mu_C - const.mu_H)/H_H, '--', color = 'gold', label = 'C critical') # C/H critical flux
+        ax1.plot(t_a*const.s2yr, PhiC_a*atomic_mass["C"], color = 'gold', label = 'C flux')
+        ax1.plot(t_a*const.s2yr, DEFAULT_BINARY_DIFFUSION.get("H", "C", T)*x1_a*(atomic_mass["C"] - atomic_mass["H"])/H_H, '--', color = 'gold', label = 'C critical') # C/H critical flux
     ax1.plot(t_a*const.s2yr, phi_a, ':', color = 'mediumslateblue', label = 'total flux')
     cross = np.where(np.abs(phi_a - phic_a) < 1e-12)
     if len(cross[0]) != 0:
@@ -127,7 +130,7 @@ def isoplot(sol,n_atmodeller,Mp,f_atm,Fp,T,M_star,d):
         print('critical flux at ', t_a[cross][0]*const.s2yr/1e9, 'Gyr')
     ax1.set_ylabel('phi [kg m$^{-2}$ s$^{-1}$]', labelpad = 2)
     ax1.legend(fontsize = 8.5, frameon = False, framealpha = 0.7, loc = 3, ncol = 3)
-    ax1.set_ylim(PhiH_a[0]*const.mu_H/1e8, PhiH_a[0]*const.mu_H*100)
+    ax1.set_ylim(PhiH_a[0]*atomic_mass["H"]/1e8, PhiH_a[0]*atomic_mass["H"]*100)
     ax1.set_yscale('log')
 
     # D/H, O/H
@@ -204,7 +207,7 @@ def isoplot(sol,n_atmodeller,Mp,f_atm,Fp,T,M_star,d):
     ax5.set_ylim(-100, 6100)
     ax5.annotate(f'Rp = {round(rp_a[-1]/const.Re, 2)} const.Re, Mp = {round(Mp/const.Me, 2)} const.Me, Teq = {round(T, 0)} K', (1e6, 5500), fontsize = 10)
     ax5.annotate('final fatm:'+str(round(fenv_a[-1], 6)), (1e6, 5000), fontsize = 10)
-    ax5.annotate('final D/H:'+str(round(ND_a[-1]/NH_a[-1]/const.DtoH_solar, 2))+' [Solar]', (1e6, 4500), fontsize = 10)
+    ax5.annotate('final D/H:'+str(round(ND_a[-1]/NH_a[-1]/ProtosolarInitialCondition.PROTOSOLAR_MOLE_RATIOS_TO_H["D"], 2))+' [Solar]', (1e6, 4500), fontsize = 10)
     if n_atmodeller != 0:
         ax5.annotate('final He concn:'+str(round(x_He_molecular, 4))+'='+str(round(Y[-1], 4))+' kg/kg', (1e6, 4000), fontsize = 10)
         ax5.annotate('final O2 concn:'+str(round(x_O2, 4)), (1e6, 3500), fontsize = 10)

@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from isofate.atmosphere import AtmosphereModel
 from isofate.escape.fractionation import EscapeNumberFluxBase, make_escape_number_flux
 from isofate.escape.mechanisms import EscapeMechanism
+from isofate.initial_condition import InitialCondition
 from isofate.mantle_iron import MantleIronConfig
 from isofate.species import (
     DEFAULT_BINARY_DIFFUSION,
@@ -87,11 +88,22 @@ class Parameters(eqx.Module):
     here are therefore elemental: atom counts and fractions, and a mean mass per atom. Where they
     have a molecular counterpart in Atmodeller's output, such as the volume mixing ratio or the
     mean molecular mass, the two differ.
+
+    Args:
+        system: Star-planet system
+        escape_mechanism: Escape mechanism setting the bulk escaping mass flux
+        initial_condition: Initial atmospheric abundances (see `initial_abundances`)
+        isofate_species: Tracked species. Defaults to `DEFAULT_SPECIES`.
+        binary_diffusion_coefficients: Binary diffusion coefficients. Defaults to
+            `DEFAULT_BINARY_DIFFUSION`.
+        isocalc_options: Mode switches and tuning constants. Defaults to `IsocalcOptions()`.
+        atmosphere: Atmosphere model. Defaults to `AtmosphereModel()`.
     """
 
     system: System
     escape_mechanism: EscapeMechanism
     _: dataclasses.KW_ONLY
+    initial_condition: InitialCondition
     isofate_species: IsoFATESpecies = DEFAULT_SPECIES
     binary_diffusion_coefficients: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
     isocalc_options: IsocalcOptions = IsocalcOptions()
@@ -111,6 +123,18 @@ class Parameters(eqx.Module):
             species=self.isofate_species,
             binary_diffusion=self.binary_diffusion_coefficients,
         )
+
+    def __check_init__(self):
+        if self.initial_condition.species.species != self.isofate_species.species:
+            raise ValueError(
+                f"initial_condition.species {self.initial_condition.species.species} differ from "
+                f"isofate_species {self.isofate_species.species}"
+            )
+
+    def initial_abundances(self) -> Array:
+        """Initial atmospheric abundances [atoms], ordered per `isofate_species`, from
+        `initial_condition`."""
+        return self.initial_condition.abundances(self.system.planet.mass)
 
     def atmosphere_mass(self, y: Array) -> Array:
         """Total atmospheric mass [kg].

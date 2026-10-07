@@ -50,7 +50,6 @@ from isofate.utils import gravitational_acceleration
 def isocalc(
     parameters: Parameters,
     t_end=5e9,
-    isofate_species_abund: ArrayLike = (0, 0, 0, 0, 0, 0, 0),
 ):
     """
     This is a test
@@ -82,8 +81,8 @@ def isocalc(
     #  - T: planet equilibrium temperature [K]
     #  - d: orbtial distance [m]
     #  - t_end: simulation end time, i.e. system age at the end of the run; scalar [yr]
-    #  - isofate_species_abund: initial abundance [atoms] for each tracked species, ordered as in
-    #  isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N, S)
+    #  - the initial abundance [atoms] of each tracked species comes from
+    #  parameters.initial_abundances(), ordered per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
     #  - options: mode switches and tuning constants unrelated to escape mechanism, fixed for
     #  the whole run - see IsocalcOptions for the full list (rad_evol, melt_fraction_override,
     #  mu, n_steps, t_start, thermal, n_atmodeller, save_molecules, mantle_iron, dynamic_phi)
@@ -125,10 +124,10 @@ def isocalc(
     escape = parameters.escape_mechanism
     escape_number_flux = parameters.escape_number_flux
 
-    # isofate_species_abund is ordered per isofate.species.ELEMENTS/SYMBOLS (H, He, D, O, C, N,
-    # S) - the same order used throughout this function for y, atomic_masses, and species_names
-    # below.
-    N_H, N_He, N_D, N_O, N_C, N_N, N_S = isofate_species_abund
+    # Initial atmospheric abundances [atoms], ordered per isofate.species.SYMBOLS (H, He, D, O,
+    # C, N, S) - the same order used throughout this function for y, atomic_masses, and
+    # species_names below.
+    isofate_species_abund = np.asarray(parameters.initial_abundances(), dtype=float)
 
     # T and Fp are confirmed fixed for the whole run (never reassigned anywhere below), so
     # they're read from `system` once, here. `system.star.mass` and the orbital distance are not
@@ -574,7 +573,6 @@ def isocalc(
 def isocalc_jax3(
     parameters: Parameters,
     t_end=5e9,
-    isofate_species_abund: Array = jnp.array([0, 0, 0, 0, 0, 0, 0], dtype=float),
     euler: bool = False,
 ):
     """Atmospheric escape with event-triggered Atmodeller coupling.
@@ -604,8 +602,6 @@ def isocalc_jax3(
         parameters: Parameters
         t_end: Simulation end time, i.e. system age at the end of the run [yr]. Defaults to
             ``5e9``.
-        isofate_species_abund: Initial atmospheric abundances [atoms], ordered per
-            `isofate.species.SYMBOLS` (H, He, D, O, C, N, S)
         euler: Integrate with isocalc's fixed-step forward Euler scheme
             (`isofate.integrators.EulerIntegrator`: re-equilibrating every `n_atmodeller` steps,
             no events) instead of the adaptive solver with events. Defaults to ``False``.
@@ -632,7 +628,7 @@ def isocalc_jax3(
     # coupling is off, for the molecule output keys
     coupler = EventAtmodellerCoupler(parameters)
     tracked_species = coupler.tracked_species
-    y_raw = jnp.asarray(isofate_species_abund, dtype=float)
+    y_raw = jnp.asarray(parameters.initial_abundances(), dtype=float)
 
     # TODO: temporary output assembly to match isocalc's keys - clean up
     y_a_int = np.zeros((n_tot, 7))  # interior number array [atoms]

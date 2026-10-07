@@ -19,9 +19,10 @@ from isofate.isofate_coupler import *
 # from isofate_coupler_v3_cannon import *
 from isofate.isofunks import *
 from isofate.orbit_params import *
+from isofate.initial_condition import ProtosolarInitialCondition
 from isofate.parameters import IsocalcOptions, Parameters
 from isofate.presets import LHS1140b, LHS1140Star
-from isofate.species import DEFAULT_BINARY_DIFFUSION
+from isofate.species import DEFAULT_BINARY_DIFFUSION, DEFAULT_SPECIES
 from isofate.system import Planet, Star, System
 
 # LHS 1140 / LHS 1140 b
@@ -33,11 +34,9 @@ system = System(star=star, planet=planet)
 # to them directly
 M_star = star.mass
 t_jump = star.t_jump
-# Not a Planet field (removed - isocalc/isocalc_jax3 now derive the atmosphere mass/fraction from
-# the initial abundances instead, see isofate_coupler.py): a scripting-level constant here, only
-# used to pick the total mass that this script's own solar-abundance-ratio construction below
-# scales N_H/N_He/etc. to.
-f_atm = 0.00085
+# Initial atmospheric mass fraction, used by the initial condition (ProtosolarInitialCondition)
+# below; the drivers derive the atmosphere mass/fraction from the initial abundances
+f_atm = 0.01  # 0.00085
 Mp = planet.mass
 P = planet.period
 
@@ -63,9 +62,8 @@ n_steps = int(1e5)
 # Collin starts with 1e3
 # For 1e4 the run-time is reasonable.
 # TODO: Dan turned off to refactor without Atmodeller to start with.  Then we'll add it back in.
-n_atmodeller = 0  # int(1e2)  # <-- FIXME: set much smaller Atmodeller runs slow (1e2)
+n_atmodeller = int(1e4)  # <-- FIXME: set much smaller Atmodeller runs slow (1e2)
 thermal = True
-M_atm = Mp * f_atm  # initial atmospheric mass [kg]
 melt_fraction_override = False
 save_molecules = False
 # mantle_iron = MantleIronConfig(reaction_type="static", fe_mass_fraction=0.1)
@@ -73,42 +71,14 @@ save_molecules = False
 mantle_iron = None
 dynamic_phi = True
 OtoH_enhancement = 1
-OtoH_enhanced = const.OtoH_protosolar * OtoH_enhancement
-OtoH_enhanced_mass = OtoH_enhanced * (const.mu_O / const.mu_H)
-
-N_He = (
-    (const.HetoH_protosolar_mass / (1 + const.HetoH_protosolar_mass)) * M_atm / const.mu_He
-)  # initial He number [atoms]# N_He = 0
-# N_He = 0
-# N_H = (1 - DtoH_solar_mass - OtoH_protosolar_mass - CtoH_protosolar_mass)*M_atm/(1 + HetoH_protosolar_mass)/mu_H  # initial H number [atoms]
-N_H = (
-    (
-        1
-        - const.DtoH_solar_mass
-        - OtoH_enhanced_mass
-        - const.CtoH_protosolar_mass
-        - const.StoH_protosolar_mass
-        - const.NtoH_protosolar_mass
-    )
-    * M_atm
-    / (1 + const.HetoH_protosolar_mass)
-    / const.mu_H
-)  # initial H number [atoms]
-# N_H = 0
-# N_H = M_atm/mu_H
-N_D = const.DtoH_solar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_D
-# N_D = 0
-# N_O = OtoH_protosolar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_O
-N_O = OtoH_enhanced_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_O
-# N_O = 0
-N_C = const.CtoH_protosolar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_C
-# N_C = 0
-# N_N = NtoH_protosolar_mass*M_atm/(1 + HetoH_protosolar_mass)/mu_N
-N_N = const.NtoH_protosolar_mass * M_atm / const.mu_N
-# N_N = 0
-# N_N = M_atm/mu_N
-N_S = const.StoH_protosolar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_S
-# N_S = 0
+# initial atmosphere: protosolar elemental ratios scaled to f_atm of the planet mass
+initial_condition = ProtosolarInitialCondition(
+    atmosphere_mass_fraction=f_atm, OtoH_enhancement=OtoH_enhancement
+)
+# atomic masses [kg/atom], by symbol, for the diagnostics below
+atomic_mass = DEFAULT_SPECIES.mass_by_symbol
+# protosolar mole ratios to H, for D/H and O/H in solar units below
+protosolar = ProtosolarInitialCondition.PROTOSOLAR_MOLE_RATIOS_TO_H
 
 # these print statements serve as a check when running sim.py
 print("n_steps =", n_steps)
@@ -155,16 +125,18 @@ options = IsocalcOptions(
     dynamic_phi=dynamic_phi,
 )
 
-parameters = Parameters(system, escape_mechanism=escape_mechanism, isocalc_options=options)
+parameters = Parameters(
+    system,
+    escape_mechanism=escape_mechanism,
+    initial_condition=initial_condition,
+    isocalc_options=options,
+)
+# initial atmospheric abundances [atoms], for the diagnostics printed below
+N_H, N_He, N_D, N_O, N_C, N_N, N_S = (float(n) for n in parameters.initial_abundances())
 
 # run simulation (from isofate.py)
 isocalc_start = TIME.time()
-sol = isocalc_jax(
-    parameters,
-    time,
-    # ordered per isofate.species.SYMBOLS
-    isofate_species_abund=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),
-)
+sol = isocalc(parameters, time)
 print(f"isocalc runtime: {TIME.time() - isocalc_start:.2f} s")
 
 # path = '/Users/collin/Documents/Harvard/Research/atm_escape/IsoFATE/monte_carlo/atmodeller/corrected_Psi/transient_D_world_full_isofate'
@@ -267,13 +239,13 @@ if n_atmodeller != 0:
 
 Y = (
     NHe_a
-    * const.mu_He
+    * atomic_mass["He"]
     / (
-        NH_a * const.mu_H
-        + NHe_a * const.mu_He
-        + ND_a * const.mu_D
-        + NO_a * const.mu_O
-        + NC_a * const.mu_C
+        NH_a * atomic_mass["H"]
+        + NHe_a * atomic_mass["He"]
+        + ND_a * atomic_mass["D"]
+        + NO_a * atomic_mass["O"]
+        + NC_a * atomic_mass["C"]
     )
 )
 
@@ -282,11 +254,11 @@ print("final f_atm =", fenv_a[-1])
 print(
     "final f_atm by species =",
     (
-        NH_a[-1] * const.mu_H
-        + NHe_a[-1] * const.mu_He
-        + ND_a[-1] * const.mu_D
-        + NO_a[-1] * const.mu_O
-        + NC_a[-1] * const.mu_C
+        NH_a[-1] * atomic_mass["H"]
+        + NHe_a[-1] * atomic_mass["He"]
+        + ND_a[-1] * atomic_mass["D"]
+        + NO_a[-1] * atomic_mass["O"]
+        + NC_a[-1] * atomic_mass["C"]
     )
     / Mp,
 )
@@ -294,16 +266,16 @@ print("initial f_atm =", fenv_a[0])
 print(
     "initial f_atm by species =",
     (
-        N_H * const.mu_H
-        + N_He * const.mu_He
-        + N_D * const.mu_D
-        + N_O * const.mu_O
-        + N_C * const.mu_C
+        N_H * atomic_mass["H"]
+        + N_He * atomic_mass["He"]
+        + N_D * atomic_mass["D"]
+        + N_O * atomic_mass["O"]
+        + N_C * atomic_mass["C"]
     )
     / Mp,
 )
-print("final D/H =", ND_a[-1] / NH_a[-1] / const.DtoH_solar, "[Solar]")
-print("final O/H =", NO_a[-1] / NH_a[-1] / const.OtoH_protosolar, "[Solar]")
+print("final D/H =", ND_a[-1] / NH_a[-1] / protosolar["D"], "[Solar]")
+print("final O/H =", NO_a[-1] / NH_a[-1] / protosolar["O"], "[Solar]")
 print(
     "final X_He (molar concn) =",
     NHe_a[-1] / (NH_a[-1] + NHe_a[-1] + ND_a[-1] + NO_a[-1] + NC_a[-1]),
@@ -358,52 +330,52 @@ plt.subplots_adjust(wspace=0.3)
 
 # phi
 g = const.G * Mp / rp_a**2
-H_H = const.R_gas * T / (const.M_H * g)  # D scale height [m]
-H_D = const.R_gas * T / (const.M_D * g)  # D scale height [m]
-ax1.plot(t_a * const.s2yr, PhiH_a * const.mu_H, color="black", label="H flux")
-ax1.plot(t_a * const.s2yr, PhiHe_a * const.mu_He, color="grey", label="He flux")
+H_H = const.kb * T / (atomic_mass["H"] * g)  # D scale height [m]
+H_D = const.kb * T / (atomic_mass["D"] * g)  # D scale height [m]
+ax1.plot(t_a * const.s2yr, PhiH_a * atomic_mass["H"], color="black", label="H flux")
+ax1.plot(t_a * const.s2yr, PhiHe_a * atomic_mass["He"], color="grey", label="He flux")
 ax1.plot(t_a * const.s2yr, phic_a, "--", color="grey", label="He critical")
 if ND_a[0] != 0:
-    ax1.plot(t_a * const.s2yr, PhiD_a * const.mu_D, color="orangered", label="D flux")
+    ax1.plot(t_a * const.s2yr, PhiD_a * atomic_mass["D"], color="orangered", label="D flux")
     ax1.plot(
         t_a * const.s2yr,
-        DEFAULT_BINARY_DIFFUSION.get("H", "D", T) * x1_a * (const.mu_D - const.mu_H) / H_H,
+        DEFAULT_BINARY_DIFFUSION.get("H", "D", T) * x1_a * (atomic_mass["D"] - atomic_mass["H"]) / H_H,
         "--",
         color="orangered",
         label="D critical",
     )  # D/H critical flux
 if NO_a[0] != 0:
-    ax1.plot(t_a * const.s2yr, PhiO_a * const.mu_O, color="green", label="O flux")
+    ax1.plot(t_a * const.s2yr, PhiO_a * atomic_mass["O"], color="green", label="O flux")
     ax1.plot(
         t_a * const.s2yr,
-        DEFAULT_BINARY_DIFFUSION.get("H", "O", T) * x1_a * (const.mu_O - const.mu_H) / H_H,
+        DEFAULT_BINARY_DIFFUSION.get("H", "O", T) * x1_a * (atomic_mass["O"] - atomic_mass["H"]) / H_H,
         "--",
         color="green",
         label="O critical",
     )  # O/H critical flux
 if NC_a[0] != 0:
-    ax1.plot(t_a * const.s2yr, PhiC_a * const.mu_C, color="gold", label="C flux")
+    ax1.plot(t_a * const.s2yr, PhiC_a * atomic_mass["C"], color="gold", label="C flux")
     ax1.plot(
         t_a * const.s2yr,
-        DEFAULT_BINARY_DIFFUSION.get("H", "C", T) * x1_a * (const.mu_C - const.mu_H) / H_H,
+        DEFAULT_BINARY_DIFFUSION.get("H", "C", T) * x1_a * (atomic_mass["C"] - atomic_mass["H"]) / H_H,
         "--",
         color="gold",
         label="C critical",
     )  # C/H critical flux
     # if NN_a[0] != 0:
-    ax1.plot(t_a * const.s2yr, PhiN_a * const.mu_N, color="blue", label="N flux")
+    ax1.plot(t_a * const.s2yr, PhiN_a * atomic_mass["N"], color="blue", label="N flux")
     ax1.plot(
         t_a * const.s2yr,
-        DEFAULT_BINARY_DIFFUSION.get("H", "N", T) * x1_a * (const.mu_N - const.mu_H) / H_H,
+        DEFAULT_BINARY_DIFFUSION.get("H", "N", T) * x1_a * (atomic_mass["N"] - atomic_mass["H"]) / H_H,
         "--",
         color="blue",
         label="N critical",
     )  # N/H critical flux
 if NS_a[0] != 0:
-    ax1.plot(t_a * const.s2yr, PhiS_a * const.mu_S, color="purple", label="S flux")
+    ax1.plot(t_a * const.s2yr, PhiS_a * atomic_mass["S"], color="purple", label="S flux")
     ax1.plot(
         t_a * const.s2yr,
-        DEFAULT_BINARY_DIFFUSION.get("H", "S", T) * x1_a * (const.mu_S - const.mu_H) / H_H,
+        DEFAULT_BINARY_DIFFUSION.get("H", "S", T) * x1_a * (atomic_mass["S"] - atomic_mass["H"]) / H_H,
         "--",
         color="purple",
         label="S critical",
@@ -415,7 +387,7 @@ if len(cross[0]) != 0:
     print("critical flux at ", t_a[cross][0] * const.s2yr / 1e9, "Gyr")
 ax1.set_ylabel("phi [kg m$^{-2}$ s$^{-1}$]", labelpad=2)
 ax1.legend(fontsize=8.5, frameon=False, framealpha=0.7, loc=3, ncol=3)
-ax1.set_ylim(PhiH_a[0] * const.mu_H / 1e8, PhiH_a[0] * const.mu_H * 100)
+ax1.set_ylim(PhiH_a[0] * atomic_mass["H"] / 1e8, PhiH_a[0] * atomic_mass["H"] * 100)
 ax1.set_yscale("log")
 
 # D/H, O/H
@@ -501,7 +473,7 @@ ax5.annotate(
 )
 ax5.annotate("final fatm:" + str(round(fenv_a[-1], 6)), (2e6, 5100), fontsize=8)
 ax5.annotate(
-    "final D/H:" + str(round(ND_a[-1] / NH_a[-1] / const.DtoH_solar, 2)) + " [Solar]",
+    "final D/H:" + str(round(ND_a[-1] / NH_a[-1] / protosolar["D"], 2)) + " [Solar]",
     (2e6, 4700),
     fontsize=8,
 )

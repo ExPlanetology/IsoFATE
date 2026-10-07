@@ -45,37 +45,9 @@ class PhysicalConstants(eqx.Module):
     Rjup: float = 7.1492e7  # Jupiter radius [m]
     M_N2: float = 0.028014  # molar mass N2 [kg/mol]
     M_H2: float = 0.002016  # molar mass H2 [kg/mol]
-    M_HD: float = 0.003024  # molar mass HD [kg/mol]
-    M_D: float = 0.002014  # molar mass of D [kg/mol]
-    M_H: float = 0.001008  # molar mass of H [kg/mol]
-    M_He: float = 0.0040026  # molar mass of He [kg/mol]
-    M_O: float = 0.015999  # molar mass of O [kg/mol]
-    M_C: float = 0.012011  # molar mass of C [kg/mol]
-    M_N: float = 0.014007  # molar mass of N [kg/mol]
-    M_S: float = 0.032065  # molar mass of S [kg/mol]
     M_Fe: float = 0.055845  # molar mass of Fe [kg/mol]
     M_H2O: float = 0.018015  # molar mass of H2O [kg/mol]
     vsmow: float = 1.5574e-4  # Vienna Standard Mean Ocean Water (D/H for Earth's oceans)
-    DtoH_solar: float = 0.0000194  # D/H solar mole ratio from Lodders 2003
-    HetoH_solar: float = (
-        0.07991  # He/H solar mole ratio from Lodders 2003 (0.2377/0.7491*mu_H/mu_He)
-    )
-    HetoH_protosolar: float = (
-        0.09709  # He/H proto-solar mole ratio Lodders 2003 (0.2741/0.711*mu_H/mu_He)
-    )
-    HetoH_protosolar_mass: float = (
-        0.38551  # He/H proto-solar mass ratio Lodders 2003 (0.2741/0.711)
-    )
-    OtoH_protosolar: float = (
-        0.00058  # O/H proto-solar mole ratio from Lodders 2003 Table 2 (1.413e7/2.431e10)
-    )
-    CtoH_protosolar: float = 0.00029  # C/H proto-solar mole ratio from Lodders 2003 Table 2
-    NtoH_protosolar: float = (
-        0.000080  # N/H proto-solar mole ratio from Lodders 2003 Table 2 (1.950e6/2.431e10)
-    )
-    StoH_protosolar: float = (
-        0.000018  # S/H proto-solar mole ratio from Lodders 2003 Table 2 (4.449e5/2.431e10)
-    )
     n_OperTO: float = 7.83e22  # mols O per TO
     Venus_TO: float = 1.32e-5  # number of terrestrial oceans in Venus' atmosphere (needs checking)
 
@@ -98,76 +70,6 @@ class PhysicalConstants(eqx.Module):
     def mu_H2(self):
         """Molecular mass of H2 [kg/molecule]"""
         return self.M_H2 / self.avogadro
-
-    @property
-    def mu_HD(self):
-        """Molecular mass of HD [kg/molecule]"""
-        return self.M_HD / self.avogadro
-
-    @property
-    def mu_H(self):
-        """Atomic mass of H [kg/atom]"""
-        return self.M_H / self.avogadro
-
-    @property
-    def mu_D(self):
-        """Atomic mass of D [kg/atom]"""
-        return self.M_D / self.avogadro
-
-    @property
-    def mu_He(self):
-        """Atomic mass of He [kg/atom]"""
-        return self.M_He / self.avogadro
-
-    @property
-    def mu_O(self):
-        """Atomic mass of O [kg/atom]"""
-        return self.M_O / self.avogadro
-
-    @property
-    def mu_C(self):
-        """Atomic mass of C [kg/atom]"""
-        return self.M_C / self.avogadro
-
-    @property
-    def mu_N(self):
-        """Atomic mass of N [kg/atom]"""
-        return self.M_N / self.avogadro
-
-    @property
-    def mu_S(self):
-        """Atomic mass of S [kg/atom]"""
-        return self.M_S / self.avogadro
-
-    @property
-    def mu_Fe(self):
-        """Atomic mass of Fe [kg/atom]"""
-        return self.M_Fe / self.avogadro
-
-    @property
-    def DtoH_solar_mass(self):
-        """D/H solar mass ratio from Lodders 2003"""
-        return self.DtoH_solar * (self.mu_D / self.mu_H)
-
-    @property
-    def OtoH_protosolar_mass(self):
-        """O/H proto-solar mass ratio from Lodders 2003"""
-        return self.OtoH_protosolar * (self.mu_O / self.mu_H)
-
-    @property
-    def CtoH_protosolar_mass(self):
-        """O/H proto-solar mass ratio from Lodders 2003"""
-        return self.CtoH_protosolar * (self.mu_C / self.mu_H)
-
-    @property
-    def NtoH_protosolar_mass(self):
-        """O/H proto-solar mass ratio"""
-        return self.NtoH_protosolar * (self.mu_N / self.mu_H)
-
-    @property
-    def StoH_protosolar_mass(self):
-        """O/H proto-solar mass ratio"""
-        return self.StoH_protosolar * (self.mu_S / self.mu_H)
 
     @property
     def mu_HHe(self):

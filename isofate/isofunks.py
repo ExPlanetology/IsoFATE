@@ -13,6 +13,7 @@ from scipy.interpolate import RegularGridInterpolator as RGI
 # import imports
 from isofate.constants import const
 from isofate.orbit_params import *
+from isofate.species import DEFAULT_SPECIES
 
 _MELT_FRACTION_INTERPOLATOR = None
 
@@ -274,7 +275,8 @@ def TO(Mp, f_atm="null", n_TO="null"):
         return None
 
     elif n_TO == "null":
-        n_H = 0.7491 * Mp * f_atm / const.M_H  # mols of H in envelope
+        molar_mass_H = DEFAULT_SPECIES.mass_by_symbol["H"] * const.avogadro  # [kg/mol]
+        n_H = 0.7491 * Mp * f_atm / molar_mass_H  # mols of H in envelope
         n_O = 4.899e-4 * n_H  # mols of O in envelope (Lodders solar abundance)
         n_TO = n_O / n_OperTO  # number of terrestrial oceans worth of oxygen in system
         N_H = 2 * n_O * const.avogadro  # atoms of H in envelope
