@@ -42,6 +42,9 @@ class IsocalcOptions(eqx.Module):
         n_atmodeller: Interval of timesteps between each Atmodeller call.
         save_molecules: Save molecular abundances at every timestep (True) or only the final
             abundances (False).
+        euler: Integrate with the fixed-step forward Euler scheme (`EulerIntegrator`,
+            re-equilibrating every `n_atmodeller` steps, no events) instead of the adaptive solver
+            with events (`AdaptiveIntegrator`); see `isofate.integrators`. Defaults to ``False``.
         dynamic_phi: Toggle dynamic phi calculation based on the most abundant species (True) or
             static phi calculation, always using H/He as the dominant pair (False). This selects
             `Parameters.escape_number_flux` (see `make_escape_number_flux`), which every driver
@@ -64,6 +67,7 @@ class IsocalcOptions(eqx.Module):
     thermal: bool = True
     n_atmodeller: int = int(1e2)
     save_molecules: bool = False
+    euler: bool = False
     dynamic_phi: bool = True
     # 1 - isofate.integrators.EXHAUSTION_FRACTION (not imported, to avoid an import cycle)
     mass_loss_fraction: float = 1 - 1e-6

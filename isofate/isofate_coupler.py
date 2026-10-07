@@ -33,7 +33,6 @@ from isofate.species import SYMBOLS
 def isocalc(
     parameters: Parameters,
     t_end=5e9,
-    euler: bool = False,
 ):
     """Atmospheric escape with event-triggered Atmodeller coupling.
 
@@ -51,10 +50,10 @@ def isocalc(
           `IsocalcOptions.species_loss_fraction` of any species.
 
     Output rows after the atmosphere is exhausted are ``inf``, as `AdaptiveIntegrator` leaves them
-    (with ``euler=True`` the atmosphere is instead frozen once exhausted). An empty initial
+    (with `IsocalcOptions.euler` the atmosphere is instead frozen once exhausted). An empty initial
     atmosphere is not equilibrated.
 
-    With ``euler=True`` this is the scheme of the former NumPy loop driver (retired), a
+    With `IsocalcOptions.euler` this is the scheme of the former NumPy loop driver (retired), a
     manual fixed time step re-equilibrating every `n_atmodeller` steps, which it reproduced to
     round-off.
 
@@ -62,9 +61,6 @@ def isocalc(
         parameters: Parameters
         t_end: Simulation end time, i.e. system age at the end of the run [yr]. Defaults to
             ``5e9``.
-        euler: Integrate with the fixed-step forward Euler scheme
-            (`isofate.integrators.EulerIntegrator`: re-equilibrating every `n_atmodeller` steps,
-            no events) instead of the adaptive solver with events. Defaults to ``False``.
 
     Returns:
         Dictionary of output arrays on the output times ``time`` [s] (abundances ``N_X`` and
@@ -84,7 +80,7 @@ def isocalc(
     t_a = t_start_seconds + delta_t * np.arange(1, n_tot + 1)
 
     model = IsocalcModel(parameters)
-    integrator_class = EulerIntegrator if euler else AdaptiveIntegrator
+    integrator_class = EulerIntegrator if options.euler else AdaptiveIntegrator
     # Built once per run, outside jit (it builds the Atmodeller model). Also built when the
     # coupling is off, for the molecule output keys
     coupler = AtmodellerCoupler(parameters)

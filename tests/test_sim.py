@@ -42,7 +42,9 @@ from isofate.system import System
 SIM_PY = dict(n_steps=int(1e5), n_atmodeller=int(1e4), f_atm=0.01, dynamic_phi=True)
 
 
-def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_phi=False):
+def _sim_isocalc_kwargs(
+    n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_phi=False, euler=False
+):
     """Reconstructs isofate/sim.py's driver call.
 
     `n_steps` defaults to sim.py's own value but can be overridden (e.g. by the isocalc/
@@ -95,6 +97,7 @@ def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_ph
         thermal=thermal,
         n_atmodeller=n_atmodeller,
         save_molecules=save_molecules,
+        euler=euler,
         dynamic_phi=dynamic_phi,
     )
     parameters = Parameters(
@@ -176,7 +179,7 @@ def test_sim_regression():
     Moved from the former NumPy loop driver to the JAX driver (euler=True) when the loop was
     retired: the two agreed to round-off (about 1e-13) on every output, so the pins are unchanged.
     """
-    sol = isocalc(**_sim_isocalc_kwargs(), euler=True)
+    sol = isocalc(**_sim_isocalc_kwargs(euler=True))
 
     assert sol["Matm"][-1] == pytest.approx(2.783430554314534e23, rel=1e-6)
     assert sol["N_H"][-1] == pytest.approx(1.1152201767281153e50, rel=1e-6)
@@ -193,9 +196,8 @@ def test_sim_regression():
 def test_isocalc_adaptive_matches_euler():
     """Without Atmodeller, the adaptive solver (Tsit5) and the fixed-step Euler scheme agree to
     about 6e-4 relative at 2000 steps (the Euler error), within rel=1e-2."""
-    kwargs = _sim_isocalc_kwargs(n_steps=2000)
-    sol_euler = isocalc(**kwargs, euler=True)
-    sol = isocalc(**kwargs)
+    sol_euler = isocalc(**_sim_isocalc_kwargs(n_steps=2000, euler=True))
+    sol = isocalc(**_sim_isocalc_kwargs(n_steps=2000))
 
     for key in ("Matm", "N_H", "N_He", "N_D", "N_O", "N_C", "N_N", "N_S", "Rp", "Vpot"):
         assert sol[key][-1] == pytest.approx(sol_euler[key][-1], rel=1e-2), key
@@ -207,9 +209,8 @@ def test_isocalc_coupled_adaptive_matches_euler():
     quantities and 4e-3 for the trace species N and S (the Euler error at 2000 steps), within
     rel=1e-2.
     """
-    kwargs = _sim_isocalc_kwargs(n_steps=2000, n_atmodeller=100)
-    sol_euler = isocalc(**kwargs, euler=True)
-    sol = isocalc(**kwargs)
+    sol_euler = isocalc(**_sim_isocalc_kwargs(n_steps=2000, n_atmodeller=100, euler=True))
+    sol = isocalc(**_sim_isocalc_kwargs(n_steps=2000, n_atmodeller=100))
 
     keys = [f"N_{symbol}" for symbol in SYMBOLS] + [f"N_{symbol}_int" for symbol in SYMBOLS]
     for key in keys + ["Matm", "Rp", "Vpot", "T_surf_atmod"]:
@@ -222,8 +223,8 @@ def test_isocalc_empty_atmosphere(euler):
     created from nothing: the atmosphere stays empty (rows are 0, or inf for the adaptive solver,
     which marks exhausted rows that way), the interior stays empty, and atmodeller_final is NaN.
     """
-    kwargs = _with_initial_abundances(_sim_isocalc_kwargs(n_steps=40, n_atmodeller=10), (0.0,) * 7)
-    sol = isocalc(**kwargs, euler=euler)
+    kwargs = _sim_isocalc_kwargs(n_steps=40, n_atmodeller=10, euler=euler)
+    sol = isocalc(**_with_initial_abundances(kwargs, (0.0,) * 7))
 
     assert len(sol["t_atmodeller"]) == 0
     for symbol in SYMBOLS:
@@ -491,18 +492,18 @@ def test_isocalc_fixed_radius(euler):
     no Bondi/Hill cap. Without Atmodeller: with the radius at the rocky surface, the atmosphere
     descent to the surface has zero thickness and the Atmodeller solve does not converge (see the
     FIXME in AtmodellerCoupler.run)."""
-    kwargs = _sim_isocalc_kwargs(n_steps=200, n_atmodeller=0)
+    kwargs = _sim_isocalc_kwargs(n_steps=200, n_atmodeller=0, euler=euler)
     options = dataclasses.replace(kwargs["parameters"].isocalc_options, rad_evol=False)
     kwargs["parameters"] = dataclasses.replace(kwargs["parameters"], isocalc_options=options)
-    sol = isocalc(**kwargs, euler=euler)
+    sol = isocalc(**kwargs)
 
     rocky_radius = float(kwargs["parameters"].system.planet.rocky_radius)
     np.testing.assert_allclose(sol["Rp"], rocky_radius, rtol=1e-12)
     assert np.all(sol["Ratm"] == 0)
 
 
-# Final values of isocalc(euler=True), pinned when the former NumPy loop driver was retired; that
-# loop (an independent implementation of the same scheme) agreed with these to round-off
+# Final values of isocalc with euler=True, pinned when the former NumPy loop driver was retired;
+# that loop (an independent implementation of the same scheme) agreed with these to round-off
 # (<= 3e-14)
 EULER_PINS = {
     "no_coupling": {
@@ -560,8 +561,8 @@ EULER_PINS = {
     ],
 )
 def test_isocalc_euler_regression(case, settings):
-    """Pins isocalc(euler=True), isocalc's fixed-step scheme, on short LHS 1140 b runs."""
-    sol = isocalc(**_sim_isocalc_kwargs(**settings), euler=True)
+    """Pins isocalc with euler=True, isocalc's fixed-step scheme, on short LHS 1140 b runs."""
+    sol = isocalc(**_sim_isocalc_kwargs(**settings, euler=True))
 
     for key, expected in EULER_PINS[case].items():
         if key.startswith("final:"):

@@ -3,7 +3,7 @@ interactive/plotting driver this is derived from).
 
 These pin the current (atmodeller v2preview) behavior of AtmodellerCoupler and isocalc so
 future refactoring has something concrete to check against. The toy scenario below was
-re-cross-checked (with the former NumPy loop driver, since retired; isocalc(euler=True)
+re-cross-checked (with the former NumPy loop driver, since retired; isocalc with euler=True
 reproduces it to round-off), by hand, against
 ../IsoFATE_main running the pre-v2 atmodeller API (0.9.1) with the equivalent Mp/f_atm/Mstar/F0/
 Fp/T/d passed directly: the single-solve values agree to ~1e-4 relative, and the short run
@@ -165,9 +165,9 @@ def _toy_isocalc_kwargs(**option_overrides):
 
 
 def test_isocalc_toy_regression():
-    """Short, non-escape-dominated run with isocalc(euler=True); the former NumPy loop's values,
+    """Short, non-escape-dominated run with isocalc with euler=True; the former NumPy loop's values,
     cross-checked against ../IsoFATE_main to ~1e-4 relative."""
-    sol = isocalc(**_toy_isocalc_kwargs(), euler=True)
+    sol = isocalc(**_toy_isocalc_kwargs(euler=True))
 
     _assert_finite(sol["Matm"], sol["N_H"], sol["N_O_int"], sol["N_C_int"])
 
@@ -184,7 +184,7 @@ def test_isocalc_toy_regression():
 
 
 def test_isocalc_save_molecules():
-    sol = isocalc(**_toy_isocalc_kwargs(save_molecules=True), euler=True)
+    sol = isocalc(**_toy_isocalc_kwargs(save_molecules=True, euler=True))
 
     for key in ("n_H2O_a", "n_H2_a", "n_O2_a", "n_CO2_a", "n_CO_a", "n_CH4_a", "n_N2_a", "n_S2_a"):
         assert key in sol
