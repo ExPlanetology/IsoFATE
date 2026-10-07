@@ -32,6 +32,21 @@ class InitialCondition(eqx.Module):
 
     species: IsoFATESpecies = eqx.field(default=DEFAULT_SPECIES, kw_only=True)
 
+    def check_species(self, species: IsoFATESpecies) -> None:
+        """Checks that these abundances are for the given species, in the same order.
+
+        Args:
+            species: Tracked species of the run (`Parameters.isofate_species`)
+
+        Raises:
+            ValueError: If the species differ
+        """
+        if self.species.species != species.species:
+            raise ValueError(
+                f"Initial condition species {self.species.species} differ from the tracked "
+                f"species {species.species}"
+            )
+
     @abstractmethod
     def abundances(self, planet_mass: ArrayLike) -> Array:
         """Initial atmospheric abundances.

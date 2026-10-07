@@ -121,11 +121,7 @@ class Parameters(eqx.Module):
         )
 
     def __check_init__(self):
-        if self.initial_condition.species.species != self.isofate_species.species:
-            raise ValueError(
-                f"initial_condition.species {self.initial_condition.species.species} differ from "
-                f"isofate_species {self.isofate_species.species}"
-            )
+        self.initial_condition.check_species(self.isofate_species)
 
     def initial_abundances(self) -> Array:
         """Initial atmospheric abundances [atoms], ordered per `isofate_species`, from

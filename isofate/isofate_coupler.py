@@ -30,10 +30,7 @@ from isofate.parameters import Parameters
 from isofate.species import SYMBOLS
 
 
-def isocalc(
-    parameters: Parameters,
-    t_end=5e9,
-):
+def isocalc(parameters: Parameters, t_end=5e9):
     """Atmospheric escape with event-triggered Atmodeller coupling.
 
     The integration runs through `isofate.integrators.AdaptiveIntegrator`, which stops on an
