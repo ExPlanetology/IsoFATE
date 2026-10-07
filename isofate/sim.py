@@ -33,11 +33,11 @@ system = System(star=star, planet=planet)
 # to them directly
 M_star = star.mass
 t_jump = star.t_jump
-# Not a Planet field (removed - isocalc/isocalc_jax now derive the atmosphere mass/fraction from
+# Not a Planet field (removed - isocalc/isocalc_jax3 now derive the atmosphere mass/fraction from
 # the initial abundances instead, see isofate_coupler.py): a scripting-level constant here, only
 # used to pick the total mass that this script's own solar-abundance-ratio construction below
 # scales N_H/N_He/etc. to.
-f_atm = 0.01
+f_atm = 0.00085
 Mp = planet.mass
 P = planet.period
 
