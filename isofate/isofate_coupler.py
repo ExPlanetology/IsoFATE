@@ -267,16 +267,75 @@ def isocalc(
 
     # Schedule (shared with isocalc_jax3): state n is the state after n steps, at time
     # t0 + n*delta_t; output row j holds state j + 1 (at t_a[j]), so the last row is the state at
-    # t_end. Atmodeller re-equilibrates every n_atmodeller steps, i.e. at states 0, n_atmodeller,
-    # 2*n_atmodeller, ..., including the final state at t_end when n_steps is a multiple of
-    # n_atmodeller; a row at an equilibration holds the re-equilibrated state. Each row's
-    # diagnostics (radius, fluxes, ...) are evaluated from the state it holds, and are the ones
-    # used for the following Euler step.
+    # t_end. Atmodeller equilibrates state 0 before the loop, then re-equilibrates every
+    # n_atmodeller steps, i.e. at states n_atmodeller, 2*n_atmodeller, ..., including the final
+    # state at t_end when n_steps is a multiple of n_atmodeller; a row at an equilibration holds
+    # the re-equilibrated state. Each row's diagnostics (radius, fluxes, ...) are evaluated from
+    # the state it holds, and are the ones used for the following Euler step.
 
     # Molecule numbers and O2 activity from the latest equilibration, recorded in every row
     gas_num: dict[str, float] = {sp.label: 0.0 for sp in tracked_species}
     melt_num: dict[str, float] = {sp.label: 0.0 for sp in tracked_species}
     fO2: float = 0.0
+
+    def equilibrate(t_now: float) -> None:
+        """Re-equilibrates the atmosphere `y` with the interior using Atmodeller at time `t_now`
+        [s], updating the loop state in place.
+
+        This runs *before* a state's escape fluxes are computed. Previously the fluxes were
+        computed from the pre-equilibration atmosphere and then subtracted from the
+        post-equilibration one: the pre-equilibration atmosphere still holds the inventory that
+        Atmodeller then dissolves (e.g. N, S), so the fluxes were far too large for what was left
+        in the gas and, with clipping at zero, emptied it in a single step - removing atoms that
+        never escaped, at every equilibration. Atmodeller's inputs (escape radius, mean particle
+        mass) come from the pre-equilibration atmosphere, as in isocalc_jax3's
+        AtmodellerCoupler.reequilibrate.
+        """
+        nonlocal y, isofate_species_abund_int, T_surf_analytic, T_surf_atmod
+        nonlocal mantle_iron_state, atmod_initial_guess, fO2
+        mu, _, radius_p, _ = geometry(y, t_now)
+        # D/H fraction of the whole inventory (atmosphere + interior) at this solve, assuming the
+        # same D/H in both - computed from the current state, as in isocalc_jax3, so the H/D split
+        # after the solve conserves D exactly (zero if there is no hydrogen)
+        total_HD = y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2]
+        X_DH = (y[2] + isofate_species_abund_int[2]) / total_HD if total_HD != 0 else 0.0
+        # Species-level diagnostics (step.atmod_full["H2_g"]["gas"][...], O2 activity, etc.) are
+        # only read below when save_molecules is True; otherwise the narrow extraction (element
+        # number_moles + gas mass only) is all this loop needs.
+        step = run_atmodeller_step(
+            T,
+            radius_p,
+            mu,
+            options.melt_fraction_override,
+            mantle_iron_state,
+            y,
+            isofate_species_abund_int,
+            X_DH,
+            interior_atmosphere,
+            atmod_initial_guess,
+            full_output=options.save_molecules,
+        )
+        y = step.y
+        isofate_species_abund_int = step.isofate_species_abund_int
+        T_surf_analytic = step.T_surf_analytic
+        T_surf_atmod = step.T_surf_atmod
+        mantle_iron_state = step.mantle_iron_state
+        atmod_initial_guess = step.atmod_initial_guess
+        if options.save_molecules == True:
+            for sp in tracked_species:
+                gas_num[sp.label] = step.atmod_full[sp.gas_name]["gas"]["number_moles"][0][0]
+                melt_num[sp.label] = (
+                    step.atmod_full[sp.melt_name]["silicate_melt"]["number_moles"][0][0]
+                    if sp.melt_name is not None
+                    else 0.0  # no solubility model / melt reservoir
+                )
+            fO2 = step.atmod_full["O2_g"]["gas"]["activity"][0][0]
+
+    # Initial equilibration of the given inventory, before the time integration starts. Like
+    # isocalc_jax3, the initial state is not recorded, so the outputs start from the equilibrated
+    # atmosphere (minus one step of escape) rather than showing the initial drop as it dissolves.
+    if options.n_atmodeller != 0 and not is_exhausted(y):
+        equilibrate(t0_seconds)
 
     for n in range(n_tot + 1):
         # Physical time of state n. Used as the age in all age-dependent physics (envelope
@@ -295,56 +354,13 @@ def isocalc(
             break
 
         ##### run atmodeller ######
-        # Re-equilibrate *before* this state's escape fluxes are computed. Previously the fluxes
-        # were computed from the pre-equilibration atmosphere and then subtracted from the
-        # post-equilibration one: the pre-equilibration atmosphere still holds the inventory that
-        # Atmodeller then dissolves (e.g. N, S), so the fluxes were far too large for what was left
-        # in the gas and, with clipping at zero, emptied it in a single step - removing atoms
-        # that never escaped, at every equilibration. Atmodeller's inputs (escape radius, mean
-        # particle mass) come from the pre-equilibration atmosphere, as in isocalc_jax3's
-        # AtmodellerCoupler.reequilibrate.
-        if options.n_atmodeller != 0 and n % options.n_atmodeller == 0:
-            mu, _, radius_p, _ = geometry(y, t_now)
-            # D/H fraction of the whole inventory (atmosphere + interior) at this solve, assuming
-            # the same D/H in both - computed from the current state, as in isocalc_jax3, so the
-            # H/D split after the solve conserves D exactly (zero if there is no hydrogen)
-            total_HD = y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2]
-            X_DH = (y[2] + isofate_species_abund_int[2]) / total_HD if total_HD != 0 else 0.0
-            # Species-level diagnostics (step.atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
-            # are only read below when save_molecules is True; otherwise the narrow extraction
-            # (element number_moles + gas mass only) is all this loop needs.
-            step = run_atmodeller_step(
-                T,
-                radius_p,
-                mu,
-                options.melt_fraction_override,
-                mantle_iron_state,
-                y,
-                isofate_species_abund_int,
-                X_DH,
-                interior_atmosphere,
-                atmod_initial_guess,
-                full_output=options.save_molecules,
-            )
-            y = step.y
-            isofate_species_abund_int = step.isofate_species_abund_int
-            T_surf_analytic = step.T_surf_analytic
-            T_surf_atmod = step.T_surf_atmod
-            mantle_iron_state = step.mantle_iron_state
-            atmod_initial_guess = step.atmod_initial_guess
-            if options.save_molecules == True:
-                for sp in tracked_species:
-                    gas_num[sp.label] = step.atmod_full[sp.gas_name]["gas"]["number_moles"][0][0]
-                    melt_num[sp.label] = (
-                        step.atmod_full[sp.melt_name]["silicate_melt"]["number_moles"][0][0]
-                        if sp.melt_name is not None
-                        else 0.0  # no solubility model / melt reservoir
-                    )
-                fO2 = step.atmod_full["O2_g"]["gas"]["activity"][0][0]
-
+        # Scheduled re-equilibration (state 0 was equilibrated before the loop), *before* this
+        # state's escape fluxes are computed - see `equilibrate`
+        if options.n_atmodeller != 0 and n > 0 and n % options.n_atmodeller == 0:
+            equilibrate(t_now)
             # The equilibration may have dissolved the entire atmosphere
             if is_exhausted(y):
-                fill_exhausted(max(row, 0))
+                fill_exhausted(row)
                 atmod_full_output = nan_full_output()
                 break
 
