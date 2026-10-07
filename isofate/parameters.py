@@ -13,11 +13,7 @@ from atmodeller.jax_utils import safe_divide
 from jaxtyping import Array, ArrayLike
 
 from isofate.atmosphere import AtmosphereModel
-from isofate.escape.fractionation import (
-    EscapeNumberFlux,
-    EscapeNumberFluxBase,
-    EscapeNumberFluxDynamic,
-)
+from isofate.escape.fractionation import EscapeNumberFluxBase, make_escape_number_flux
 from isofate.escape.mechanisms import EscapeMechanism
 from isofate.mantle_iron import MantleIronConfig
 from isofate.species import (
@@ -52,8 +48,8 @@ class IsocalcOptions(eqx.Module):
             `fe_mass_fraction`. None disables this.
         dynamic_phi: Toggle dynamic phi calculation based on the most abundant species (True) or
             static phi calculation, always using H/He as the dominant pair (False). This selects
-            `Parameters.escape_number_flux` (`EscapeNumberFluxDynamic` or `EscapeNumberFlux`),
-            which every driver uses. Defaults to ``True``.
+            `Parameters.escape_number_flux` (see `make_escape_number_flux`), which every driver
+            uses. Defaults to ``True``.
         mass_loss_fraction: Fraction of the atmospheric mass at the start of an integration whose
             loss stops the integration (a diffrax event). The default ``1 - 1e-6`` stops it once
             the atmosphere is effectively exhausted; a smaller value (e.g. ``0.05``) stops it
@@ -91,11 +87,6 @@ class Parameters(eqx.Module):
     here are therefore elemental: atom counts and fractions, and a mean mass per atom. Where they
     have a molecular counterpart in Atmodeller's output, such as the volume mixing ratio or the
     mean molecular mass, the two differ.
-
-    `escape_number_flux` defaults to the model selected by `isocalc_options.dynamic_phi`
-    (`EscapeNumberFluxDynamic` if ``True``, else `EscapeNumberFlux`), built with
-    `isofate_species` and `binary_diffusion_coefficients`. If given explicitly, it must agree
-    with `isocalc_options.dynamic_phi`, because the legacy `isocalc` reads the option directly.
     """
 
     system: System
@@ -103,24 +94,23 @@ class Parameters(eqx.Module):
     _: dataclasses.KW_ONLY
     isofate_species: IsoFATESpecies = DEFAULT_SPECIES
     binary_diffusion_coefficients: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION
-    # None is replaced in __post_init__ by the model that isocalc_options.dynamic_phi selects
-    escape_number_flux: EscapeNumberFluxBase = None  # pyright: ignore[reportAssignmentType]
     isocalc_options: IsocalcOptions = IsocalcOptions()
     atmosphere: AtmosphereModel = AtmosphereModel()
 
-    def __post_init__(self):
-        flux_class = (
-            EscapeNumberFluxDynamic if self.isocalc_options.dynamic_phi else EscapeNumberFlux
+    @property
+    def escape_number_flux(self) -> EscapeNumberFluxBase:
+        """Escape number flux model selected by `isocalc_options.dynamic_phi`, built with
+        `isofate_species` and `binary_diffusion_coefficients` (see `make_escape_number_flux`).
+
+        A property rather than a stored field, so that it is rebuilt from those fields inside a
+        traced function: gradients (e.g. with respect to `binary_diffusion_coefficients`) reach
+        the fields themselves, and it can't go stale if they are changed with `eqx.tree_at`.
+        """
+        return make_escape_number_flux(
+            self.isocalc_options.dynamic_phi,
+            species=self.isofate_species,
+            binary_diffusion=self.binary_diffusion_coefficients,
         )
-        if self.escape_number_flux is None:
-            self.escape_number_flux = flux_class(
-                species=self.isofate_species, binary_diffusion=self.binary_diffusion_coefficients
-            )
-        elif type(self.escape_number_flux) is not flux_class:
-            raise ValueError(
-                f"escape_number_flux={type(self.escape_number_flux).__name__} is inconsistent "
-                f"with isocalc_options.dynamic_phi={self.isocalc_options.dynamic_phi}"
-            )
 
     def atmosphere_mass(self, y: Array) -> Array:
         """Total atmospheric mass [kg].

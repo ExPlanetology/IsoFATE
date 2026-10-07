@@ -434,3 +434,25 @@ class EscapeNumberFluxDynamic(EscapeNumberFluxBase):
         Phi = mask_light * Phi_1_calc + mask_heavy * Phi_2_calc + not_dominant * Phi_minor_all
 
         return Phi, phi_c
+
+
+def make_escape_number_flux(
+    dynamic_phi: bool,
+    species: IsoFATESpecies = DEFAULT_SPECIES,
+    binary_diffusion: BinaryDiffusionCoefficients = DEFAULT_BINARY_DIFFUSION,
+) -> EscapeNumberFluxBase:
+    """Escape number flux model selected by `dynamic_phi`.
+
+    Args:
+        dynamic_phi: Use the two currently most abundant species as the dominant light/heavy pair
+            (`EscapeNumberFluxDynamic`, ``True``) or always H/He (`EscapeNumberFlux`, ``False``).
+        species: Tracked-species registry. Defaults to `DEFAULT_SPECIES`.
+        binary_diffusion: Binary diffusion coefficient table. Defaults to
+            `DEFAULT_BINARY_DIFFUSION`.
+
+    Returns:
+        Escape number flux model
+    """
+    flux_class = EscapeNumberFluxDynamic if dynamic_phi else EscapeNumberFlux
+
+    return flux_class(species=species, binary_diffusion=binary_diffusion)
