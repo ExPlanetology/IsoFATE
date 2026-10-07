@@ -16,7 +16,6 @@ from isofate.atmosphere import AtmosphereModel
 from isofate.escape.fractionation import EscapeNumberFluxBase, make_escape_number_flux
 from isofate.escape.mechanisms import EscapeMechanism
 from isofate.initial_condition import InitialCondition
-from isofate.mantle_iron import MantleIronConfig
 from isofate.species import (
     DEFAULT_BINARY_DIFFUSION,
     DEFAULT_SPECIES,
@@ -34,9 +33,8 @@ class IsocalcOptions(eqx.Module):
     initial-value problem being solved and so stay direct `isocalc` arguments.
 
     Args:
-        rad_evol: Set to False to fix the planet radius at the rocky radius.
-        melt_fraction_override: Fixed mantle melt fraction; if False, it is instead calculated
-            from Mp and T_surface.
+        rad_evol: Set to False to fix the planet (escape) radius at the rocky radius, with no
+            envelope (see `isofate.engine.escape_radius`). Defaults to ``True``.
         n_steps: Number of timesteps; convergence occurs at 1e6.
         t_start: Simulation start time, i.e. system age at the start of the run [yr].
         thermal: Toggles planet radius contraction in the Lopez/Fortney equations (False removes
@@ -44,9 +42,6 @@ class IsocalcOptions(eqx.Module):
         n_atmodeller: Interval of timesteps between each Atmodeller call.
         save_molecules: Save molecular abundances at every timestep (True) or only the final
             abundances (False).
-        mantle_iron: Allows Fe in the mantle to react with O2. `reaction_type="dynamic"` reacts
-            only molten mantle Fe; `reaction_type="static"` reacts all mantle Fe; also specify
-            `fe_mass_fraction`. None disables this.
         dynamic_phi: Toggle dynamic phi calculation based on the most abundant species (True) or
             static phi calculation, always using H/He as the dominant pair (False). This selects
             `Parameters.escape_number_flux` (see `make_escape_number_flux`), which every driver
@@ -64,14 +59,11 @@ class IsocalcOptions(eqx.Module):
     """
 
     rad_evol: bool = True
-    # TODO: This can be removed once the JAX version is swapped in for the original isocalc.
-    melt_fraction_override: ArrayLike | bool = False
     n_steps: int = int(1e5)
     t_start: ArrayLike = 1e6
     thermal: bool = True
     n_atmodeller: int = int(1e2)
     save_molecules: bool = False
-    mantle_iron: MantleIronConfig | None = None
     dynamic_phi: bool = True
     # 1 - isofate.integrators.EXHAUSTION_FRACTION (not imported, to avoid an import cycle)
     mass_loss_fraction: float = 1 - 1e-6

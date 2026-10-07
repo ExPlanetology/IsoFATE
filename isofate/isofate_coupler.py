@@ -9,21 +9,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
 from jaxtyping import ArrayLike
 
 from isofate.atmodeller_coupler import (
     AtmodellerCoupler,
+    CouplerState,
     TrackedGasSpecies,
-    aggregate_D_into_H,
-    build_atmodeller,
     extract_full_output,
-    get_tracked_gas_species,
     nan_full_output,
-    run_atmodeller_step,
 )
-from isofate.atmodeller_coupler_new import AtmodellerCoupler as EventAtmodellerCoupler
-from isofate.atmodeller_coupler_new import CouplerState
 from isofate.constants import const
 from isofate.engine import (
     bondi_radius,
@@ -40,7 +34,6 @@ from isofate.integrators import (
 )
 from isofate.isofunks import R_atm, R_env
 from isofate.legacy import Phi_1_2, Phi_minor_species
-from isofate.mantle_iron import MantleIronState
 from isofate.parameters import Parameters
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
 from isofate.system import Planet
@@ -84,8 +77,8 @@ def isocalc(
     #  - the initial abundance [atoms] of each tracked species comes from
     #  parameters.initial_abundances(), ordered per isofate.species.SYMBOLS (H, He, D, O, C, N, S)
     #  - options: mode switches and tuning constants unrelated to escape mechanism, fixed for
-    #  the whole run - see IsocalcOptions for the full list (rad_evol, melt_fraction_override,
-    #  mu, n_steps, t_start, thermal, n_atmodeller, save_molecules, mantle_iron, dynamic_phi)
+    #  the whole run - see IsocalcOptions for the full list (rad_evol, n_steps, t_start,
+    #  thermal, n_atmodeller, save_molecules, dynamic_phi, ...)
     #  - escape: escape-mechanism instance (isofate.escape.mechanisms.EscapeMechanism) controlling the
     #  atmospheric mass-flux calculation each timestep; defaults to XUVEscape(), equivalent to
     #  today's default mechanism="XUV", RR=True. See isofate.escape.mechanisms for XUVEscape, CPMLEscape,
@@ -117,8 +110,7 @@ def isocalc(
     # local names, matching isocalc_jax3. Every IsocalcOptions field is read-only for the whole run
     # and referenced directly as `options.<field>` below. `mu`/R_B are derived fresh from the
     # evolving y every iteration below (no bootstrap `IsocalcOptions.mu` field exists anymore),
-    # matching `IsocalcModel.algebraic` (see engine.py). (`options.mantle_iron` similarly
-    # seeds a local `mantle_iron_state` below, once `interior_atmosphere` is available.)
+    # matching `IsocalcModel.algebraic` (see engine.py).
     system = parameters.system
     options = parameters.isocalc_options
     escape = parameters.escape_mechanism
@@ -166,26 +158,21 @@ def isocalc(
         T_surf_analytic = 0
         T_surf_atmod = 0
 
-    # build atmodeller model for interior-atmosphere coupling
-    interior_atmosphere = build_atmodeller(Mp, surface_radius=planet.rocky_radius)
-    # Ordered per interior_atmosphere's own gas-phase species (SpeciesCollection), not hand-typed
-    # - see the molecule-array declarations/writes below, which are driven by this tuple so they
-    # can never drift out of sync with atmodeller's actual species set/order.
-    tracked_species: tuple[TrackedGasSpecies, ...] = get_tracked_gas_species(interior_atmosphere)
-    # Warm-starts each AtmodellerCoupler call from the previous call's converged solution instead
-    # of solving cold every time - consecutive calls are a tiny physical perturbation apart, so
-    # this drastically cuts the number of Newton iterations needed. None on the first call.
-    atmod_initial_guess = None
+    # Atmodeller model for the interior-atmosphere coupling (the same coupler as isocalc_jax3),
+    # built once per run
+    coupler = AtmodellerCoupler(parameters)
+    # Jitted once for every equilibration (eagerly, the warm start's jax.lax.cond recompiles on
+    # every call)
+    run_atmodeller = eqx.filter_jit(coupler.run)
+    # Ordered per the Atmodeller model's own gas-phase species, so the molecule arrays below can
+    # never drift out of sync with Atmodeller's species set/order
+    tracked_species: tuple[TrackedGasSpecies, ...] = coupler.tracked_species
+    # Warm-starts each solve from the previous one's converged solution - consecutive solves are a
+    # small physical perturbation apart, so this cuts the number of Newton iterations. The initial
+    # all-NaN guess is a cold start.
+    atmod_initial_guess = coupler.cold_guess()
 
     atmod_full_output = {}  # dictionary to store atmodeller full output
-
-    # background_mantle_mass reads atmodeller's own mantle-mass partitioning (from the
-    # core_mass_fraction build_atmodeller passed to Planet.from_species) directly, rather than
-    # re-deriving/duplicating it here.
-    mantle_iron_state: MantleIronState | None = None
-    if options.mantle_iron is not None:
-        mantle_mass = float(interior_atmosphere.parameters.state.background_mantle_mass)
-        mantle_iron_state = MantleIronState.initial(options.mantle_iron, mantle_mass)
 
     ### atmosphere
     # Atmospheric number of atoms per species [atoms], ordered per
@@ -212,8 +199,8 @@ def isocalc(
     # timestep.
     y_a = np.zeros((n_tot, 7))  # atmospheric number array [atoms]
     y_a_int = np.zeros((n_tot, 7))  # mantle number array [atoms]
-    # Atmospheric/mantle molecule number history, ordered per interior_atmosphere's own gas-phase
-    # SpeciesCollection (see tracked_species above), keyed by isofate's human-readable label
+    # Atmospheric/mantle molecule number history, ordered per the Atmodeller model's own gas-phase
+    # species (see tracked_species above), keyed by isofate's human-readable label
     # (e.g. "SO2", not atmodeller's canonical "O2S_g").
     gas_num_a: dict[str, np.ndarray] = {sp.label: np.zeros(n_tot) for sp in tracked_species}
     melt_num_a: dict[str, np.ndarray] = {sp.label: np.zeros(n_tot) for sp in tracked_species}
@@ -292,44 +279,39 @@ def isocalc(
         AtmodellerCoupler.reequilibrate.
         """
         nonlocal y, isofate_species_abund_int, T_surf_analytic, T_surf_atmod
-        nonlocal mantle_iron_state, atmod_initial_guess, fO2
+        nonlocal atmod_initial_guess, fO2
         mu, _, radius_p, _ = geometry(y, t_now)
-        # D/H fraction of the whole inventory (atmosphere + interior) at this solve, assuming the
-        # same D/H in both - computed from the current state, as in isocalc_jax3, so the H/D split
-        # after the solve conserves D exactly (zero if there is no hydrogen)
-        total_HD = y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2]
-        X_DH = (y[2] + isofate_species_abund_int[2]) / total_HD if total_HD != 0 else 0.0
-        # Species-level diagnostics (step.atmod_full["H2_g"]["gas"][...], O2 activity, etc.) are
-        # only read below when save_molecules is True; otherwise the narrow extraction (element
-        # number_moles + gas mass only) is all this loop needs.
-        step = run_atmodeller_step(
-            T,
+        # The coupler splits H and D back out using the D/H of the whole current inventory, so the
+        # solve conserves D. The species-level output is only extracted when save_molecules is set.
+        result = run_atmodeller(
             radius_p,
             mu,
-            options.melt_fraction_override,
-            mantle_iron_state,
-            y,
-            isofate_species_abund_int,
-            X_DH,
-            interior_atmosphere,
-            atmod_initial_guess,
+            jnp.asarray(y),
+            jnp.asarray(isofate_species_abund_int),
+            initial_guess=atmod_initial_guess,
             full_output=options.save_molecules,
         )
-        y = step.y
-        isofate_species_abund_int = step.isofate_species_abund_int
-        T_surf_analytic = step.T_surf_analytic
-        T_surf_atmod = step.T_surf_atmod
-        mantle_iron_state = step.mantle_iron_state
-        atmod_initial_guess = step.atmod_initial_guess
+        if not bool(result.success):
+            # The unconverged result does not conserve the elements, so it must not be used
+            raise RuntimeError(
+                "Atmodeller failed to converge (warm start and cold fallback) at "
+                f"t = {t_now * const.s2yr:.6g} yr"
+            )
+        y = np.array(result.y, dtype=float)
+        isofate_species_abund_int = np.array(result.y_int, dtype=float)
+        T_surf_analytic = float(result.surface_temperature)
+        T_surf_atmod = float(result.surface_temperature_atmodeller)
+        atmod_initial_guess = result.solution
         if options.save_molecules == True:
+            output = jax.device_get(result.output)
             for sp in tracked_species:
-                gas_num[sp.label] = step.atmod_full[sp.gas_name]["gas"]["number_moles"][0][0]
+                gas_num[sp.label] = output[sp.gas_name]["gas"]["number_moles"][0][0]
                 melt_num[sp.label] = (
-                    step.atmod_full[sp.melt_name]["silicate_melt"]["number_moles"][0][0]
+                    output[sp.melt_name]["silicate_melt"]["number_moles"][0][0]
                     if sp.melt_name is not None
                     else 0.0  # no solubility model / melt reservoir
                 )
-            fO2 = step.atmod_full["O2_g"]["gas"]["activity"][0][0]
+            fO2 = output["O2_g"]["gas"]["activity"][0][0]
 
     # Initial equilibration of the given inventory, before the time integration starts. Like
     # isocalc_jax3, the initial state is not recorded, so the outputs start from the equilibrated
@@ -350,7 +332,9 @@ def isocalc(
         if is_exhausted(y):
             fill_exhausted(max(row, 0))
             if options.n_atmodeller != 0:
-                atmod_full_output = nan_full_output()  # atmodeller full output for monte carlo runs
+                atmod_full_output = (
+                    nan_full_output()
+                )  # atmodeller full output for monte carlo runs
             break
 
         ##### run atmodeller ######
@@ -493,18 +477,19 @@ def isocalc(
         if n == n_tot:
             # save final molecular abundances (read-only diagnostic of the final state)
             if options.n_atmodeller != 0:
-                atmod_sol = AtmodellerCoupler(
-                    T,
+                final = run_atmodeller(
                     radius_p,
                     mu,
-                    options.melt_fraction_override,
-                    mantle_iron_state,
-                    *aggregate_D_into_H(y),
-                    *aggregate_D_into_H(isofate_species_abund_int),
-                    interior_atmosphere,
+                    jnp.asarray(y),
+                    jnp.asarray(isofate_species_abund_int),
                     initial_guess=atmod_initial_guess,
-                )[1]
-                atmod_full_output = extract_full_output(atmod_sol)
+                    full_output=True,
+                )
+                if not bool(final.success):
+                    raise RuntimeError(
+                        "Atmodeller failed to converge for the final snapshot (atmodeller_final)"
+                    )
+                atmod_full_output = extract_full_output(jax.device_get(final.output))
             break
 
         # advance to the next state (forward Euler, clipped at zero)
@@ -590,10 +575,9 @@ def isocalc_jax3(
           last re-equilibration (by default only at exhaustion), and optionally
           `IsocalcOptions.species_loss_fraction` of any species.
 
-    The mantle iron reaction is ignored for now
-    (`IsocalcOptions.mantle_iron` is not read). Output rows after the atmosphere is exhausted are
-    ``inf``, as `AdaptiveIntegrator` leaves them (with ``euler=True`` the atmosphere is instead
-    frozen once exhausted). An empty initial atmosphere is not equilibrated, as in `isocalc`.
+    Output rows after the atmosphere is exhausted are ``inf``, as `AdaptiveIntegrator` leaves them
+    (with ``euler=True`` the atmosphere is instead frozen once exhausted). An empty initial
+    atmosphere is not equilibrated, as in `isocalc`.
 
     The reference for comparison is `isocalc` (manual fixed time step, re-equilibrating every
     `n_atmodeller` steps).
@@ -626,7 +610,7 @@ def isocalc_jax3(
     integrator_class = EulerIntegrator if euler else AdaptiveIntegrator
     # Built once per run, outside jit (it builds the Atmodeller model). Also built when the
     # coupling is off, for the molecule output keys
-    coupler = EventAtmodellerCoupler(parameters)
+    coupler = AtmodellerCoupler(parameters)
     tracked_species = coupler.tracked_species
     y_raw = jnp.asarray(parameters.initial_abundances(), dtype=float)
 
@@ -729,7 +713,6 @@ def isocalc_jax3(
                 rerun = run_full_output(
                     escape_radius(parameters, y_before, t_j),
                     parameters.atmosphere_mean_mu(y_before),
-                    None,
                     y_before,
                     jnp.asarray(y_int_before_states[j]),
                     initial_guess=guesses[j],
@@ -757,7 +740,6 @@ def isocalc_jax3(
             final = coupler.run(
                 escape_radius(parameters, y_final, t_final),
                 parameters.atmosphere_mean_mu(y_final),
-                None,
                 y_final,
                 state.y_int,
                 initial_guess=state.solution,
@@ -812,4 +794,3 @@ def isocalc_jax3(
         solutions["atmodeller_final"] = atmod_full_output
 
     return solutions
-

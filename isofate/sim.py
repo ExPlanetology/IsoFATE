@@ -64,11 +64,7 @@ n_steps = int(1e5)
 # TODO: Dan turned off to refactor without Atmodeller to start with.  Then we'll add it back in.
 n_atmodeller = int(1e4)  # <-- FIXME: set much smaller Atmodeller runs slow (1e2)
 thermal = True
-melt_fraction_override = False
 save_molecules = False
-# mantle_iron = MantleIronConfig(reaction_type="static", fe_mass_fraction=0.1)
-# FIXME: Also None for refactor and simplicity at this stage. Add back in after refactor.
-mantle_iron = None
 dynamic_phi = True
 OtoH_enhancement = 1
 # initial atmosphere: protosolar elemental ratios scaled to f_atm of the planet mass
@@ -94,7 +90,6 @@ print("Fp =", round(Fp, 1), "W/m2")
 print("Teq =", round(T, 1), "K")
 print("time =", time / 1e9, "Gyr")
 print("rad_evol =", rad_evol)
-print("mantle_iron", mantle_iron)
 print("dynamic_phi =", dynamic_phi)
 
 
@@ -115,13 +110,11 @@ escape_mechanism = XUVEscape(
 )
 options = IsocalcOptions(
     rad_evol=rad_evol,
-    melt_fraction_override=melt_fraction_override,
     n_steps=n_steps,
     t_start=t0,
     thermal=thermal,
     n_atmodeller=n_atmodeller,
     save_molecules=save_molecules,
-    mantle_iron=mantle_iron,
     dynamic_phi=dynamic_phi,
 )
 

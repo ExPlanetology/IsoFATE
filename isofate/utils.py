@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Small shared calculations used across isofate's plain and JAX implementations."""
+"""Utils."""
 
 import jax.numpy as jnp
 from jax.typing import ArrayLike
