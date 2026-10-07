@@ -177,7 +177,7 @@ class Parameters(eqx.Module):
 
         Returns 0 when the total abundance is zero, rather than letting 0/0 propagate as NaN -
         this keeps the value finite even when a caller only conditionally uses it (e.g. near-total
-        atmospheric exhaustion in isocalc_jax), so a discarded branch can't corrupt a gradient
+        atmospheric exhaustion in isocalc_jax3), so a discarded branch can't corrupt a gradient
         through the selecting `jnp.where`.
 
         Args:
