@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from jaxtyping import Array
 
 from isofate.constants import const
+from isofate.engine import escape_radius
 from isofate.mantle_iron import MantleIronState
 from isofate.parameters import Parameters
 from isofate.species import SYMBOLS
@@ -66,6 +67,28 @@ class AtmodellerResult(eqx.Module):
     solution: Array
     output: dict
     mantle_iron_state: MantleIronState | None
+
+
+class CouplerState(eqx.Module):
+    """State carried between Atmodeller re-equilibrations (see `AtmodellerCoupler.reequilibrate`).
+
+    Fixed structure, so it can be carried through `jax.lax.while_loop` by
+    `isofate.integrators.integrate_segments`.
+
+    Args:
+        y_int: Interior (dissolved) abundances [atoms], ordered per `isofate.species.SYMBOLS`.
+            Carried because Atmodeller's mass constraint is the atmosphere plus the interior, and
+            escape only drains the atmosphere.
+        solution: Last Atmodeller solution array, used to warm-start the next solve
+        surface_temperature: Surface temperature from the atmosphere descent at the last solve [K]
+        surface_temperature_atmodeller: Surface temperature used by Atmodeller at the last solve
+            [K]
+    """
+
+    y_int: Array
+    solution: Array
+    surface_temperature: Array
+    surface_temperature_atmodeller: Array
 
 
 class TrackedGasSpecies(eqx.Module):
@@ -284,6 +307,27 @@ class AtmodellerCoupler(eqx.Module):
 
         return tuple(tracked)
 
+    def cold_guess(self) -> Array:
+        """The default cold-start guess for the Atmodeller solve (all-NaN).
+
+        dtype=jnp.float64 (x64 is enabled process-wide, see isofate/__init__.py) matters here:
+        without it, jnp.full(..., jnp.nan) is weakly-typed, while a real solved `solution` array is
+        not - eqx.filter_jit treats weak_type as part of the trace signature, so a weak cold guess
+        and a strong warm guess would each force their own compile of update_solve_extract instead
+        of sharing one.
+
+        Returns:
+            All-NaN solution array
+        """
+        return jnp.full(
+            (
+                self.equilibrium_model.parameters.batch_size,
+                self.equilibrium_model.parameters.reaction_system.species.number_species * 2,
+            ),
+            jnp.nan,
+            dtype=jnp.float64,
+        )
+
     def mantle_melt_fraction(self, temperature: ArrayLike) -> Array:
         """Mantle melt fraction at the given surface temperature.
 
@@ -471,20 +515,7 @@ class AtmodellerCoupler(eqx.Module):
 
         extract_fn = self.update_solve_extract if full_output else self.update_solve_extract_narrow
 
-        # The default cold-start guess (all-NaN). dtype=jnp.float64 (x64 is enabled process-wide,
-        # see isofate/__init__.py) matters here: without it, jnp.full(..., jnp.nan) is
-        # weakly-typed, while a real solved `solution` array (returned below) is not -
-        # eqx.filter_jit treats weak_type as part of the trace signature, so a weak cold guess and
-        # a strong warm guess would each force their own compile of update_solve_extract instead
-        # of sharing one.
-        cold_guess: Array = jnp.full(
-            (
-                self.equilibrium_model.parameters.batch_size,
-                self.equilibrium_model.parameters.reaction_system.species.number_species * 2,
-            ),
-            jnp.nan,
-            dtype=jnp.float64,
-        )
+        cold_guess: Array = self.cold_guess()
 
         def solve(guess: Array):
             return extract_fn(mantle_melt_fraction, surface_temperature, mass_constraints, guess)
@@ -526,3 +557,57 @@ class AtmodellerCoupler(eqx.Module):
             output=sol,
             mantle_iron_state=mantle_iron_state,
         )
+
+    def initial_state(self) -> CouplerState:
+        """The state before the first re-equilibration: an empty interior and a cold guess.
+
+        Returns:
+            Initial coupler state
+        """
+        return CouplerState(
+            y_int=jnp.zeros(len(SYMBOLS)),
+            solution=self.cold_guess(),
+            surface_temperature=jnp.array(0.0),
+            surface_temperature_atmodeller=jnp.array(0.0),
+        )
+
+    def reequilibrate(
+        self, carry: CouplerState, t: ArrayLike, y: Array
+    ) -> tuple[CouplerState, Array]:
+        """Re-equilibrates the atmosphere and interior at the fixed time `t` - the `on_mass_lost`
+        hook for `isofate.integrators.integrate_segments`.
+
+        The escape radius and mean particle mass are derived from `(t, y)`, the interior reservoir
+        and warm start come from `carry`. An all-NaN `carry.solution` (see `initial_state`) is
+        equivalent to a cold start. The mantle iron reaction is ignored for now
+        (`mantle_iron_state=None`). Pure JAX, so it can run inside the jitted segment loop.
+
+        Args:
+            carry: Coupler state from the previous re-equilibration
+            t: Time [s]
+            y: Atmospheric abundances [atoms], ordered per `isofate.species.SYMBOLS`
+
+        Returns:
+            `(carry, y_new)`: the updated coupler state and the re-equilibrated atmospheric
+            abundances
+        """
+        result: AtmodellerResult = self.run(
+            escape_radius(self.parameters, y, t),
+            self.parameters.atmosphere_mean_mu(y),
+            None,
+            y,
+            carry.y_int,
+            initial_guess=carry.solution,
+            full_output=False,
+        )
+        new_carry = CouplerState(
+            y_int=result.y_int,
+            solution=result.solution,
+            surface_temperature=jnp.asarray(result.surface_temperature, dtype=float),
+            surface_temperature_atmodeller=jnp.asarray(
+                result.surface_temperature_atmodeller, dtype=float
+            ),
+        )
+
+        return new_carry, result.y
+
