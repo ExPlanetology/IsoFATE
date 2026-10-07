@@ -25,16 +25,19 @@ from isofate.atmodeller_coupler_new import AtmodellerCoupler as EventAtmodellerC
 from isofate.atmodeller_coupler_new import CouplerState
 from isofate.constants import const
 from isofate.engine import (
-    EXHAUSTION_FRACTION,
-    IntegrationStop,
-    IsocalcIntegrator,
     bondi_radius,
     escape_radius,
-    integrate_segments,
     tidal_gravitational_potential,
 )
 from isofate.escape.fractionation import Phi_1_2, Phi_minor_species
 from isofate.escape.mechanisms import EscapeState
+from isofate.integrators import (
+    EXHAUSTION_FRACTION,
+    IntegrationStop,
+    IsocalcIntegrator,
+    integrate_segments,
+    integrate_segments_euler,
+)
 from isofate.isofunks import R_atm, R_env
 from isofate.mantle_iron import MantleIronState
 from isofate.parameters import Parameters
@@ -192,7 +195,8 @@ def isocalc(
     y = np.array(isofate_species_abund, dtype=float)
     ###_____Initialize arrays_____###
 
-    t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t0_seconds  # time array [s]
+    # Output times [s]: row j is the state after j + 1 steps, so the last row is at t_end
+    t_a = t0_seconds + delta_t * np.arange(1, n_tot + 1)
 
     phi_a = np.zeros(n_tot)  # mass flux array [kg/s/m2]
     phic_a = np.zeros(n_tot)  # critical mass flux array [kg/s/m2]
@@ -223,62 +227,134 @@ def isocalc(
     T_surf_analytic_a = np.zeros(n_tot)  # surface temperature from analytic calculation array [K]
     T_surf_atmod_a = np.zeros(n_tot)  # atmodeller surface temperature array (capped at 6000 K) [K]
 
-    ###_____Loop through timesteps_____###
-
-    for n in range(n_tot):
-        # Derived fresh from y every iteration (mass-conservation identity: the atmosphere's
-        # total mass is exactly the sum of its constituent atoms' masses), rather than tracked as
-        # separately-updated state - matches isocalc_jax's design (see
-        # engine.py's IsocalcIntegrator.algebraic).
-        M_atm = np.dot(y, atomic_masses)
+    def geometry(y: np.ndarray, age: float) -> tuple[float, float, float, float]:
+        """Mean particle mass, envelope thickness, escape radius and atmosphere mass fraction of
+        the atmosphere `y` at the given age [s]."""
         f_atm = parameters.atmosphere_mass_fraction(y)
+        mu = parameters.atmosphere_mean_mu(y)
+        if options.rad_evol == False:
+            return mu, 0, planet.rocky_radius, f_atm
+        R_B = bondi_radius(parameters, y)  # recomputed from the current mu, not a fixed bootstrap
+        radius_env = R_env(Mp, f_atm, Fp, age, options.thermal)
+        radius_atm = R_atm(T, Mp, planet.rocky_radius, radius_env, mu)
+        radius_p = planet.rocky_radius + radius_atm + radius_env
+        # limits Rp to the min of Bondi/Hill/Lopez+Fortney radius; plain min() avoids numpy's
+        # array-construction/dispatch overhead on a 3-scalar comparison run every timestep
+        return mu, radius_env, min(R_B, R_H, radius_p), f_atm
+
+    def fill_exhausted(n: int) -> None:
+        """Fills the outputs from row `n` onwards once the entire atmosphere is lost."""
+        Matm_a[n:] = 0
+        fatm_a[n:] = 0
+        Renv_a[n:] = 0
+        Rp_a[n:] = planet.rocky_radius
+        Vpot_a[n:] = tidal_gravitational_potential(system, planet.rocky_radius)
+        phi_a[n:] = 0
+        Mloss_a[n:] = 0
+        y_a[n:] = 0
+        y_a_int[n:] = 0
+        for label in gas_num_a:
+            gas_num_a[label][n:] = 0
+            melt_num_a[label][n:] = 0
+        x_a[n:] = x_a[n - 1]  # carry the last molar concentration forward
+        Phi_a[n:] = 0
+        fO2_a[n:] = 0
+
+    def is_exhausted(y: np.ndarray) -> bool:
+        return np.dot(y, atomic_masses) <= 0 or np.sum(y) <= 0
+
+    ###_____Loop through the states_____###
+
+    # Schedule (shared with isocalc_jax3): state n is the state after n steps, at time
+    # t0 + n*delta_t; output row j holds state j + 1 (at t_a[j]), so the last row is the state at
+    # t_end. Atmodeller re-equilibrates every n_atmodeller steps, i.e. at states 0, n_atmodeller,
+    # 2*n_atmodeller, ..., including the final state at t_end when n_steps is a multiple of
+    # n_atmodeller; a row at an equilibration holds the re-equilibrated state. Each row's
+    # diagnostics (radius, fluxes, ...) are evaluated from the state it holds, and are the ones
+    # used for the following Euler step.
+
+    # Molecule numbers and O2 activity from the latest equilibration, recorded in every row
+    gas_num: dict[str, float] = {sp.label: 0.0 for sp in tracked_species}
+    melt_num: dict[str, float] = {sp.label: 0.0 for sp in tracked_species}
+    fO2: float = 0.0
+
+    for n in range(n_tot + 1):
+        # Physical time of state n. Used as the age in all age-dependent physics (envelope
+        # contraction in R_env, the XUV flux history). Previously the physics was evaluated at the
+        # old output label t_a[n] (= t0 + (n+1)*delta_t*n_tot/(n_tot-1)), about one step ahead,
+        # which shifted the escape radius, and so the surface temperature and Atmodeller's
+        # gas/melt partition, at every equilibration.
+        t_now = t0_seconds + n * delta_t
+        row = n - 1  # output row holding state n (state 0, the initial state, is not recorded)
 
         ### Stop simulation when entire atmosphere is lost
-        if M_atm <= 0 or np.sum(y) <= 0:
-            Matm_a[n:] = 0  # M_atm #Matm_a[n-1]
-            fatm_a[n:] = 0  # f_atm #fatm_a[n-1]
-            Renv_a[n:] = 0  # radius_env #Renv_a[n-1]
-            Rp_a[n:] = planet.rocky_radius
-            Vpot_a[n:] = tidal_gravitational_potential(system, planet.rocky_radius)
-
-            phi_a[n:] = 0
-            Mloss_a[n:] = 0
-
-            y_a[n:] = 0
-            y_a_int[n:] = 0
-            for label in gas_num_a:
-                gas_num_a[label][n:] = 0
-                melt_num_a[label][n:] = 0
-            x_a[n:] = x_a[n - 1]  # carry the last molar concentration forward
-            Phi_a[n:] = 0
-
-            # atmodeller full ouput for monte carlo runs
+        if is_exhausted(y):
+            fill_exhausted(max(row, 0))
             if options.n_atmodeller != 0:
-                atmod_full_output = nan_full_output()
-                if options.save_molecules == True:
-                    for label in gas_num_a:
-                        gas_num_a[label][n:] = 0
-                        melt_num_a[label][n:] = 0
-                    fO2_a[n:] = 0
-
+                atmod_full_output = nan_full_output()  # atmodeller full output for monte carlo runs
             break
 
-        # time-variable average atomic mass
-        N_tot = np.sum(y)
-        mu = parameters.atmosphere_mean_mu(y)
-        R_B = bondi_radius(parameters, y)  # recomputed from the current mu, not a fixed bootstrap
+        ##### run atmodeller ######
+        # Re-equilibrate *before* this state's escape fluxes are computed. Previously the fluxes
+        # were computed from the pre-equilibration atmosphere and then subtracted from the
+        # post-equilibration one: the pre-equilibration atmosphere still holds the inventory that
+        # Atmodeller then dissolves (e.g. N, S), so the fluxes were far too large for what was left
+        # in the gas and, with clipping at zero, emptied it in a single step - removing atoms
+        # that never escaped, at every equilibration. Atmodeller's inputs (escape radius, mean
+        # particle mass) come from the pre-equilibration atmosphere, as in isocalc_jax3's
+        # AtmodellerCoupler.reequilibrate.
+        if options.n_atmodeller != 0 and n % options.n_atmodeller == 0:
+            mu, _, radius_p, _ = geometry(y, t_now)
+            # D/H fraction of the whole inventory (atmosphere + interior) at this solve, assuming
+            # the same D/H in both - computed from the current state, as in isocalc_jax3, so the
+            # H/D split after the solve conserves D exactly (zero if there is no hydrogen)
+            total_HD = y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2]
+            X_DH = (y[2] + isofate_species_abund_int[2]) / total_HD if total_HD != 0 else 0.0
+            # Species-level diagnostics (step.atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
+            # are only read below when save_molecules is True; otherwise the narrow extraction
+            # (element number_moles + gas mass only) is all this loop needs.
+            step = run_atmodeller_step(
+                T,
+                radius_p,
+                mu,
+                options.melt_fraction_override,
+                mantle_iron_state,
+                y,
+                isofate_species_abund_int,
+                X_DH,
+                interior_atmosphere,
+                atmod_initial_guess,
+                full_output=options.save_molecules,
+            )
+            y = step.y
+            isofate_species_abund_int = step.isofate_species_abund_int
+            T_surf_analytic = step.T_surf_analytic
+            T_surf_atmod = step.T_surf_atmod
+            mantle_iron_state = step.mantle_iron_state
+            atmod_initial_guess = step.atmod_initial_guess
+            if options.save_molecules == True:
+                for sp in tracked_species:
+                    gas_num[sp.label] = step.atmod_full[sp.gas_name]["gas"]["number_moles"][0][0]
+                    melt_num[sp.label] = (
+                        step.atmod_full[sp.melt_name]["silicate_melt"]["number_moles"][0][0]
+                        if sp.melt_name is not None
+                        else 0.0  # no solubility model / melt reservoir
+                    )
+                fO2 = step.atmod_full["O2_g"]["gas"]["activity"][0][0]
 
-        if options.rad_evol == False:
-            radius_env = 0
-            radius_atm = 0
-            radius_p = planet.rocky_radius
-        else:
-            radius_env = R_env(Mp, f_atm, Fp, t_a[n], options.thermal)
-            radius_atm = R_atm(T, Mp, planet.rocky_radius, radius_env, mu)
-            radius_p = planet.rocky_radius + radius_atm + radius_env
-            # limits Rp to the min of Bondi/Hill/Lopez+Fortney radius; plain min() avoids numpy's
-            # array-construction/dispatch overhead on a 3-scalar comparison run every timestep
-            radius_p = min(R_B, R_H, radius_p)
+            # The equilibration may have dissolved the entire atmosphere
+            if is_exhausted(y):
+                fill_exhausted(max(row, 0))
+                atmod_full_output = nan_full_output()
+                break
+
+        # Derived fresh from the (possibly re-equilibrated) y every iteration (mass-conservation
+        # identity: the atmosphere's total mass is exactly the sum of its constituent atoms'
+        # masses), rather than tracked as separately-updated state - matches isocalc_jax's design
+        # (see integrators.py's IsocalcIntegrator.algebraic).
+        M_atm = np.dot(y, atomic_masses)
+        N_tot = np.sum(y)
+        mu, radius_env, radius_p, f_atm = geometry(y, t_now)
 
         Vpot = tidal_gravitational_potential(system, radius_p)
         A = 4 * np.pi * radius_p**2
@@ -291,7 +367,7 @@ def isocalc(
             mean_mu=mu,
             convective_envelope_thickness=radius_env,
             atmosphere_mass_fraction=f_atm,
-            t_current=t_a[n],
+            t_current=t_now,
         )
         phi = escape.compute_mass_flux(state)
 
@@ -375,26 +451,32 @@ def isocalc(
                         heavy_dominant_idx,
                     )
 
-        # record values
-        Matm_a[n] = M_atm
-        fatm_a[n] = f_atm
-        Renv_a[n] = (
-            radius_env  # this will still change even with Rp limited to min(R_Bondi, R_Hill)
-        )
-        Rp_a[n] = radius_p
-        Vpot_a[n] = Vpot
-        phi_a[n] = phi
-        phic_a[n] = phi_c
-        Mloss_a[n] = mass_loss
+        # record state n in its output row
+        if row >= 0:
+            Matm_a[row] = M_atm
+            fatm_a[row] = f_atm
+            # this will still change even with Rp limited to min(R_Bondi, R_Hill)
+            Renv_a[row] = radius_env
+            Rp_a[row] = radius_p
+            Vpot_a[row] = Vpot
+            phi_a[row] = phi
+            phic_a[row] = phi_c
+            Mloss_a[row] = mass_loss
 
-        y_a[n] = y
-        y_a_int[n] = isofate_species_abund_int
-        x_a[n] = x
-        Phi_a[n] = Phi
+            y_a[row] = y
+            y_a_int[row] = isofate_species_abund_int
+            x_a[row] = x
+            Phi_a[row] = Phi
+            T_surf_analytic_a[row] = T_surf_analytic
+            T_surf_atmod_a[row] = T_surf_atmod
+            for label in gas_num_a:
+                gas_num_a[label][row] = gas_num[label]
+                melt_num_a[label][row] = melt_num[label]
+            fO2_a[row] = fO2
 
-        ##### run atmodeller ######
-        if options.n_atmodeller != 0:  # save final molecular abundances on last time step
-            if n == options.n_steps - 1:
+        if n == n_tot:
+            # save final molecular abundances (read-only diagnostic of the final state)
+            if options.n_atmodeller != 0:
                 atmod_sol = AtmodellerCoupler(
                     T,
                     radius_p,
@@ -407,61 +489,9 @@ def isocalc(
                     initial_guess=atmod_initial_guess,
                 )[1]
                 atmod_full_output = extract_full_output(atmod_sol)
-            if n % options.n_atmodeller == 0:  # run atmodeller every n_atmodeller steps.
-                # D/H fraction of the whole inventory (atmosphere + interior) at this solve,
-                # assuming the same D/H in both - computed from the current state, as in
-                # isocalc_jax3, so the H/D split after the solve conserves D exactly (zero if
-                # there is no hydrogen)
-                total_HD = y[0] + y[2] + isofate_species_abund_int[0] + isofate_species_abund_int[2]
-                X_DH = (y[2] + isofate_species_abund_int[2]) / total_HD if total_HD != 0 else 0.0
-                # Species-level diagnostics (step.atmod_full["H2_g"]["gas"][...], O2 activity, etc.)
-                # are only read below when save_molecules is True; otherwise the narrow extraction
-                # (element number_moles + gas mass only) is all this loop needs.
-                step = run_atmodeller_step(
-                    T,
-                    radius_p,
-                    mu,
-                    options.melt_fraction_override,
-                    mantle_iron_state,
-                    y,
-                    isofate_species_abund_int,
-                    X_DH,
-                    interior_atmosphere,
-                    atmod_initial_guess,
-                    full_output=options.save_molecules,
-                )
-                y = step.y
-                isofate_species_abund_int = step.isofate_species_abund_int
-                # Not read into M_atm here (unlike before): M_atm is derived fresh from y at the
-                # top of every iteration (see above), and step.M_atm is exactly
-                # dot(step.y, atomic_masses) anyway (see atmodeller_coupler.py's
-                # run_atmodeller_step), so next iteration's derived M_atm already reflects this.
-                T_surf_analytic = step.T_surf_analytic
-                T_surf_atmod = step.T_surf_atmod
-                mantle_iron_state = step.mantle_iron_state
-                atmod_initial_guess = step.atmod_initial_guess
-                if options.save_molecules == True:
-                    for sp in tracked_species:
-                        gas_num_a[sp.label][n] = step.atmod_full[sp.gas_name]["gas"][
-                            "number_moles"
-                        ][0][0]
-                        if sp.melt_name is not None:
-                            melt_num_a[sp.label][n] = step.atmod_full[sp.melt_name][
-                                "silicate_melt"
-                            ]["number_moles"][0][0]
-                        else:
-                            melt_num_a[sp.label][n] = 0.0  # no solubility model / melt reservoir
-                    fO2_a[n] = step.atmod_full["O2_g"]["gas"]["activity"][0][0]
-            else:
-                for label in gas_num_a:
-                    gas_num_a[label][n] = gas_num_a[label][n - 1]
-                    melt_num_a[label][n] = melt_num_a[label][n - 1]
-                fO2_a[n] = fO2_a[n - 1]
-        T_surf_analytic_a[n] = T_surf_analytic
-        T_surf_atmod_a[n] = T_surf_atmod
+            break
 
-        # advance to next step - M_atm/f_atm are not updated here: next iteration re-derives them
-        # fresh from this same y (see the top of the loop above).
+        # advance to the next state (forward Euler, clipped at zero)
         y_loss = Phi * A * delta_t
         y -= y_loss
         y = np.maximum(y, 0)
@@ -663,7 +693,8 @@ def isocalc_jax(
     # y = np.array(isofate_species_abund, dtype=float)
     ###_____Initialize arrays_____###
 
-    t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t_start_seconds  # time array [s]
+    # Output times [s]: row j is the state after j + 1 steps, so the last row is at t_end
+    t_a = t_start_seconds + delta_t * np.arange(1, n_tot + 1)
 
     y_a_int = np.zeros((n_tot, 7))  # mantle number array [atoms] - atmodeller disabled, stays 0
     # Atmospheric/mantle molecule number history, ordered per interior_atmosphere's own gas-phase
@@ -942,7 +973,8 @@ def isocalc_jax2(
 
     ###_____Initialize arrays_____###
 
-    t_a = delta_t * np.linspace(1, n_tot + 1, n_tot) + t_start_seconds  # time array [s]
+    # Output times [s]: row j is the state after j + 1 steps, so the last row is at t_end
+    t_a = t_start_seconds + delta_t * np.arange(1, n_tot + 1)
 
     # Atmospheric/mantle molecule number history, ordered per interior_atmosphere's own gas-phase
     # SpeciesCollection (see tracked_species above), keyed by isofate's human-readable label
@@ -994,7 +1026,7 @@ def isocalc_jax2(
         x_a = np.zeros((n_tot, 7))
         y_a = np.zeros((n_tot, 7))
 
-        # EXHAUSTION_FRACTION (engine.py) applied here against the run's true initial mass -
+        # EXHAUSTION_FRACTION (integrators.py) applied here against the run's true initial mass -
         # IsocalcIntegrator.integrate's internal event is relative to each segment's own
         # (shrinking) y0 and would otherwise under-detect exhaustion late in a run.
         M_atm0_run = float(np.dot(y, atomic_masses))
@@ -1236,3 +1268,246 @@ def isocalc_jax2(
         solutions["atmodeller_final"] = atmod_full_output
 
     return solutions
+
+
+def isocalc_jax3(
+    parameters: Parameters,
+    t_end=5e9,
+    isofate_species_abund: Array = jnp.array([0, 0, 0, 0, 0, 0, 0], dtype=float),
+    euler: bool = False,
+):
+    """Atmospheric escape with event-triggered Atmodeller coupling.
+
+    Replaces `isocalc_jax2`'s loop of separate solves: the integration runs through
+    `isofate.integrators.integrate_segments`, which stops on an event, re-equilibrates the atmosphere
+    and interior with Atmodeller (`AtmodellerCoupler.reequilibrate`), and restarts. The atmosphere
+    and interior are first equilibrated once at the start time.
+
+    The events are:
+        - Elapsed time: every `IsocalcOptions.n_atmodeller` output steps, i.e. at exactly
+          ``t_start + k * n_atmodeller * delta_t`` - `isocalc`'s cadence. `n_atmodeller = 0`
+          switches the coupling off.
+        - Mass loss: `IsocalcOptions.mass_loss_fraction` of the atmospheric mass lost since the
+          last re-equilibration (by default only at exhaustion), and optionally
+          `IsocalcOptions.species_loss_fraction` of any species.
+
+    The mantle iron reaction is ignored for now
+    (`IsocalcOptions.mantle_iron` is not read). Output rows after the atmosphere is exhausted are
+    ``inf``, as `integrate_segments` leaves them.
+
+    The reference for comparison is `isocalc` (manual fixed time step, re-equilibrating every
+    `n_atmodeller` steps).
+
+    Args:
+        parameters: Parameters
+        t_end: Simulation end time, i.e. system age at the end of the run [yr]. Defaults to
+            ``5e9``.
+        isofate_species_abund: Initial atmospheric abundances [atoms], ordered per
+            `isofate.species.SYMBOLS` (H, He, D, O, C, N, S)
+        euler: Integrate with isocalc's fixed-step forward Euler scheme
+            (`isofate.integrators.integrate_segments_euler`: re-equilibrating every `n_atmodeller`
+            steps, no events) instead of the adaptive solver with events. Defaults to ``False``.
+
+    Returns:
+        Dictionary with the same keys as `isocalc` (plus ``t_atmodeller``, the re-equilibration
+        times [s])
+    """
+    options = parameters.isocalc_options
+
+    ###_____Initialize timesteps_____###
+
+    n_tot = options.n_steps
+    t_start_seconds = np.asarray(options.t_start / const.s2yr)  # simulation start time [s]
+    t_end_seconds = t_end / const.s2yr  # simulation end time [s]
+    duration = t_end_seconds - t_start_seconds  # simulation duration [s]
+    delta_t = duration / n_tot  # timestep [s]
+    # Output times [s]: row j is the state after j + 1 steps, so the last row is at t_end
+    t_a = t_start_seconds + delta_t * np.arange(1, n_tot + 1)
+
+    # Re-equilibrate every n_atmodeller output steps, like isocalc (a time event)
+    integrator = IsocalcIntegrator(
+        parameters,
+        reequilibration_interval=(
+            float(options.n_atmodeller * delta_t) if options.n_atmodeller != 0 else None
+        ),
+    )
+    # Built once per run, outside jit (it builds the Atmodeller model). Also built when the
+    # coupling is off, for the molecule output keys
+    coupler = EventAtmodellerCoupler(parameters)
+    tracked_species = coupler.tracked_species
+    y_raw = jnp.asarray(isofate_species_abund, dtype=float)
+
+    # TODO: temporary output assembly to match isocalc's keys - clean up
+    y_a_int = np.zeros((n_tot, 7))  # interior number array [atoms]
+    T_surf_analytic_a = np.zeros(n_tot)  # surface temperature from the atmosphere descent [K]
+    T_surf_atmod_a = np.zeros(n_tot)  # surface temperature used by Atmodeller [K]
+    gas_num_a: dict[str, np.ndarray] = {sp.label: np.zeros(n_tot) for sp in tracked_species}
+    melt_num_a: dict[str, np.ndarray] = {sp.label: np.zeros(n_tot) for sp in tracked_species}
+    fO2_a = np.zeros(n_tot)  # O2 activity
+    t_atmodeller = np.zeros(0)  # re-equilibration times [s]
+    atmod_full_output: dict = {}
+
+    ###_____Integrate_____###
+
+    if options.n_atmodeller == 0:
+        if euler:
+            y_a, alg_a, _, _ = integrate_segments_euler(
+                integrator, jnp.asarray(t_start_seconds), jnp.asarray(t_a), y_raw, n_tot
+            )
+        else:
+            sol = integrator.integrate(jnp.asarray(t_start_seconds), jnp.asarray(t_a), y_raw)
+            y_a = sol.ys[0]  # pyright: ignore[reportOptionalSubscript]
+            alg_a = integrator.diagnostics(jnp.asarray(t_a), y_a)
+    else:
+        t_start_j = jnp.asarray(t_start_seconds)
+        state0, y0 = coupler.reequilibrate(coupler.initial_state(), t_start_j, y_raw)
+        if euler:
+            y_a, alg_a, restarts, state = integrate_segments_euler(
+                integrator,
+                t_start_j,
+                jnp.asarray(t_a),
+                y0,
+                options.n_atmodeller,
+                on_mass_lost=coupler.reequilibrate,
+                carry=state0,
+            )
+        else:
+            y_a, alg_a, restarts, state = integrate_segments(
+                integrator,
+                t_start_j,
+                jnp.asarray(t_a),
+                y0,
+                on_mass_lost=coupler.reequilibrate,
+                carry=state0,
+            )
+        count = int(restarts.count)
+
+        # TODO: temporary output assembly to match isocalc's keys - clean up.
+        # One entry per equilibration: the initial one, then each restart.
+        def stacked(initial, per_restart):
+            return np.concatenate([np.asarray(initial)[None], np.asarray(per_restart)[:count]])
+
+        carries: CouplerState = restarts.carry
+        eq_t = stacked(t_start_seconds, restarts.t)
+        eq_y_before = stacked(y_raw, restarts.y_before)
+        y_int_states = stacked(state0.y_int, carries.y_int)
+        T_surf_states = stacked(state0.surface_temperature, carries.surface_temperature)
+        T_atmod_states = stacked(
+            state0.surface_temperature_atmodeller, carries.surface_temperature_atmodeller
+        )
+
+        # Re-equilibrate once more at the end time when it is on the schedule (n_steps a multiple
+        # of n_atmodeller), as isocalc does - integrate_segments never restarts at the last output
+        # time. The last row then holds the re-equilibrated state.
+        y_a = np.array(y_a)
+        floor = EXHAUSTION_FRACTION * float(parameters.atmosphere_mass(y0))
+        if (
+            n_tot % options.n_atmodeller == 0
+            and np.all(np.isfinite(y_a[-1]))
+            and float(parameters.atmosphere_mass(jnp.asarray(y_a[-1]))) > floor
+        ):
+            state, y_end = coupler.reequilibrate(state, jnp.asarray(t_a[-1]), jnp.asarray(y_a[-1]))
+            eq_t = np.append(eq_t, t_a[-1])
+            eq_y_before = np.concatenate([eq_y_before, y_a[-1][None]])
+            y_int_states = np.concatenate([y_int_states, np.asarray(state.y_int)[None]])
+            T_surf_states = np.append(T_surf_states, float(state.surface_temperature))
+            T_atmod_states = np.append(T_atmod_states, float(state.surface_temperature_atmodeller))
+            y_a[-1] = np.asarray(y_end)
+            alg_a = integrator.diagnostics(jnp.asarray(t_a), jnp.asarray(y_a))
+        t_atmodeller = eq_t
+
+        # The interior and surface temperatures are piecewise constant: each output time takes the
+        # latest equilibration at or before it (within half an output spacing, since equilibration
+        # times coincide with output times only to the last bit)
+        half_gap = 0.5 * float(np.min(np.diff(t_a)))
+        which = np.searchsorted(eq_t[1:] - half_gap, t_a, side="right")
+        y_a_int = y_int_states[which]
+        T_surf_analytic_a = T_surf_states[which]
+        T_surf_atmod_a = T_atmod_states[which]
+
+        if options.save_molecules:
+            # Re-run each equilibration with full output, with exactly the inputs the hook had
+            # (the pre-equilibration atmosphere and the previous interior), so it reproduces the
+            # same equilibrium
+            y_int_before_states = np.concatenate([np.zeros((1, 7)), y_int_states[:-1]])
+            for j in range(len(eq_t)):
+                y_before = jnp.asarray(eq_y_before[j])
+                t_j = jnp.asarray(eq_t[j])
+                output = jax.device_get(
+                    coupler.run(
+                        escape_radius(parameters, y_before, t_j),
+                        parameters.atmosphere_mean_mu(y_before),
+                        None,
+                        y_before,
+                        jnp.asarray(y_int_before_states[j]),
+                        full_output=True,
+                    ).output
+                )
+                rows = which == j
+                for sp in tracked_species:
+                    gas_num_a[sp.label][rows] = output[sp.gas_name]["gas"]["number_moles"][0][0]
+                    if sp.melt_name is not None:
+                        melt_num_a[sp.label][rows] = output[sp.melt_name]["silicate_melt"][
+                            "number_moles"
+                        ][0][0]
+                fO2_a[rows] = output["O2_g"]["gas"]["activity"][0][0]
+
+        # Final full snapshot (read-only diagnostic), as isocalc's "atmodeller_final"
+        y_final = jnp.asarray(y_a[-1])
+        if bool(jnp.all(jnp.isfinite(y_final))):
+            t_final = jnp.asarray(t_a[-1])
+            final = coupler.run(
+                escape_radius(parameters, y_final, t_final),
+                parameters.atmosphere_mean_mu(y_final),
+                None,
+                y_final,
+                state.y_int,
+                initial_guess=state.solution,
+                full_output=True,
+            )
+            atmod_full_output = extract_full_output(jax.device_get(final.output))
+        else:
+            atmod_full_output = nan_full_output()
+
+    y_a = np.asarray(y_a)
+    Matm_a = np.asarray(alg_a.atmosphere_mass)
+    fatm_a = np.asarray(alg_a.atmosphere_mass_fraction)
+    Renv_a = np.asarray(alg_a.convective_envelope_thickness)
+    Rp_a = np.asarray(alg_a.escape_radius)
+    Vpot_a = np.asarray(alg_a.gravitational_potential)
+    phi_a = np.asarray(alg_a.mass_flux)
+    phic_a = np.asarray(alg_a.critical_mass_flux)
+    Phi_a = np.asarray(alg_a.number_flux)
+    x_a = np.asarray(alg_a.atom_fractions)
+    Mloss_a = phi_a * np.asarray(alg_a.area) * delta_t
+
+    # save results
+    solutions = {
+        "time": t_a,
+        "Rp": Rp_a,
+        "Ratm": Renv_a,
+        "Matm": Matm_a,
+        "Vpot": Vpot_a,
+        "fatm": fatm_a,
+        "Mloss": Mloss_a,
+        "phi": phi_a,
+        "phic": phic_a,
+        **{f"N_{symbol}": y_a[:, i].copy() for i, symbol in enumerate(SYMBOLS)},
+        **{f"N_{symbol}_int": y_a_int[:, i].copy() for i, symbol in enumerate(SYMBOLS)},
+        **{f"x{i + 1}": x_a[:, i].copy() for i in range(len(SYMBOLS))},
+        **{f"Phi_{symbol}": Phi_a[:, i].copy() for i, symbol in enumerate(SYMBOLS)},
+        "T_surf_analytic": T_surf_analytic_a,
+        "T_surf_atmod": T_surf_atmod_a,
+        "t_atmodeller": t_atmodeller,
+    }
+    if options.save_molecules:
+        for label, arr in gas_num_a.items():
+            solutions[f"n_{label}_a"] = arr
+        for label, arr in melt_num_a.items():
+            solutions[f"n_{label}_a_int"] = arr
+        solutions["fO2_a"] = fO2_a
+    if options.n_atmodeller != 0:
+        solutions["atmodeller_final"] = atmod_full_output
+
+    return solutions
+
