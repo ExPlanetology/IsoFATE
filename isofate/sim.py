@@ -71,8 +71,7 @@ save_molecules = False
 # mantle_iron = MantleIronConfig(reaction_type="static", fe_mass_fraction=0.1)
 # FIXME: Also None for refactor and simplicity at this stage. Add back in after refactor.
 mantle_iron = None
-# FIXME: Add this back in after refactor
-dynamic_phi = False
+dynamic_phi = True
 OtoH_enhancement = 1
 OtoH_enhanced = const.OtoH_protosolar * OtoH_enhancement
 OtoH_enhanced_mass = OtoH_enhanced * (const.mu_O / const.mu_H)
