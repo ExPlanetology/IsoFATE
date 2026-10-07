@@ -29,7 +29,6 @@ from isofate.engine import (
     escape_radius,
     tidal_gravitational_potential,
 )
-from isofate.escape.fractionation import Phi_1_2, Phi_minor_species
 from isofate.escape.mechanisms import EscapeState
 from isofate.integrators import (
     EXHAUSTION_FRACTION,
@@ -39,6 +38,7 @@ from isofate.integrators import (
     integrate_segments_euler,
 )
 from isofate.isofunks import R_atm, R_env
+from isofate.legacy import Phi_1_2, Phi_minor_species
 from isofate.mantle_iron import MantleIronState
 from isofate.parameters import Parameters
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
