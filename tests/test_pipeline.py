@@ -34,9 +34,11 @@ import pytest
 from isofate.atmodeller_coupler import AtmodellerCoupler, build_atmodeller, get_tracked_gas_species
 from isofate.constants import const
 from isofate.escape.mechanisms import XUVEscape
+from isofate.initial_condition import AbundanceInitialCondition
 from isofate.isofate_coupler import isocalc
 from isofate.mantle_iron import MantleIronConfig
 from isofate.parameters import IsocalcOptions, Parameters
+from isofate.species import DEFAULT_SPECIES
 from isofate.system import Planet, Star, System
 
 
@@ -76,7 +78,7 @@ def test_atmodeller_coupler_single_solve():
     results, sol, mantle_iron_state, _initial_guess = AtmodellerCoupler(
         Teq=900.0,
         Rp=1.5 * 6.371e6,
-        mu=const.mu_H,
+        mu=DEFAULT_SPECIES.mass_by_symbol["H"],
         melt_fraction=1.0,
         mantle_iron_state=None,
         N_H_atm=5e46,
@@ -139,14 +141,13 @@ def _toy_isocalc_kwargs(**option_overrides):
     the coupling, not the time integration (see tests/test_sim.py for that)."""
     options = IsocalcOptions(n_steps=20, n_atmodeller=5, **{"dynamic_phi": False, **option_overrides})
     parameters = Parameters(
-        _toy_system(), escape_mechanism=XUVEscape(F0=500.0), isocalc_options=options
+        _toy_system(),
+        escape_mechanism=XUVEscape(F0=500.0),
+        # ordered per isofate.species.SYMBOLS: (H, He, D, O, C, N, S)
+        initial_condition=AbundanceInitialCondition((1e45, 1e44, 1e41, 1.5e45, 1e44, 1e43, 1e43)),
+        isocalc_options=options,
     )
-    return dict(
-        parameters=parameters,
-        t_end=1e6,
-        # isofate_species_abund ordered per isofate.species.SYMBOLS: (H, He, D, O, C, N, S)
-        isofate_species_abund=(1e45, 1e44, 1e41, 1.5e45, 1e44, 1e43, 1e43),
-    )
+    return dict(parameters=parameters, t_end=1e6)
 
 
 def test_isocalc_regression():

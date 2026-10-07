@@ -17,6 +17,10 @@ area from `radius_p` internally, matching `phi_kill`'s existing pattern) - `STAT
 manually-rounded `5.3e14`, not the exact `4*pi*radius_p**2` (~5.309e14), so CPML's mass flux
 shifts by ~0.2% relative. A precision fix, not a regression.
 
+The XUV (RR=True) and "XUV+CPML" pins were re-pinned (~1.6e-4 relative) when the recombination-
+limited flux switched from `const.mu_H` (1.008 g/mol) to the species' H mass (molmass, 1.007941
+g/mol), the same atomic masses used everywhere else.
+
 `EscapeState` reads planet mass, equilibrium temperature and orbital distance from a `System`.
 The toy `SYSTEM` below reproduces the originally pinned inputs (Mp=5e24 kg, T=900 K,
 d=7.5e9 m) by choosing the planet period from the orbital distance and setting the stellar
@@ -72,7 +76,7 @@ STATE = EscapeState(
 
 def test_xuv_escape_matches_old_mechanism_dispatch():
     assert XUVEscape(F0=F0, RR=True).compute_mass_flux(STATE) == pytest.approx(
-        1.6720024065164486e-08
+        1.6717392799680708e-08
     )
     assert XUVEscape(F0=F0, RR=False).compute_mass_flux(STATE) == pytest.approx(3.75e-07)
 
@@ -88,7 +92,7 @@ def test_phi_kill_escape_matches_old_mechanism_dispatch():
 
 def test_combined_escape_matches_old_xuv_plus_cpml_dispatch():
     combined = CombinedEscape((XUVEscape(F0=F0, RR=True), CPMLEscape()))
-    assert combined.compute_mass_flux(STATE) == pytest.approx(2.3412392008248244e-07)
+    assert combined.compute_mass_flux(STATE) == pytest.approx(2.34121288816999e-07)
 
 
 def test_combined_escape_sums_components():

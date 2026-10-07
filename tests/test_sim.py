@@ -29,17 +29,18 @@ from isofate.integrators import (
     no_reequilibration,
 )
 from isofate.escape.mechanisms import XUVEscape
+from isofate.initial_condition import AbundanceInitialCondition, ProtosolarInitialCondition
 from isofate.atmodeller_coupler_new import AtmodellerCoupler
 from isofate.isofate_coupler import isocalc, isocalc_jax3
 from isofate.parameters import IsocalcOptions, Parameters
 from isofate.presets import LHS1140b, LHS1140Star
-from isofate.species import SYMBOLS
+from isofate.species import DEFAULT_SPECIES, SYMBOLS
 from isofate.system import System
 
 
 # isofate/sim.py's current run settings, kept in sync with that script by hand (the remaining
 # inputs are reconstructed by _sim_isocalc_kwargs)
-SIM_PY = dict(n_steps=int(1e5), n_atmodeller=int(1e4), f_atm=0.00085, dynamic_phi=True)
+SIM_PY = dict(n_steps=int(1e5), n_atmodeller=int(1e4), f_atm=0.01, dynamic_phi=True)
 
 
 def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_phi=False):
@@ -55,9 +56,6 @@ def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_ph
     planet = LHS1140b
     system = System(star=star, planet=planet)
 
-    # Not a Planet field (removed) - matches sim.py's own scripting-level constant, used only to
-    # scale this function's solar-abundance-ratio construction of N_H/N_He/etc. below.
-    Mp = planet.mass
     t_jump = star.t_jump
 
     Fp = system.insolation
@@ -77,29 +75,6 @@ def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_ph
     melt_fraction_override = False
     save_molecules = False
     mantle_iron = None
-
-    M_atm = Mp * f_atm  # initial atmospheric mass [kg]
-    OtoH_enhanced_mass = const.OtoH_protosolar * (const.mu_O / const.mu_H)
-
-    N_He = (const.HetoH_protosolar_mass / (1 + const.HetoH_protosolar_mass)) * M_atm / const.mu_He
-    N_H = (
-        (
-            1
-            - const.DtoH_solar_mass
-            - OtoH_enhanced_mass
-            - const.CtoH_protosolar_mass
-            - const.StoH_protosolar_mass
-            - const.NtoH_protosolar_mass
-        )
-        * M_atm
-        / (1 + const.HetoH_protosolar_mass)
-        / const.mu_H
-    )
-    N_D = const.DtoH_solar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_D
-    N_O = OtoH_enhanced_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_O
-    N_C = const.CtoH_protosolar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_C
-    N_N = const.NtoH_protosolar_mass * M_atm / const.mu_N
-    N_S = const.StoH_protosolar_mass * M_atm / (1 + const.HetoH_protosolar_mass) / const.mu_S
 
     escape = XUVEscape(
         F0=F0,
@@ -127,13 +102,52 @@ def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_ph
         mantle_iron=mantle_iron,
         dynamic_phi=dynamic_phi,
     )
-    parameters = Parameters(system, escape_mechanism=escape, isocalc_options=options)
-    return dict(
-        parameters=parameters,
-        t_end=time,
-        # ordered per isofate.species.SYMBOLS
-        isofate_species_abund=(N_H, N_He, N_D, N_O, N_C, N_N, N_S),
+    parameters = Parameters(
+        system,
+        escape_mechanism=escape,
+        initial_condition=ProtosolarInitialCondition(atmosphere_mass_fraction=f_atm),
+        isocalc_options=options,
     )
+    return dict(parameters=parameters, t_end=time)
+
+
+def _with_initial_abundances(kwargs, abundances):
+    """`kwargs` with the initial condition replaced by the given abundances [atoms]."""
+    initial_condition = AbundanceInitialCondition(tuple(abundances))
+    parameters = dataclasses.replace(kwargs["parameters"], initial_condition=initial_condition)
+    return {**kwargs, "parameters": parameters}
+
+
+def test_protosolar_initial_condition():
+    """ProtosolarInitialCondition gives exactly the protosolar mole ratios to H, an atmospheric
+    mass of exactly f_atm times the planet mass (in the species' atomic masses), and an O
+    enhancement that only changes O/H."""
+    Mp = LHS1140b.mass
+    f_atm = 0.01
+    y0 = np.asarray(ProtosolarInitialCondition(f_atm).abundances(Mp))
+    ratios = ProtosolarInitialCondition.PROTOSOLAR_MOLE_RATIOS_TO_H
+    H = DEFAULT_SPECIES.index("H")
+
+    for i, symbol in enumerate(DEFAULT_SPECIES.species):
+        assert y0[i] / y0[H] == pytest.approx(ratios[symbol], rel=1e-12), symbol
+    assert float(np.dot(y0, DEFAULT_SPECIES.atomic_masses)) == pytest.approx(
+        f_atm * float(Mp), rel=1e-12
+    )
+
+    y_enhanced = np.asarray(ProtosolarInitialCondition(f_atm, OtoH_enhancement=2).abundances(Mp))
+    for i, symbol in enumerate(DEFAULT_SPECIES.species):
+        expected = 2 * ratios[symbol] if symbol == "O" else ratios[symbol]
+        assert y_enhanced[i] / y_enhanced[H] == pytest.approx(expected, rel=1e-12), symbol
+
+
+def test_abundance_initial_condition():
+    """AbundanceInitialCondition returns its abundances, and rejects a mismatched length."""
+    abundances = (1e45, 1e44, 1e41, 1.5e45, 1e44, 1e43, 1e43)
+    np.testing.assert_array_equal(
+        np.asarray(AbundanceInitialCondition(abundances).abundances(LHS1140b.mass)), abundances
+    )
+    with pytest.raises(ValueError):
+        AbundanceInitialCondition(abundances[:-1]).abundances(LHS1140b.mass)
 
 
 def test_sim_regression():
@@ -158,19 +172,24 @@ def test_sim_regression():
     than the output label t_a[n], which runs about one step ahead. This moves isocalc towards the
     adaptive JAX driver (final Matm difference 6.7e-5 -> 4.7e-5), so it is a correction, not a
     regression.
+
+    Re-pinned again when the initial abundances moved to ProtosolarInitialCondition, which uses
+    exact protosolar mole ratios to H normalised by the total mass (in the species' atomic
+    masses). This fixes N's missing normalisation (initial N about 1.39x lower) and the former
+    recipe's H "remainder", which put every X/H about 1.5% above protosolar.
     """
     sol = isocalc(**_sim_isocalc_kwargs())
 
-    assert sol["Matm"][-1] == pytest.approx(2.784654750240057e23, rel=1e-6)
-    assert sol["N_H"][-1] == pytest.approx(1.1097311942220029e50, rel=1e-6)
-    assert sol["N_He"][-1] == pytest.approx(1.3414512951085343e49, rel=1e-6)
-    assert sol["N_D"][-1] == pytest.approx(2.3455061586587238e45, rel=1e-6)
-    assert sol["N_O"][-1] == pytest.approx(8.353162454098547e46, rel=1e-6)
-    assert sol["N_C"][-1] == pytest.approx(4.1684331956265637e46, rel=1e-6)
-    assert sol["N_N"][-1] == pytest.approx(1.595305687580649e46, rel=1e-6)
-    assert sol["N_S"][-1] == pytest.approx(2.595544854318647e45, rel=1e-6)
-    assert sol["Rp"][-1] == pytest.approx(13824623.332857858, rel=1e-6)
-    assert sol["Vpot"][-1] == pytest.approx(153883944.20291469, rel=1e-6)
+    assert sol["Matm"][-1] == pytest.approx(2.783430554314534e23, rel=1e-6)
+    assert sol["N_H"][-1] == pytest.approx(1.1152201767281153e50, rel=1e-6)
+    assert sol["N_He"][-1] == pytest.approx(1.3278748701495348e49, rel=1e-6)
+    assert sol["N_D"][-1] == pytest.approx(2.3224981664139336e45, rel=1e-6)
+    assert sol["N_O"][-1] == pytest.approx(8.267505240308852e46, rel=1e-6)
+    assert sol["N_C"][-1] == pytest.approx(4.1256558350670687e46, rel=1e-6)
+    assert sol["N_N"][-1] == pytest.approx(1.1396109241276901e46, rel=1e-6)
+    assert sol["N_S"][-1] == pytest.approx(2.568944911327128e45, rel=1e-6)
+    assert sol["Rp"][-1] == pytest.approx(13827208.10305326, rel=1e-6)
+    assert sol["Vpot"][-1] == pytest.approx(153853762.14169946, rel=1e-6)
 
 
 def test_isocalc_isocalc_jax3_cross_check():
@@ -211,8 +230,7 @@ def test_isocalc_jax3_empty_atmosphere(euler):
     created from nothing: the atmosphere stays empty (rows are 0, or inf for the adaptive solver,
     which marks exhausted rows that way), the interior stays empty, and atmodeller_final is NaN.
     """
-    kwargs = _sim_isocalc_kwargs(n_steps=40, n_atmodeller=10)
-    kwargs["isofate_species_abund"] = (0.0,) * 7
+    kwargs = _with_initial_abundances(_sim_isocalc_kwargs(n_steps=40, n_atmodeller=10), (0.0,) * 7)
     sol = isocalc_jax3(**kwargs, euler=euler)
     sol_isocalc = isocalc(**kwargs)
 
@@ -264,7 +282,7 @@ def _sim_integrator_setup(mass_loss_fraction=None):
     t_end = kwargs["t_end"] / const.s2yr
     delta_t = (t_end - t_start) / options.n_steps
     t_a = jnp.asarray(delta_t * np.linspace(1, options.n_steps + 1, options.n_steps) + t_start)
-    y0 = jnp.asarray(kwargs["isofate_species_abund"], dtype=float)
+    y0 = parameters.initial_abundances()
 
     return IsocalcModel(parameters), jnp.asarray(t_start), t_a, y0
 

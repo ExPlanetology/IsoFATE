@@ -70,14 +70,15 @@ def test_scale_heights_matches_ideal_gas_law_with_molar_mass():
     # R = kB*N_A and M = m*N_A.
     T, g = 500.0, 20.0
     H = DEFAULT_SPECIES.scale_heights(T, g)
+    # independent reference molar masses [kg/mol]
     molar_masses = {
-        "H": const.M_H,
-        "He": const.M_He,
-        "D": const.M_D,
-        "O": const.M_O,
-        "C": const.M_C,
-        "N": const.M_N,
-        "S": const.M_S,
+        "H": 0.001008,
+        "He": 0.0040026,
+        "D": 0.002014,
+        "O": 0.015999,
+        "C": 0.012011,
+        "N": 0.014007,
+        "S": 0.032065,
     }
     for symbol, height in zip(SYMBOLS, H):
         expected = const.R_gas * T / (molar_masses[symbol] * g)
