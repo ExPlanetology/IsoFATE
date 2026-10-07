@@ -73,7 +73,6 @@ def _sim_isocalc_kwargs(
     eps = 0.15
     rad_evol = True
     thermal = True
-    save_molecules = False
 
     escape = XUVEscape(
         F0=F0,
@@ -96,7 +95,6 @@ def _sim_isocalc_kwargs(
         t_start=t0,
         thermal=thermal,
         n_atmodeller=n_atmodeller,
-        save_molecules=save_molecules,
         euler=euler,
         dynamic_phi=dynamic_phi,
     )
@@ -179,7 +177,7 @@ def test_sim_regression():
     Moved from the former NumPy loop driver to the JAX driver (euler=True) when the loop was
     retired: the two agreed to round-off (about 1e-13) on every output, so the pins are unchanged.
     """
-    sol = isocalc(**_sim_isocalc_kwargs(euler=True))
+    sol = isocalc(**_sim_isocalc_kwargs(euler=True)).to_dict(to_numpy=True)
 
     assert sol["Matm"][-1] == pytest.approx(2.783430554314534e23, rel=1e-6)
     assert sol["N_H"][-1] == pytest.approx(1.1152201767281153e50, rel=1e-6)
@@ -196,8 +194,8 @@ def test_sim_regression():
 def test_isocalc_adaptive_matches_euler():
     """Without Atmodeller, the adaptive solver (Tsit5) and the fixed-step Euler scheme agree to
     about 6e-4 relative at 2000 steps (the Euler error), within rel=1e-2."""
-    sol_euler = isocalc(**_sim_isocalc_kwargs(n_steps=2000, euler=True))
-    sol = isocalc(**_sim_isocalc_kwargs(n_steps=2000))
+    sol_euler = isocalc(**_sim_isocalc_kwargs(n_steps=2000, euler=True)).to_dict(to_numpy=True)
+    sol = isocalc(**_sim_isocalc_kwargs(n_steps=2000)).to_dict(to_numpy=True)
 
     for key in ("Matm", "N_H", "N_He", "N_D", "N_O", "N_C", "N_N", "N_S", "Rp", "Vpot"):
         assert sol[key][-1] == pytest.approx(sol_euler[key][-1], rel=1e-2), key
@@ -209,8 +207,9 @@ def test_isocalc_coupled_adaptive_matches_euler():
     quantities and 4e-3 for the trace species N and S (the Euler error at 2000 steps), within
     rel=1e-2.
     """
-    sol_euler = isocalc(**_sim_isocalc_kwargs(n_steps=2000, n_atmodeller=100, euler=True))
-    sol = isocalc(**_sim_isocalc_kwargs(n_steps=2000, n_atmodeller=100))
+    kwargs = dict(n_steps=2000, n_atmodeller=100)
+    sol_euler = isocalc(**_sim_isocalc_kwargs(**kwargs, euler=True)).to_dict(to_numpy=True)
+    sol = isocalc(**_sim_isocalc_kwargs(**kwargs)).to_dict(to_numpy=True)
 
     keys = [f"N_{symbol}" for symbol in SYMBOLS] + [f"N_{symbol}_int" for symbol in SYMBOLS]
     for key in keys + ["Matm", "Rp", "Vpot", "T_surf_atmod"]:
@@ -221,16 +220,19 @@ def test_isocalc_coupled_adaptive_matches_euler():
 def test_isocalc_empty_atmosphere(euler):
     """An empty initial atmosphere is not equilibrated, so no atmosphere is
     created from nothing: the atmosphere stays empty (rows are 0, or inf for the adaptive solver,
-    which marks exhausted rows that way), the interior stays empty, and atmodeller_final is NaN.
+    which marks exhausted rows that way), the interior stays empty, and there are no
+    equilibrations or Atmodeller output.
     """
     kwargs = _sim_isocalc_kwargs(n_steps=40, n_atmodeller=10, euler=euler)
-    sol = isocalc(**_with_initial_abundances(kwargs, (0.0,) * 7))
+    output = isocalc(**_with_initial_abundances(kwargs, (0.0,) * 7))
+    sol = output.to_dict(to_numpy=True)
 
     assert len(sol["t_atmodeller"]) == 0
     for symbol in SYMBOLS:
         assert np.all((sol[f"N_{symbol}"] == 0) | np.isinf(sol[f"N_{symbol}"])), symbol
         assert np.all(sol[f"N_{symbol}_int"] == 0), symbol
-    assert np.all(np.isnan(list(sol["atmodeller_final"].values())))
+    assert int(output.equilibrations.count) == 0
+    assert output.atmodeller is None
 
 
 def test_reequilibrate_warm_start_matches_cold_start():
@@ -413,14 +415,33 @@ def test_adaptive_integrator_max_segments():
     assert not bool(restarts.finished)
 
 
-def _jax3_kwargs(n_steps=200, mass_loss_fraction=0.05, save_molecules=False):
+def _last_atmodeller_row(output):
+    """A few Atmodeller quantities at the last equilibration (the last batch row)."""
+    atmodeller = output.atmodeller.to_dict(output_format="elements_species", to_numpy=True)
+
+    def last(*keys):
+        value = atmodeller
+        for key in keys:
+            value = value[key]
+        return float(np.ravel(value)[-1])
+
+    return {
+        "O2_fugacity": last("O2_g", "gas", "activity"),
+        "log10dIW_1_bar": last("gas", "phase", "log10dIW_1_bar"),
+        "H2O_atm": last("H2O_g", "gas", "number_moles"),
+        "H2O_mantle": last("H2O_d", "silicate_melt", "number_moles"),
+        "H2_atm": last("H2_g", "gas", "number_moles"),
+        "CO2_atm": last("CO2_g", "gas", "number_moles"),
+    }
+
+
+def _jax3_kwargs(n_steps=200, mass_loss_fraction=0.05):
     """LHS 1140 b with the Atmodeller coupling on, re-equilibrating every `mass_loss_fraction` of
     atmospheric mass lost (`isocalc`)."""
     kwargs = _sim_isocalc_kwargs(n_steps=n_steps, n_atmodeller=1)
     options = dataclasses.replace(
         kwargs["parameters"].isocalc_options,
         mass_loss_fraction=mass_loss_fraction,
-        save_molecules=save_molecules,
     )
     kwargs["parameters"] = dataclasses.replace(kwargs["parameters"], isocalc_options=options)
     return kwargs
@@ -454,29 +475,29 @@ def test_reequilibrate_conserves_each_element():
         y_int_before = restarts.carry.y_int[i]
 
 
-@pytest.mark.parametrize("save_molecules", [False, True])
-def test_isocalc_outputs(save_molecules):
-    """isocalc returns the documented keys (the former NumPy loop's, plus `t_atmodeller` and,
-    with save_molecules, the molecule histories), all finite, with the interior outputs piecewise
-    constant between re-equilibrations."""
-    kwargs = _jax3_kwargs(save_molecules=save_molecules)
-    sol = isocalc(**kwargs)
+def test_isocalc_outputs():
+    """isocalc's Output gives IsoFATE's own time series (all finite, the interior piecewise
+    constant between re-equilibrations), and keeps the complete Atmodeller output separately, with
+    one batch row per equilibration."""
+    output = isocalc(**_jax3_kwargs())
+    sol = output.to_dict(to_numpy=True)
 
     expected_keys = (
         {"time", "Rp", "Ratm", "Matm", "Vpot", "fatm", "Mloss", "phi", "phic"}
-        | {"T_surf_analytic", "T_surf_atmod", "t_atmodeller", "atmodeller_final"}
+        | {"T_surf_analytic", "T_surf_atmod", "t_atmodeller"}
         | {f"N_{symbol}" for symbol in SYMBOLS}
         | {f"N_{symbol}_int" for symbol in SYMBOLS}
         | {f"Phi_{symbol}" for symbol in SYMBOLS}
         | {f"x{i + 1}" for i in range(len(SYMBOLS))}
     )
-    molecule_keys = {key for key in sol if key.startswith("n_") or key == "fO2_a"}
-    assert set(sol) - molecule_keys == expected_keys
-    assert bool(molecule_keys) == save_molecules
+    assert set(sol) == expected_keys
     for key, value in sol.items():
-        if key != "atmodeller_final":
-            assert np.all(np.isfinite(value)), key
-    assert np.all(np.isfinite(list(sol["atmodeller_final"].values())))
+        assert np.all(np.isfinite(value)), key
+
+    count = int(output.equilibrations.count)
+    assert len(sol["t_atmodeller"]) == count
+    assert output.atmodeller.parameters.batch_size == count
+    assert np.all(np.asarray(output.atmodeller.multi_attempt_solution.success))
 
     # The interior only changes at the output rows straddling a re-equilibration
     restart_rows = set(np.searchsorted(sol["time"], sol["t_atmodeller"][1:]).tolist())
@@ -495,7 +516,7 @@ def test_isocalc_fixed_radius(euler):
     kwargs = _sim_isocalc_kwargs(n_steps=200, n_atmodeller=0, euler=euler)
     options = dataclasses.replace(kwargs["parameters"].isocalc_options, rad_evol=False)
     kwargs["parameters"] = dataclasses.replace(kwargs["parameters"], isocalc_options=options)
-    sol = isocalc(**kwargs)
+    sol = isocalc(**kwargs).to_dict(to_numpy=True)
 
     rocky_radius = float(kwargs["parameters"].system.planet.rocky_radius)
     np.testing.assert_allclose(sol["Rp"], rocky_radius, rtol=1e-12)
@@ -504,7 +525,9 @@ def test_isocalc_fixed_radius(euler):
 
 # Final values of isocalc with euler=True, pinned when the former NumPy loop driver was retired;
 # that loop (an independent implementation of the same scheme) agreed with these to round-off
-# (<= 3e-14)
+# (<= 3e-14). The "final:" values are the last equilibration in the separate Atmodeller output;
+# they were re-pinned (up to 0.7%) when that replaced the former "atmodeller_final" snapshot,
+# which re-solved the already-equilibrated final state at a slightly shifted surface temperature.
 EULER_PINS = {
     "no_coupling": {
         "N_H": 1.1063425993631312e50, "N_He": 1.3202485174289307e49,
@@ -521,9 +544,9 @@ EULER_PINS = {
         "N_O_int": 8.257528520715939e46, "N_C_int": 1.7832140522299958e40,
         "N_N_int": 1.1418784569042538e46, "N_S_int": 2.5692265288053014e45,
         "Matm": 2.5302054365595094e23, "Rp": 13634928.079489931,
-        "T_surf_atmod": 3166.941216947133, "final:O2_fugacity": 1.0190482674105137e-13,
-        "final:H2O_atm": 3.482683755461788e20, "final:H2_atm": 8.374919983983618e25,
-        "final:CO2_atm": 214838581589.85864,
+        "T_surf_atmod": 3166.941216947133, "final:O2_fugacity": 1.0120911261655606e-13,
+        "final:H2O_atm": 3.4967478246601995e20, "final:H2_atm": 8.376849196277148e25,
+        "final:CO2_atm": 215288119881.3438,
     },
     "sim_py": {
         "N_H": 1.015405862967759e50, "N_He": 1.2538893809509016e49,
@@ -534,9 +557,9 @@ EULER_PINS = {
         "N_O_int": 8.257675541168726e46, "N_C_int": 1.751699812297779e40,
         "N_N_int": 1.1418784569179982e46, "N_S_int": 2.569226528805283e45,
         "Matm": 2.5412731368390358e23, "Rp": 13643750.793812025,
-        "T_surf_atmod": 3170.997201663295, "final:O2_fugacity": 1.0206628479229042e-13,
-        "final:H2O_atm": 3.459586606070278e20, "final:H2_atm": 8.415086681061429e25,
-        "final:CO2_atm": 210720992918.0445,
+        "T_surf_atmod": 3170.997201663295, "final:O2_fugacity": 1.0136982351186724e-13,
+        "final:H2O_atm": 3.473524742171525e20, "final:H2_atm": 8.417022497979125e25,
+        "final:CO2_atm": 211160265791.39478,
     },
 }
 
@@ -562,11 +585,13 @@ EULER_PINS = {
 )
 def test_isocalc_euler_regression(case, settings):
     """Pins isocalc with euler=True, isocalc's fixed-step scheme, on short LHS 1140 b runs."""
-    sol = isocalc(**_sim_isocalc_kwargs(**settings, euler=True))
+    output = isocalc(**_sim_isocalc_kwargs(**settings, euler=True))
+    sol = output.to_dict(to_numpy=True)
+    final = _last_atmodeller_row(output) if output.atmodeller is not None else {}
 
     for key, expected in EULER_PINS[case].items():
         if key.startswith("final:"):
-            value = sol["atmodeller_final"][key.removeprefix("final:")]
+            value = final[key.removeprefix("final:")]
         else:
             value = sol[key][-1]
         assert float(value) == pytest.approx(expected, rel=1e-8), key

@@ -69,36 +69,13 @@ def _single_solve_parameters():
     )
 
 
-def test_tracked_gas_species_matches_atmodeller_order():
-    """Order/labels/melt-name mapping must be derived from the Atmodeller model itself, not
-    hand-typed - this pins that derivation against atmodeller's actual species order."""
-    tracked = AtmodellerCoupler(_single_solve_parameters()).tracked_species
-
-    labels = tuple(sp.label for sp in tracked)
-    assert labels == ("H2", "H2O", "O2", "CO2", "CO", "CH4", "N2", "S2", "H2O4S", "SO2")
-
-    by_label = {sp.label: sp for sp in tracked}
-    # atmodeller canonicalizes SO2 to Hill notation "O2S_g", not "SO2_g" (read straight off
-    # atmodeller's own ChemicalSpeciesData.name - no isofate-side conversion or override).
-    assert by_label["SO2"].gas_name == "O2S_g"
-
-    no_melt_reservoir = {"O2", "H2O4S", "SO2"}
-    for sp in tracked:
-        if sp.label in no_melt_reservoir:
-            assert sp.melt_name is None
-        else:
-            assert sp.melt_name == f"{sp.label}_d"
-
-
 def test_atmodeller_coupler_single_solve():
     """A single equilibrium solve for a realistic, H2-dominated/reducing composition."""
     parameters = _single_solve_parameters()
     coupler = AtmodellerCoupler(parameters)
     # ordered per isofate.species.SYMBOLS: (H, He, D, O, C, N, S)
     y = jnp.array([5e46, 1e44, 0.0, 1e43, 1e43, 1e42, 1e42])
-    result = coupler.run(
-        1.5 * 6.371e6, DEFAULT_SPECIES.mass_by_symbol["H"], y, jnp.zeros(7), full_output=False
-    )
+    result = coupler.run(1.5 * 6.371e6, DEFAULT_SPECIES.mass_by_symbol["H"], y, jnp.zeros(7))
     assert bool(result.success)
 
     symbols = ("H", "He", "O", "C", "N", "S")
@@ -166,8 +143,10 @@ def _toy_isocalc_kwargs(**option_overrides):
 
 def test_isocalc_toy_regression():
     """Short, non-escape-dominated run with isocalc with euler=True; the former NumPy loop's values,
-    cross-checked against ../IsoFATE_main to ~1e-4 relative."""
-    sol = isocalc(**_toy_isocalc_kwargs(euler=True))
+    cross-checked against ../IsoFATE_main to ~1e-4 relative. The Atmodeller values are at the last
+    equilibration, from the separate Atmodeller output."""
+    output = isocalc(**_toy_isocalc_kwargs(euler=True))
+    sol = output.to_dict(to_numpy=True)
 
     _assert_finite(sol["Matm"], sol["N_H"], sol["N_O_int"], sol["N_C_int"])
 
@@ -176,16 +155,28 @@ def test_isocalc_toy_regression():
     assert sol["N_O_int"][-1] == pytest.approx(4.888599902382618e44, rel=1e-2)
     assert sol["N_C_int"][-1] == pytest.approx(2.0517344351712084e43, rel=1e-2)
 
-    final = sol["atmodeller_final"]
-    assert final["O2_fugacity"] == pytest.approx(4.415226249622124, rel=1e-2)
-    assert final["log10dIW_1_bar"] == pytest.approx(0.004890098041127358, abs=1e-2)
-    assert final["H2O_atm"] == pytest.approx(181146406710961.88, rel=1e-2)
-    assert final["H2O_mantle"] == pytest.approx(7.670751470352576e20, rel=1e-2)
+    atmodeller = output.atmodeller.to_dict(output_format="elements_species", to_numpy=True)
+    assert atmodeller["O2_g"]["gas"]["activity"][-1] == pytest.approx(4.415226249622124, rel=1e-2)
+    assert atmodeller["gas"]["phase"]["log10dIW_1_bar"][-1] == pytest.approx(
+        0.004890098041127358, abs=1e-2
+    )
+    assert atmodeller["H2O_g"]["gas"]["number_moles"][-1] == pytest.approx(
+        181146406710961.88, rel=1e-2
+    )
+    assert atmodeller["H2O_d"]["silicate_melt"]["number_moles"][-1] == pytest.approx(
+        7.670751470352576e20, rel=1e-2
+    )
 
 
-def test_isocalc_save_molecules():
-    sol = isocalc(**_toy_isocalc_kwargs(save_molecules=True, euler=True))
+def test_isocalc_atmodeller_output():
+    """The complete Atmodeller output is kept separately from IsoFATE's own output, one batch row
+    per equilibration, with finite molecule amounts."""
+    output = isocalc(**_toy_isocalc_kwargs(euler=True))
+    atmodeller = output.atmodeller.to_dict(output_format="elements_species", to_numpy=True)
 
-    for key in ("n_H2O_a", "n_H2_a", "n_O2_a", "n_CO2_a", "n_CO_a", "n_CH4_a", "n_N2_a", "n_S2_a"):
-        assert key in sol
-        _assert_finite(sol[key])
+    count = int(output.equilibrations.count)
+    assert output.atmodeller.parameters.batch_size == count
+    for name in ("H2O_g", "H2_g", "O2_g", "CO2_g", "CO_g", "CH4_g", "N2_g", "S2_g"):
+        number_moles = np.ravel(atmodeller[name]["gas"]["number_moles"])
+        assert number_moles.shape == (count,)
+        _assert_finite(number_moles)

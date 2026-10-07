@@ -63,7 +63,6 @@ n_steps = int(1e5)
 # TODO: Dan turned off to refactor without Atmodeller to start with.  Then we'll add it back in.
 n_atmodeller = int(1e4)  # <-- FIXME: set much smaller Atmodeller runs slow (1e2)
 thermal = True
-save_molecules = False
 dynamic_phi = True
 OtoH_enhancement = 1
 # initial atmosphere: protosolar elemental ratios scaled to f_atm of the planet mass
@@ -113,7 +112,6 @@ options = IsocalcOptions(
     t_start=t0,
     thermal=thermal,
     n_atmodeller=n_atmodeller,
-    save_molecules=save_molecules,
     dynamic_phi=dynamic_phi,
 )
 
@@ -128,8 +126,9 @@ N_H, N_He, N_D, N_O, N_C, N_N, N_S = (float(n) for n in parameters.initial_abund
 
 # run simulation (from isofate.py)
 isocalc_start = TIME.time()
-sol = isocalc(parameters, time)
+output = isocalc(parameters, time)
 print(f"isocalc runtime: {TIME.time() - isocalc_start:.2f} s")
+sol = output.to_dict(to_numpy=True)
 
 # path = '/Users/collin/Documents/Harvard/Research/atm_escape/IsoFATE/monte_carlo/atmodeller/corrected_Psi/transient_D_world_full_isofate'
 # outfile = open(path, 'wb')
@@ -167,18 +166,15 @@ PhiN_a = sol["Phi_N"]
 PhiS_a = sol["Phi_S"]
 Ts_analytic = sol["T_surf_analytic"]
 Ts_atmod = sol["T_surf_atmod"]
-if n_atmodeller != 0:
-    n_H2O = sol["atmodeller_final"]["H2O_atm"]
-    n_H2 = sol["atmodeller_final"]["H2_atm"]
-    n_O2 = sol["atmodeller_final"]["O2_atm"]
-    n_CO2 = sol["atmodeller_final"]["CO2_atm"]
-    n_CO = sol["atmodeller_final"]["CO_atm"]
-    n_CH4 = sol["atmodeller_final"]["CH4_atm"]
-    n_N2 = sol["atmodeller_final"]["N2_atm"]
-    n_S2 = sol["atmodeller_final"]["S2_atm"]
-    n_H2O4S = sol["atmodeller_final"]["H2O4S_atm"]
-    n_SO2 = sol["atmodeller_final"]["SO2_atm"]
-    # n_H2O4S = sol['atmodeller_final']['H2O4S_atm']
+if output.atmodeller is not None:
+    # gas-phase moles of each molecule at the last equilibration (the last Atmodeller batch row)
+    atmodeller_final = output.atmodeller.to_dict(output_format="elements_species", to_numpy=True)
+    n_H2O, n_H2, n_O2, n_CO2, n_CO, n_CH4, n_N2, n_S2, n_H2O4S, n_SO2 = (
+        atmodeller_final[name]["gas"]["number_moles"].ravel()[-1]
+        for name in (
+            "H2O_g", "H2_g", "O2_g", "CO2_g", "CO_g", "CH4_g", "N2_g", "S2_g", "H2O4S_g", "O2S_g"
+        )
+    )
     n_total_atm = (
         n_H2O
         + n_H2

@@ -3,9 +3,14 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Atmodeller coupler for IsoFATE."""
+"""Atmodeller coupler for IsoFATE.
 
-from collections.abc import Callable
+The time integration re-equilibrates the atmosphere and interior with `AtmodellerCoupler.run`
+(through `AtmodellerCoupler.reequilibrate`), which extracts only what feeds back into the
+calculation: the element amounts in the gas and the melt, the converged solution (warm start) and
+whether the solve converged. The complete Atmodeller output for every equilibration is built
+afterwards, separately, by `AtmodellerCoupler.batched_output`.
+"""
 
 import equinox as eqx
 import jax
@@ -15,6 +20,7 @@ from atmodeller import ChemicalSpecies, EquilibriumModel, ReservoirSpecies
 from atmodeller import Planet as AtmodellerPlanet
 from atmodeller.constants import GAS_PHASE_INDEX, SILICATE_MELT_PHASE_INDEX
 from atmodeller.jax_utils import safe_divide
+from atmodeller.output import Output as AtmodellerOutput
 from atmodeller.output_base import OutputNamedArraysDict
 from atmodeller.solubility import get_solubility_models
 from jax.typing import ArrayLike
@@ -55,8 +61,10 @@ class AtmodellerResult(eqx.Module):
         surface_temperature: Surface temperature from the atmosphere descent [K]
         surface_temperature_atmodeller: Surface temperature used by Atmodeller, capped at
             `AtmodellerCoupler.max_surface_temperature` [K]
+        mantle_melt_fraction: Mantle melt fraction used by Atmodeller [ndim]
+        mass_constraints: Total mass of each coupling element given to Atmodeller [kg], ordered
+            per `_COUPLING_ELEMENTS`
         solution: Atmodeller solution array, for warm-starting the next call
-        output: Extracted Atmodeller output (full or narrow, see `AtmodellerCoupler.run`)
         success: Whether the solve converged. If not, the other fields are not a valid
             equilibrium (they need not even conserve each element) and must not be used.
     """
@@ -66,8 +74,9 @@ class AtmodellerResult(eqx.Module):
     atmosphere_mass: Array
     surface_temperature: Array
     surface_temperature_atmodeller: Array
+    mantle_melt_fraction: Array
+    mass_constraints: Array
     solution: Array
-    output: dict
     success: Array
 
 
@@ -85,6 +94,11 @@ class CouplerState(eqx.Module):
         surface_temperature: Surface temperature from the atmosphere descent at the last solve [K]
         surface_temperature_atmodeller: Surface temperature used by Atmodeller at the last solve
             [K]
+        mantle_melt_fraction: Mantle melt fraction used by Atmodeller at the last solve [ndim]
+        mass_constraints: Element mass constraints given to Atmodeller at the last solve [kg],
+            ordered per `_COUPLING_ELEMENTS`. With the surface temperature, melt fraction and
+            solution, these are what `AtmodellerCoupler.batched_output` needs to rebuild the
+            complete Atmodeller output.
         first_failure_time: Time of the first re-equilibration whose solve failed to converge
             [s], or ``inf`` if none has. A failure can't raise inside the jitted segment loop, so
             it is recorded here and the caller checks it afterwards (see
@@ -95,18 +109,9 @@ class CouplerState(eqx.Module):
     solution: Array
     surface_temperature: Array
     surface_temperature_atmodeller: Array
+    mantle_melt_fraction: Array
+    mass_constraints: Array
     first_failure_time: Array = eqx.field(default_factory=lambda: jnp.array(jnp.inf))
-
-
-class TrackedGasSpecies(eqx.Module):
-    """One isofate-tracked gas-phase species, derived from atmodeller's own species lists."""
-
-    gas_name: str
-    """Atmodeller canonical gas-phase name, e.g. "H2_g", "O2S_g"."""
-    label: str
-    """Isofate's human-readable output label, e.g. "H2", "SO2"."""
-    melt_name: str | None
-    """Atmodeller canonical melt-phase name, or ``None`` if this species has no melt reservoir."""
 
 
 class AtmodellerCoupler(eqx.Module):
@@ -130,33 +135,46 @@ class AtmodellerCoupler(eqx.Module):
     parameters: Parameters
     equilibrium_model: EquilibriumModel
     max_surface_temperature: ArrayLike
-    tracked_species: tuple[TrackedGasSpecies, ...]
 
     def __init__(self, parameters: Parameters, max_surface_temperature: ArrayLike = 6000):
         self.parameters = parameters
         self.equilibrium_model = self.construct_equilibrium_model()
         self.max_surface_temperature = max_surface_temperature
-        self.tracked_species = self.set_tracked_gas_species()
 
-    def construct_equilibrium_model(self) -> EquilibriumModel:
+    def construct_equilibrium_model(
+        self,
+        temperature: ArrayLike | None = None,
+        mantle_melt_fraction: ArrayLike | None = None,
+        mass_constraints: dict[str, ArrayLike] | None = None,
+    ) -> EquilibriumModel:
         """Constructs an equilibrium model for the interior-atmosphere coupling.
 
         This currently hard-codes the species set and solubility models, but could be made more
         flexible in the future.
 
-        Reads planet mass, core mass fraction, surface radius, and temperature from
-        `self.parameters.system.planet` - fixed for the whole isocalc run and never updated in
-        the time integration.
+        Reads planet mass, core mass fraction and surface radius from
+        `self.parameters.system.planet` - fixed for the whole run. The model for the time
+        integration (no arguments) is a single problem whose state and constraints are updated
+        before every solve. Passing arrays builds a batched model instead (Atmodeller sets the
+        batch size from them), as `batched_output` does.
+
+        Args:
+            temperature: Surface temperature [K]. Defaults to ``None`` (the planet's temperature).
+            mantle_melt_fraction: Mantle melt fraction [ndim]. Defaults to ``None`` (Atmodeller's
+                default).
+            mass_constraints: Total mass of each element [kg], by symbol. Defaults to ``None``.
 
         Returns:
             EquilibriumModel: An equilibrium model for the interior-atmosphere coupling
         """
-        # Required planet parameters for Atmodeller; these are fixed for the whole isocalc run and
-        # never updated in the time integration
         planet_mass: Array = self.parameters.system.planet.mass
         core_mass_fraction: Array = self.parameters.system.planet.core_mass_fraction
         surface_radius: Array = self.parameters.system.planet.rocky_radius
-        temperature: Array = self.parameters.system.planet.temperature
+        if temperature is None:
+            temperature = self.parameters.system.planet.temperature
+        melt_fraction_kwargs: dict = (
+            {} if mantle_melt_fraction is None else {"mantle_melt_fraction": mantle_melt_fraction}
+        )
 
         # Gas-phase species
         He_g: ChemicalSpecies = ChemicalSpecies.create_gas("He")
@@ -230,8 +248,11 @@ class AtmodellerCoupler(eqx.Module):
             surface_radius=surface_radius,
             temperature=temperature,
             silicate_melt_species=melt_species,
+            **melt_fraction_kwargs,
         )
-        model: EquilibriumModel = EquilibriumModel.from_state(planet)
+        model: EquilibriumModel = EquilibriumModel.from_state(
+            planet, mass_constraints=mass_constraints
+        )
 
         return model
 
@@ -282,37 +303,53 @@ class AtmodellerCoupler(eqx.Module):
 
         return values.at[_H_INDEX].set((1 - X_DH) * hydrogen).at[_D_INDEX].set(X_DH * hydrogen)
 
-    def set_tracked_gas_species(self) -> tuple[TrackedGasSpecies, ...]:
-        """Ordered set of gas-phase species isofate tracks as molecular output - every gas species
-        except He, which isofate tracks separately as one of its own 7 core H/He/D/O/C/N/S species.
+    @staticmethod
+    def mass_constraints_dict(mass_constraints: ArrayLike) -> dict[str, Array]:
+        """Atmodeller's mass constraints, by element symbol.
 
-        Derived directly from the equilibrium model's own species objects, which already carry both
-        the original formula (used as isofate's output label, e.g. "SO2") and the
-        Hill-canonicalized name atmodeller actually indexes its solve output by (e.g. "O2S_g" -
-        atmodeller internally derives this from molmass, see ChemicalSpeciesData) - so no separate
-        Hill-notation conversion or per-species override table is needed on isofate's side.
+        Args:
+            mass_constraints: Total mass of each coupling element [kg], with the last axis ordered
+                per `_COUPLING_ELEMENTS`
+
+        Returns:
+            Mass constraints [kg], by element symbol
         """
-        gas_species: tuple[ChemicalSpecies, ...] = (
-            self.equilibrium_model.parameters.reaction_system.phase_system.gas.species.species
-        )
-        melt_names: tuple[str, ...] = (
-            self.equilibrium_model.parameters.reaction_system.phase_system.phases[
-                SILICATE_MELT_PHASE_INDEX
-            ].species_names
-        )
-        melt_by_stem: dict[str, str] = {name.removesuffix("_d"): name for name in melt_names}
+        mass_constraints = jnp.asarray(mass_constraints, dtype=float)
 
-        tracked: list[TrackedGasSpecies] = []
-        for sp in gas_species:
-            if sp.data.formula == "He":
-                continue
-            tracked.append(
-                TrackedGasSpecies(
-                    sp.data.name, sp.data.formula, melt_by_stem.get(sp.data.hill_formula)
-                )
-            )
+        return {element: mass_constraints[..., i] for i, element in enumerate(_COUPLING_ELEMENTS)}
 
-        return tuple(tracked)
+    def batched_output(
+        self,
+        surface_temperature: ArrayLike,
+        mantle_melt_fraction: ArrayLike,
+        mass_constraints: ArrayLike,
+        solution: ArrayLike,
+    ) -> AtmodellerOutput:
+        """The complete Atmodeller output for a set of equilibrations, as one batched solve.
+
+        Builds a second, batched Atmodeller model with each equilibration's inputs (one batch row
+        per equilibration) and solves it warm-started from each equilibration's converged
+        solution, so it converges immediately to the same equilibria. Only for the output: the
+        time integration uses the single-problem model (`equilibrium_model`). Outside jit (it
+        constructs a model).
+
+        Args:
+            surface_temperature: Surface temperature used by Atmodeller for each equilibration [K]
+            mantle_melt_fraction: Mantle melt fraction for each equilibration [ndim]
+            mass_constraints: Element mass constraints for each equilibration [kg], shape
+                ``(n, len(_COUPLING_ELEMENTS))``
+            solution: Converged solution array of each equilibration, shape ``(n, 2 * species)``
+
+        Returns:
+            Atmodeller output with one batch row per equilibration
+        """
+        model: EquilibriumModel = self.construct_equilibrium_model(
+            temperature=jnp.asarray(surface_temperature, dtype=float),
+            mantle_melt_fraction=jnp.asarray(mantle_melt_fraction, dtype=float),
+            mass_constraints=self.mass_constraints_dict(mass_constraints),
+        )
+
+        return model.solve(jnp.asarray(solution, dtype=float))
 
     def cold_guess(self) -> Array:
         """The default cold-start guess for the Atmodeller solve (all-NaN).
@@ -357,60 +394,26 @@ class AtmodellerCoupler(eqx.Module):
         temperature: Array,
         mass_constraints: dict,
         base_solution_array: Array,
-    ):
-        """Fuses state/constraint updates, the solve, and output extraction into one jitted call.
+    ) -> tuple[Array, Array, Array, Array]:
+        """Updates the model, solves, and extracts only what feeds back into the time
+        integration, in one jitted call.
 
-        ``planet_mass``/``surface_radius`` are deliberately not updated here: both are fixed for
-        the whole isocalc run and already set on ``self.equilibrium_model`` by
-        ``construct_equilibrium_model``, so leaving them out of ``update_state`` (which defaults
-        each omitted field to "no change") avoids re-asserting a value that never differs from
-        what the model already holds.
+        The coupling only reads the element ``number_moles`` in the gas and the silicate melt for
+        the six coupling elements, which need only ``log_number_moles`` and the (static) formula
+        matrix - no equation of state, no activities - so the full ``to_dict`` output (activities,
+        fractions, pressures, ...) is never built here. The complete output is built separately
+        after the run (see `batched_output`).
 
-        ``update_state``/``update_constraints`` are built on ``eqx.tree_at``, which does several
-        full Python-level traversals of the whole model pytree per call (O(num_leaves); ~3479
-        leaves here) - calling them un-jitted cost ~40ms/call regardless of how much the actual
-        solve needed to change. Wrapping the whole update+solve+extract sequence in one
-        eqx.filter_jit call instead pays that Python-level tree rebuilding cost once, at trace
-        time; every later call just replays the compiled XLA graph (~9ms/call: solve +
-        extraction). This mirrors atmodeller's own tested idiom for this exact situation (see
-        atmodeller/tests/test_retracing.py's `call_solver`/`workflow` pattern). ``self`` is
-        partitioned by eqx.filter_jit like any other argument, so reusing one coupler instance
-        per run compiles once.
+        ``planet_mass``/``surface_radius`` are not updated here: both are fixed for the whole run
+        and already set by ``construct_equilibrium_model``. ``update_state``/``update_constraints``
+        traverse the whole model pytree, so fusing them with the solve in one jitted call pays
+        that cost once, at trace time (atmodeller's own idiom, see its tests/test_retracing.py).
+        An all-NaN `base_solution_array` is a cold start.
 
-        `solve_with_default()` is exactly `solve(all-NaN array of this shape)` (see
-        atmodeller/classes.py), so passing an all-NaN `base_solution_array` reproduces the cold-
-        start path without needing a separate branch inside this jitted method.
-        """
-        model = self.equilibrium_model.update_state(
-            mantle_melt_fraction=mantle_melt_fraction, temperature=temperature
-        ).update_constraints(mass_constraints=mass_constraints)
-        output = model.solve(base_solution_array)
-        sol = output.to_dict(output_format="elements_species", to_numpy=False)
-
-        return sol, output.solution, output.multi_attempt_solution.success
-
-    @eqx.filter_jit
-    def update_solve_extract_narrow(
-        self,
-        mantle_melt_fraction: Array,
-        temperature: Array,
-        mass_constraints: dict,
-        base_solution_array: Array,
-    ):
-        """Like ``update_solve_extract``, but skips every diagnostic the coupling never reads.
-
-        ``to_dict("elements_species")`` computes, for *every* species in *every* phase: activity
-        (a real-gas EOS volume root-find for non-ideal species), mass/mole fractions, partial
-        pressure, phase volume, log10dIW, and metallicity. The coupling only ever reads element
-        ``number_moles`` (gas + silicate_melt) for the six mass-constrained elements, the gas
-        phase's total mass, and O2_g's number_moles (for the iron-buffer branches). All of those
-        need only ``log_number_moles`` and the (static) formula matrix - no EOS, no activity.
-        Building only these keeps the traced graph much smaller without changing any value the
-        coupling actually uses from this path.
-
-        Not a substitute for ``update_solve_extract`` when species-level diagnostics are wanted
-        (``save_molecules=True``, or the end-of-run full snapshot) - those still need the full
-        ``to_dict`` output.
+        Returns:
+            `(gas_moles, melt_moles, solution, success)`: the moles of each coupling element
+            (ordered per `_COUPLING_ELEMENTS`) in the gas and the melt, the solution array and
+            whether the solve converged
         """
         model = self.equilibrium_model.update_state(
             mantle_melt_fraction=mantle_melt_fraction, temperature=temperature
@@ -421,31 +424,25 @@ class AtmodellerCoupler(eqx.Module):
         gas_output = out_dict.get_phase_output_from_index(GAS_PHASE_INDEX)
         melt_output = out_dict.get_phase_output_from_index(SILICATE_MELT_PHASE_INDEX)
 
-        sol: dict = {}
+        gas_moles: list[Array] = []
+        melt_moles: list[Array] = []
         for element in _COUPLING_ELEMENTS:
             gas_idx = gas_output.phase.species.get_element_index(element)
             melt_idx = melt_output.phase.species.get_element_index(element)
             if gas_idx == -1 or melt_idx == -1:
                 raise ValueError(
                     f"Element {element!r} missing from the gas or silicate_melt phase species; "
-                    "the narrow extraction assumes both phases carry all six coupling elements."
+                    "the extraction assumes both phases carry all six coupling elements."
                 )
-            sol[element] = {
-                "gas": {
-                    "number_moles": gas_output.element_number_moles[..., gas_idx : gas_idx + 1]
-                },
-                "silicate_melt": {
-                    "number_moles": melt_output.element_number_moles[..., melt_idx : melt_idx + 1]
-                },
-            }
+            gas_moles.append(gas_output.element_number_moles[0, gas_idx])
+            melt_moles.append(melt_output.element_number_moles[0, melt_idx])
 
-        o2_index: int = gas_output.phase.species_names.index("O2_g")
-        sol["O2_g"] = {
-            "gas": {"number_moles": gas_output.species_number_moles[..., o2_index : o2_index + 1]}
-        }
-        sol["gas"] = {"phase": {"mass": gas_output.phase_mass}}
-
-        return sol, output.solution, output.multi_attempt_solution.success
+        return (
+            jnp.stack(gas_moles),
+            jnp.stack(melt_moles),
+            output.solution,
+            jnp.all(output.multi_attempt_solution.success),
+        )
 
     def run(
         self,
@@ -454,7 +451,6 @@ class AtmodellerCoupler(eqx.Module):
         y: ArrayLike,
         y_int: ArrayLike,
         initial_guess=None,
-        full_output: bool = True,
     ) -> AtmodellerResult:
         """Re-equilibrates the atmosphere and interior with Atmodeller.
 
@@ -465,12 +461,10 @@ class AtmodellerCoupler(eqx.Module):
                 C, N, S)
             y_int: Interior (dissolved) abundances [atoms], ordered as `y`
             initial_guess: Previous solution to warm-start from. Defaults to ``None`` (cold start).
-            full_output: Extract the full species-level output (True) or only what the coupling
-                needs (False). Defaults to ``True``.
 
         Returns:
             The re-equilibrated atmospheric and interior abundances, with the surface
-            temperatures, the Atmodeller output and the solution array for warm-starting the next
+            temperatures, the Atmodeller inputs and the solution array for warm-starting the next
             call
         """
         # Fixed for the whole run; the planet values are the ones construct_equilibrium_model used
@@ -509,9 +503,7 @@ class AtmodellerCoupler(eqx.Module):
         # inventories
         MASS_CUTOFF: float = 1e9
         element_total_mass: Array = jnp.maximum(MASS_CUTOFF, element_atoms * atomic_masses)
-        mass_constraints: dict[str, Array] = {
-            element: element_total_mass[i] for i, element in enumerate(_COUPLING_ELEMENTS)
-        }
+        mass_constraints: dict[str, Array] = self.mass_constraints_dict(element_total_mass)
 
         # eqx.filter_jit only treats actual jax/numpy arrays as traced (dynamic) inputs; plain
         # Python floats are treated as *static* arguments (hashed by value), which would force a
@@ -521,16 +513,16 @@ class AtmodellerCoupler(eqx.Module):
         surface_temperature = jnp.asarray(surface_temperature)
         mass_constraints = {key: jnp.asarray(value) for key, value in mass_constraints.items()}
 
-        extract_fn = self.update_solve_extract if full_output else self.update_solve_extract_narrow
-
         cold_guess: Array = self.cold_guess()
 
         def solve(guess: Array):
-            return extract_fn(mantle_melt_fraction, surface_temperature, mass_constraints, guess)
+            return self.update_solve_extract(
+                mantle_melt_fraction, surface_temperature, mass_constraints, guess
+            )
 
         if initial_guess is None:
             # Cold start: retrying from the same cold guess could not help, so solve once
-            sol, solution, success = solve(cold_guess)
+            gas_moles, melt_moles, solution, success = solve(cold_guess)
         else:
             # Warm-starting from the previous call's converged solution (a tiny physical
             # perturbation away) avoids re-solving the full nonlinear equilibrium system from
@@ -538,19 +530,13 @@ class AtmodellerCoupler(eqx.Module):
             # jax.lax.cond rather than a Python `if` on `success`, which would fail on traced
             # arrays.
             warm = solve(initial_guess)
-            sol, solution, success = jax.lax.cond(
-                jnp.all(warm[2]), lambda warm: warm, lambda warm: solve(cold_guess), warm
+            gas_moles, melt_moles, solution, success = jax.lax.cond(
+                warm[3], lambda warm: warm, lambda warm: solve(cold_guess), warm
             )
 
         # Atoms of each coupling element in the gas and the melt, split back into H and D
-        gas_atoms: Array = jnp.stack(
-            [sol[element]["gas"]["number_moles"][0, 0] for element in _COUPLING_ELEMENTS]
-        )
-        melt_atoms: Array = jnp.stack(
-            [sol[element]["silicate_melt"]["number_moles"][0, 0] for element in _COUPLING_ELEMENTS]
-        )
-        y_new: Array = self.disaggregate_H_into_D(gas_atoms * const.avogadro, X_DH)
-        y_int_new: Array = self.disaggregate_H_into_D(melt_atoms * const.avogadro, X_DH)
+        y_new: Array = self.disaggregate_H_into_D(gas_moles * const.avogadro, X_DH)
+        y_int_new: Array = self.disaggregate_H_into_D(melt_moles * const.avogadro, X_DH)
 
         return AtmodellerResult(
             y=y_new,
@@ -558,9 +544,10 @@ class AtmodellerCoupler(eqx.Module):
             atmosphere_mass=self.parameters.atmosphere_mass(y_new),
             surface_temperature=T_surface,
             surface_temperature_atmodeller=surface_temperature,
+            mantle_melt_fraction=mantle_melt_fraction,
+            mass_constraints=element_total_mass,
             solution=solution,
-            output=sol,
-            success=jnp.all(success),
+            success=success,
         )
 
     def initial_state(self) -> CouplerState:
@@ -574,6 +561,8 @@ class AtmodellerCoupler(eqx.Module):
             solution=self.cold_guess(),
             surface_temperature=jnp.array(0.0),
             surface_temperature_atmodeller=jnp.array(0.0),
+            mantle_melt_fraction=jnp.array(0.0),
+            mass_constraints=jnp.zeros(len(_COUPLING_ELEMENTS)),
         )
 
     def reequilibrate(
@@ -601,7 +590,6 @@ class AtmodellerCoupler(eqx.Module):
             y,
             carry.y_int,
             initial_guess=carry.solution,
-            full_output=False,
         )
         # Record the first failed solve, to raise once outside jit (see check_converged)
         first_failure_time = jnp.where(
@@ -616,6 +604,8 @@ class AtmodellerCoupler(eqx.Module):
             surface_temperature_atmodeller=jnp.asarray(
                 result.surface_temperature_atmodeller, dtype=float
             ),
+            mantle_melt_fraction=jnp.asarray(result.mantle_melt_fraction, dtype=float),
+            mass_constraints=result.mass_constraints,
             first_failure_time=first_failure_time,
         )
 
@@ -638,74 +628,3 @@ class AtmodellerCoupler(eqx.Module):
                 f"t = {t_fail * const.s2yr:.6g} yr; its result does not conserve the elements, "
                 "so the run is stopped"
             )
-
-
-# Keys of isocalc's "atmodeller_final" full-output snapshot - single source of truth shared by
-# extract_full_output (the real, equilibrium-solve-derived values) and nan_full_output (the
-# early-exit placeholder, used when isocalc terminates before ever reaching a real snapshot), so
-# the two can never drift out of sync.
-ATMOD_FULL_OUTPUT_KEYS: tuple[str, ...] = (
-    "H2O_atm",
-    "H2O_mantle",
-    "H2_atm",
-    "H2_mantle",
-    "O2_atm",
-    "O2_mantle",
-    "CO_atm",
-    "CO_mantle",
-    "CO2_atm",
-    "CO2_mantle",
-    "CH4_atm",
-    "CH4_mantle",
-    "N2_atm",
-    "N2_mantle",
-    "S2_atm",
-    "S2_mantle",
-    "H2O4S_atm",
-    "H2O4S_mantle",
-    "SO2_atm",
-    "He_mantle",
-    "O2_fugacity",
-    "log10dIW_1_bar",
-)
-
-
-def extract_full_output(atmod_sol: dict) -> dict[str, float]:
-    """Extracts the full per-molecule/fugacity diagnostic snapshot from one AtmodellerCoupler
-    solve's raw `sol` output (see AtmodellerCoupler's `full_output=True` path), keyed per
-    ATMOD_FULL_OUTPUT_KEYS.
-    """
-    extractors: dict[str, Callable[[dict], float]] = {
-        "H2O_atm": lambda sol: sol["H2O_g"]["gas"]["number_moles"][0][0],
-        "H2O_mantle": lambda sol: sol["H2O_d"]["silicate_melt"]["number_moles"][0][0],
-        "H2_atm": lambda sol: sol["H2_g"]["gas"]["number_moles"][0][0],
-        "H2_mantle": lambda sol: sol["H2_d"]["silicate_melt"]["number_moles"][0][0],
-        "O2_atm": lambda sol: sol["O2_g"]["gas"]["number_moles"][0][0],
-        "O2_mantle": lambda sol: 0.0,  # O2 has no solubility model / melt reservoir
-        "CO_atm": lambda sol: sol["CO_g"]["gas"]["number_moles"][0][0],
-        "CO_mantle": lambda sol: sol["CO_d"]["silicate_melt"]["number_moles"][0][0],
-        "CO2_atm": lambda sol: sol["CO2_g"]["gas"]["number_moles"][0][0],
-        "CO2_mantle": lambda sol: sol["CO2_d"]["silicate_melt"]["number_moles"][0][0],
-        "CH4_atm": lambda sol: sol["CH4_g"]["gas"]["number_moles"][0][0],
-        "CH4_mantle": lambda sol: sol["CH4_d"]["silicate_melt"]["number_moles"][0][0],
-        "N2_atm": lambda sol: sol["N2_g"]["gas"]["number_moles"][0][0],
-        "N2_mantle": lambda sol: sol["N2_d"]["silicate_melt"]["number_moles"][0][0],
-        "S2_atm": lambda sol: sol["S2_g"]["gas"]["number_moles"][0][0],
-        "S2_mantle": lambda sol: sol["S2_d"]["silicate_melt"]["number_moles"][0][0],
-        "H2O4S_atm": lambda sol: sol["H2O4S_g"]["gas"]["number_moles"][0][0],
-        "H2O4S_mantle": lambda sol: 0.0,  # H2O4S has no solubility model / melt reservoir
-        "SO2_atm": lambda sol: sol["O2S_g"]["gas"]["number_moles"][0][0],
-        "He_mantle": lambda sol: sol["He_d"]["silicate_melt"]["number_moles"][0][0],
-        "O2_fugacity": lambda sol: sol["O2_g"]["gas"]["activity"][0][0],
-        "log10dIW_1_bar": lambda sol: sol["gas"]["phase"]["log10dIW_1_bar"][0][0],
-    }
-    return {key: extractors[key](atmod_sol) for key in ATMOD_FULL_OUTPUT_KEYS}
-
-
-def nan_full_output() -> dict[str, float]:
-    """NaN-filled placeholder for isocalc's "atmodeller_final" full-output snapshot, used when a
-    run terminates early (e.g. the entire atmosphere is lost) before ever reaching a real
-    equilibrium-solve snapshot. Shares ATMOD_FULL_OUTPUT_KEYS with extract_full_output so the two
-    can never drift out of sync.
-    """
-    return {key: np.nan for key in ATMOD_FULL_OUTPUT_KEYS}

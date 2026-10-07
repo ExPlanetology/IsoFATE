@@ -40,8 +40,6 @@ class IsocalcOptions(eqx.Module):
         thermal: Toggles planet radius contraction in the Lopez/Fortney equations (False removes
             the age term).
         n_atmodeller: Interval of timesteps between each Atmodeller call.
-        save_molecules: Save molecular abundances at every timestep (True) or only the final
-            abundances (False).
         euler: Integrate with the fixed-step forward Euler scheme (`EulerIntegrator`,
             re-equilibrating every `n_atmodeller` steps, no events) instead of the adaptive solver
             with events (`AdaptiveIntegrator`); see `isofate.integrators`. Defaults to ``False``.
@@ -66,7 +64,6 @@ class IsocalcOptions(eqx.Module):
     t_start: ArrayLike = 1e6
     thermal: bool = True
     n_atmodeller: int = int(1e2)
-    save_molecules: bool = False
     euler: bool = False
     dynamic_phi: bool = True
     # 1 - isofate.integrators.EXHAUSTION_FRACTION (not imported, to avoid an import cycle)
