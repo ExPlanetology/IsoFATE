@@ -8,7 +8,7 @@
 The five pinned values below were captured directly from the pre-refactor `compute_mass_flux`
 dispatch (isofate_coupler.py, since removed) on the same EscapeState inputs, for every
 mechanism/RR combination it supported - "XUV" (RR=True and RR=False), "CPML", "phi kill", and
-"XUV+CPML". Only the "XUV" (RR=True) path is exercised by tests/test_pipeline.py's isocalc()
+"XUV+CPML". Only the "XUV" (RR=True) path is exercised by tests/test_pipeline.py's driver
 regression tests (via the default options), so these pins are what actually confirm the other
 three mechanisms still behave exactly as before the class-hierarchy refactor.
 

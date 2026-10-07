@@ -6,7 +6,7 @@
 """Regression anchor for isofate/sim.py's driver scenario (LHS 1140 b), pinned separately from
 tests/test_pipeline.py's synthetic toy scenario. sim.py itself can't be imported directly (it's a
 plotting script with top-level side effects, including a blocking `plt.show()`), so this
-reconstructs its isocalc() inputs directly - kept in sync with sim.py by hand.
+reconstructs its driver inputs directly - kept in sync with sim.py by hand.
 
 n_atmodeller=0 and dynamic_phi=False here pin the scenario as it was when the regression values
 were taken (sim.py now runs with dynamic_phi=True and Atmodeller coupling); update the pinned
@@ -14,7 +14,6 @@ values if these change.
 """
 
 import dataclasses
-import os
 
 import jax.numpy as jnp
 import numpy as np
@@ -30,8 +29,8 @@ from isofate.integrators import (
 )
 from isofate.escape.mechanisms import XUVEscape
 from isofate.initial_condition import AbundanceInitialCondition, ProtosolarInitialCondition
-from isofate.atmodeller_coupler_new import AtmodellerCoupler
-from isofate.isofate_coupler import isocalc, isocalc_jax3
+from isofate.atmodeller_coupler import AtmodellerCoupler
+from isofate.isofate_coupler import isocalc_jax3
 from isofate.parameters import IsocalcOptions, Parameters
 from isofate.presets import LHS1140b, LHS1140Star
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
@@ -44,7 +43,7 @@ SIM_PY = dict(n_steps=int(1e5), n_atmodeller=int(1e4), f_atm=0.01, dynamic_phi=T
 
 
 def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_phi=False):
-    """Reconstructs isofate/sim.py's isocalc() call.
+    """Reconstructs isofate/sim.py's driver call.
 
     `n_steps` defaults to sim.py's own value but can be overridden (e.g. by the isocalc/
     isocalc_jax3 cross-checks below, which don't need full resolution to confirm agreement).
@@ -72,9 +71,7 @@ def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_ph
     eps = 0.15
     rad_evol = True
     thermal = True
-    melt_fraction_override = False
     save_molecules = False
-    mantle_iron = None
 
     escape = XUVEscape(
         F0=F0,
@@ -93,13 +90,11 @@ def _sim_isocalc_kwargs(n_steps=int(1e5), n_atmodeller=0, f_atm=0.01, dynamic_ph
     )
     options = IsocalcOptions(
         rad_evol=rad_evol,
-        melt_fraction_override=melt_fraction_override,
         n_steps=n_steps,
         t_start=t0,
         thermal=thermal,
         n_atmodeller=n_atmodeller,
         save_molecules=save_molecules,
-        mantle_iron=mantle_iron,
         dynamic_phi=dynamic_phi,
     )
     parameters = Parameters(
@@ -177,8 +172,11 @@ def test_sim_regression():
     exact protosolar mole ratios to H normalised by the total mass (in the species' atomic
     masses). This fixes N's missing normalisation (initial N about 1.39x lower) and the former
     recipe's H "remainder", which put every X/H about 1.5% above protosolar.
+
+    Moved from the legacy isocalc to isocalc_jax3(euler=True) when isocalc was retired: the two
+    agreed to round-off (about 1e-13) on every output, so the pins are unchanged.
     """
-    sol = isocalc(**_sim_isocalc_kwargs())
+    sol = isocalc_jax3(**_sim_isocalc_kwargs(), euler=True)
 
     assert sol["Matm"][-1] == pytest.approx(2.783430554314534e23, rel=1e-6)
     assert sol["N_H"][-1] == pytest.approx(1.1152201767281153e50, rel=1e-6)
@@ -192,55 +190,46 @@ def test_sim_regression():
     assert sol["Vpot"][-1] == pytest.approx(153853762.14169946, rel=1e-6)
 
 
-def test_isocalc_isocalc_jax3_cross_check():
-    """Without Atmodeller, isocalc and isocalc_jax3 differ only in the integration scheme:
-    isocalc's fixed-step Euler loop vs. adaptive Tsit5 (diffrax). Both derive M_atm/f_atm fresh
-    from y and share the same call signature and output grid.
-
-    Uses n_steps=2000 rather than test_sim_regression's full 1e5: at 2000 steps isocalc runs in a
-    few seconds and the two agree to about 6e-4 relative (isocalc's Euler error), so rel=1e-2
-    leaves ample margin.
-    """
+def test_isocalc_jax3_adaptive_matches_euler():
+    """Without Atmodeller, the adaptive solver (Tsit5) and the fixed-step Euler scheme agree to
+    about 6e-4 relative at 2000 steps (the Euler error), within rel=1e-2."""
     kwargs = _sim_isocalc_kwargs(n_steps=2000)
-    sol_isocalc = isocalc(**kwargs)
-    sol_jax3 = isocalc_jax3(**kwargs)
+    sol_euler = isocalc_jax3(**kwargs, euler=True)
+    sol = isocalc_jax3(**kwargs)
 
     for key in ("Matm", "N_H", "N_He", "N_D", "N_O", "N_C", "N_N", "N_S", "Rp", "Vpot"):
-        assert sol_jax3[key][-1] == pytest.approx(sol_isocalc[key][-1], rel=1e-2), key
+        assert sol[key][-1] == pytest.approx(sol_euler[key][-1], rel=1e-2), key
 
 
-def test_isocalc_isocalc_jax3_coupled_cross_check():
-    """With Atmodeller re-equilibrating every 100 of 2000 steps, isocalc and isocalc_jax3 follow
-    the same schedule and coupling, so they again differ only in the integration scheme: over the
-    whole run they agree to about 6e-4 relative for the bulk quantities and 4e-3 for the trace
-    species N and S (isocalc's Euler error at 2000 steps), within rel=1e-2.
+def test_isocalc_jax3_coupled_adaptive_matches_euler():
+    """With Atmodeller re-equilibrating every 100 of 2000 steps, both schemes follow the same
+    schedule and coupling, so over the whole run they agree to about 6e-4 relative for the bulk
+    quantities and 4e-3 for the trace species N and S (the Euler error at 2000 steps), within
+    rel=1e-2.
     """
     kwargs = _sim_isocalc_kwargs(n_steps=2000, n_atmodeller=100)
-    sol_isocalc = isocalc(**kwargs)
-    sol_jax3 = isocalc_jax3(**kwargs)
+    sol_euler = isocalc_jax3(**kwargs, euler=True)
+    sol = isocalc_jax3(**kwargs)
 
     keys = [f"N_{symbol}" for symbol in SYMBOLS] + [f"N_{symbol}_int" for symbol in SYMBOLS]
     for key in keys + ["Matm", "Rp", "Vpot", "T_surf_atmod"]:
-        np.testing.assert_allclose(sol_jax3[key], sol_isocalc[key], rtol=1e-2, err_msg=key)
+        np.testing.assert_allclose(sol[key], sol_euler[key], rtol=1e-2, err_msg=key)
 
 
 @pytest.mark.parametrize("euler", [False, True])
 def test_isocalc_jax3_empty_atmosphere(euler):
-    """An empty initial atmosphere is not equilibrated (as in isocalc), so no atmosphere is
+    """An empty initial atmosphere is not equilibrated, so no atmosphere is
     created from nothing: the atmosphere stays empty (rows are 0, or inf for the adaptive solver,
     which marks exhausted rows that way), the interior stays empty, and atmodeller_final is NaN.
     """
     kwargs = _with_initial_abundances(_sim_isocalc_kwargs(n_steps=40, n_atmodeller=10), (0.0,) * 7)
     sol = isocalc_jax3(**kwargs, euler=euler)
-    sol_isocalc = isocalc(**kwargs)
 
     assert len(sol["t_atmodeller"]) == 0
     for symbol in SYMBOLS:
         assert np.all((sol[f"N_{symbol}"] == 0) | np.isinf(sol[f"N_{symbol}"])), symbol
         assert np.all(sol[f"N_{symbol}_int"] == 0), symbol
-        assert np.all(sol_isocalc[f"N_{symbol}"] == 0), symbol
     assert np.all(np.isnan(list(sol["atmodeller_final"].values())))
-    assert np.all(np.isnan(list(sol_isocalc["atmodeller_final"].values())))
 
 
 def test_reequilibrate_warm_start_matches_cold_start():
@@ -466,13 +455,23 @@ def test_reequilibrate_conserves_each_element():
 
 @pytest.mark.parametrize("save_molecules", [False, True])
 def test_isocalc_jax3_outputs(save_molecules):
-    """isocalc_jax3 returns the same keys as isocalc (plus `t_atmodeller`), all finite, with the
-    interior outputs piecewise constant between re-equilibrations."""
+    """isocalc_jax3 returns the documented keys (the legacy isocalc's, plus `t_atmodeller` and,
+    with save_molecules, the molecule histories), all finite, with the interior outputs piecewise
+    constant between re-equilibrations."""
     kwargs = _jax3_kwargs(save_molecules=save_molecules)
     sol = isocalc_jax3(**kwargs)
-    sol_isocalc = isocalc(**kwargs)
 
-    assert set(sol) == set(sol_isocalc) | {"t_atmodeller"}
+    expected_keys = (
+        {"time", "Rp", "Ratm", "Matm", "Vpot", "fatm", "Mloss", "phi", "phic"}
+        | {"T_surf_analytic", "T_surf_atmod", "t_atmodeller", "atmodeller_final"}
+        | {f"N_{symbol}" for symbol in SYMBOLS}
+        | {f"N_{symbol}_int" for symbol in SYMBOLS}
+        | {f"Phi_{symbol}" for symbol in SYMBOLS}
+        | {f"x{i + 1}" for i in range(len(SYMBOLS))}
+    )
+    molecule_keys = {key for key in sol if key.startswith("n_") or key == "fO2_a"}
+    assert set(sol) - molecule_keys == expected_keys
+    assert bool(molecule_keys) == save_molecules
     for key, value in sol.items():
         if key != "atmodeller_final":
             assert np.all(np.isfinite(value)), key
@@ -486,60 +485,86 @@ def test_isocalc_jax3_outputs(save_molecules):
 
 
 
-@pytest.mark.parametrize("n_atmodeller", [0, 20])
-def test_isocalc_jax3_euler_reproduces_isocalc(n_atmodeller):
-    """isocalc_jax3(euler=True) marches with isocalc's own scheme (forward Euler clipped at zero,
-    re-equilibrating every n_atmodeller steps on the shared schedule) via
-    isofate.integrators.EulerIntegrator, so every output agrees with isocalc to round-off."""
-    kwargs = _sim_isocalc_kwargs(n_steps=200, n_atmodeller=n_atmodeller)
-    sol_isocalc = isocalc(**kwargs)
-    sol = isocalc_jax3(**kwargs, euler=True)
+@pytest.mark.parametrize("euler", [False, True])
+def test_isocalc_jax3_fixed_radius(euler):
+    """With `rad_evol=False` the escape radius is fixed at the rocky radius, with no envelope and
+    no Bondi/Hill cap. Without Atmodeller: with the radius at the rocky surface, the atmosphere
+    descent to the surface has zero thickness and the Atmodeller solve does not converge (see the
+    FIXME in AtmodellerCoupler.run)."""
+    kwargs = _sim_isocalc_kwargs(n_steps=200, n_atmodeller=0)
+    options = dataclasses.replace(kwargs["parameters"].isocalc_options, rad_evol=False)
+    kwargs["parameters"] = dataclasses.replace(kwargs["parameters"], isocalc_options=options)
+    sol = isocalc_jax3(**kwargs, euler=euler)
 
-    for key, expected in sol_isocalc.items():
-        if key == "atmodeller_final":
-            continue
-        np.testing.assert_allclose(sol[key], expected, rtol=1e-10, atol=0, err_msg=key)
+    rocky_radius = float(kwargs["parameters"].system.planet.rocky_radius)
+    np.testing.assert_allclose(sol["Rp"], rocky_radius, rtol=1e-12)
+    assert np.all(sol["Ratm"] == 0)
+
+
+# Final values of isocalc_jax3(euler=True), pinned when the legacy isocalc was retired; isocalc
+# (an independent implementation of the same scheme) agreed with these to round-off (<= 3e-14)
+EULER_PINS = {
+    "no_coupling": {
+        "N_H": 1.1063425993631312e50, "N_He": 1.3202485174289307e49,
+        "N_D": 2.3054541453965797e45, "N_O": 8.225110774486556e46,
+        "N_C": 4.1030698391591003e46, "N_N": 1.133580251719231e46,
+        "N_S": 2.560959078964655e45, "Matm": 2.7633265628293022e23, "Rp": 13811712.72503741,
+    },
+    "coupled": {
+        "N_H": 1.0105605048959224e50, "N_He": 1.2494906606052938e49,
+        "N_D": 2.1025197819225204e45, "N_O": 2.108190671684607e44,
+        "N_C": 4.115071015930003e46, "N_N": 3.4255950806050936e36,
+        "N_S": 5.2060018653347905e31, "N_H_int": 1.235102492873567e49,
+        "N_He_int": 9.212546895526311e47, "N_D_int": 2.5696901980509725e44,
+        "N_O_int": 8.257528520715939e46, "N_C_int": 1.7832140522299958e40,
+        "N_N_int": 1.1418784569042538e46, "N_S_int": 2.5692265288053014e45,
+        "Matm": 2.5302054365595094e23, "Rp": 13634928.079489931,
+        "T_surf_atmod": 3166.941216947133, "final:O2_fugacity": 1.0190482674105137e-13,
+        "final:H2O_atm": 3.482683755461788e20, "final:H2_atm": 8.374919983983618e25,
+        "final:CO2_atm": 214838581589.85864,
+    },
+    "sim_py": {
+        "N_H": 1.015405862967759e50, "N_He": 1.2538893809509016e49,
+        "N_D": 2.111721787959363e45, "N_O": 2.0941887958672807e44,
+        "N_C": 4.1323021237984494e46, "N_N": 3.288181226035627e36,
+        "N_S": 5.10252015738741e31, "N_H_int": 1.24225642518573e49,
+        "N_He_int": 9.275243592284056e47, "N_D_int": 2.5834989288224265e44,
+        "N_O_int": 8.257675541168726e46, "N_C_int": 1.751699812297779e40,
+        "N_N_int": 1.1418784569179982e46, "N_S_int": 2.569226528805283e45,
+        "Matm": 2.5412731368390358e23, "Rp": 13643750.793812025,
+        "T_surf_atmod": 3170.997201663295, "final:O2_fugacity": 1.0206628479229042e-13,
+        "final:H2O_atm": 3.459586606070278e20, "final:H2_atm": 8.415086681061429e25,
+        "final:CO2_atm": 210720992918.0445,
+    },
+}
 
 
 @pytest.mark.parametrize(
-    "n_steps,n_atmodeller",
+    "case,settings",
     [
-        # sim.py's physics and its 10 re-equilibrations, at 1/50 of its resolution
-        pytest.param(SIM_PY["n_steps"] // 50, SIM_PY["n_atmodeller"] // 50, id="reduced"),
-        # exactly sim.py's run (about 6 minutes, mostly isocalc)
-        pytest.param(
-            SIM_PY["n_steps"],
-            SIM_PY["n_atmodeller"],
-            id="full",
-            marks=pytest.mark.skipif(
-                not os.environ.get("ISOFATE_SLOW_TESTS"), reason="set ISOFATE_SLOW_TESTS=1"
-            ),
+        ("no_coupling", dict(n_steps=200, n_atmodeller=0)),
+        ("coupled", dict(n_steps=200, n_atmodeller=20)),
+        # sim.py's settings (dynamic phi, 10 re-equilibrations) at 1/50 of its resolution, with
+        # f_atm = 0.01: with sim.py's smaller atmosphere some Atmodeller solves sit on the edge of
+        # convergence at this resolution
+        (
+            "sim_py",
+            {
+                **SIM_PY,
+                "n_steps": SIM_PY["n_steps"] // 50,
+                "n_atmodeller": SIM_PY["n_atmodeller"] // 50,
+                "f_atm": 0.01,
+            },
         ),
     ],
 )
-def test_isocalc_jax3_euler_matches_isocalc_sim_py(n_steps, n_atmodeller):
-    """Anchors the two implementations of the same scheme against each other with sim.py's
-    current settings (`SIM_PY`: dynamic phi, Atmodeller re-equilibrating every n_atmodeller
-    steps): isocalc_jax3(euler=True) must reproduce the legacy isocalc to round-off on every
-    output, including the final Atmodeller snapshot, so that the two can't drift apart.
+def test_isocalc_jax3_euler_regression(case, settings):
+    """Pins isocalc_jax3(euler=True), isocalc's fixed-step scheme, on short LHS 1140 b runs."""
+    sol = isocalc_jax3(**_sim_isocalc_kwargs(**settings), euler=True)
 
-    Uses f_atm = 0.01 rather than sim.py's 0.00085: with the smaller atmosphere, some Atmodeller
-    solves sit on the edge of convergence (success flips with input changes of 1e-12), so
-    round-off between the two drivers decides whether a solve converges (both now raise if it
-    doesn't).
-    """
-    settings = {**SIM_PY, "n_steps": n_steps, "n_atmodeller": n_atmodeller, "f_atm": 0.01}
-    kwargs = _sim_isocalc_kwargs(**settings)
-    sol_isocalc = isocalc(**kwargs)
-    sol = isocalc_jax3(**kwargs, euler=True)
-
-    assert set(sol) == set(sol_isocalc) | {"t_atmodeller"}
-    for key, expected in sol_isocalc.items():
-        if key == "atmodeller_final":
-            continue
-        np.testing.assert_allclose(sol[key], expected, rtol=1e-10, atol=0, err_msg=key)
-
-    final, expected_final = sol["atmodeller_final"], sol_isocalc["atmodeller_final"]
-    assert set(final) == set(expected_final)
-    for key, expected in expected_final.items():
-        np.testing.assert_allclose(final[key], expected, rtol=1e-10, atol=1e-300, err_msg=key)
+    for key, expected in EULER_PINS[case].items():
+        if key.startswith("final:"):
+            value = sol["atmodeller_final"][key.removeprefix("final:")]
+        else:
+            value = sol[key][-1]
+        assert float(value) == pytest.approx(expected, rel=1e-8), key
