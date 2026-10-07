@@ -26,11 +26,11 @@ from isofate.system import System
 
 
 class IsocalcOptions(eqx.Module):
-    """Mode switches and tuning constants for `isocalc`, fixed for the whole run.
+    """Mode switches and tuning constants for the driver (`isocalc_jax3`), fixed for the whole run.
 
-    These are numerical/modeling choices, as opposed to `isocalc`'s other arguments (`system`,
-    `F0`, `time`, and the initial `N_x` abundances), which describe the actual physical
-    initial-value problem being solved and so stay direct `isocalc` arguments.
+    These are numerical/modeling choices, as opposed to the rest of `Parameters` (`system`, the
+    escape mechanism, the initial condition) and the end time, which describe the physical
+    initial-value problem being solved.
 
     Args:
         rad_evol: Set to False to fix the planet (escape) radius at the rocky radius, with no

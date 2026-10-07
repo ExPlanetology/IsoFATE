@@ -7,8 +7,8 @@
 
 Each `EscapeMechanism` subclass owns its own tuning constants as explicit fields (not an
 `IsocalcOptions` instance) and turns one timestep's physical state (`EscapeState`) into an
-atmospheric mass flux [kg/m2/s]. `isocalc()` (isofate_coupler.py) is constructed with one
-`EscapeMechanism` instance and calls its `compute_mass_flux` once per timestep, in place of
+atmospheric mass flux [kg/m2/s]. `Parameters` holds one `EscapeMechanism` instance, whose
+`compute_mass_flux` the ODE right-hand side (`isofate.integrators.IsocalcModel`) calls, in place of
 the old `options.mechanism`/`options.RR` string dispatch.
 """
 
@@ -77,7 +77,7 @@ def Fxuv(t, F0, t0=1e6, t_sat=5e8, beta=-1.23, step_fn=False, F_final=0, t_pms=0
         - t: time/age [s] - traced
         - F0: initial main sequence incident XUV flux [W/m2] - traced
         - t0: start time [yr] - static (fixed per XUVEscape instance, confirmed constant across
-          isocalc's per-timestep loop - see isofate_coupler.py)
+          the run)
         - t_sat: saturation time [yr]; change this for different stellar types (M1:500Myr, G:50Myr) - static
         - beta: exponential term [ndim] - static
         - step_fn: True for step function from F0 to F_final [Bool] - static

@@ -94,7 +94,7 @@ class Planet(eqx.Module):
             not provided, computed from mass via Lopez & Fortney 2014). Supply this directly when
             a real, observationally-measured radius is known and should be used instead of the
             generic mass-scaling estimate - independent of whether a gaseous envelope is also
-            allowed to evolve on top of it (see `isocalc`'s `rad_evol` option).
+            allowed to evolve on top of it (see `IsocalcOptions.rad_evol`).
         core_mass_fraction: Mass fraction of the planet in its metallic core. Defaults to Earth.
         temperature: Planet surface temperature [K]. Defaults to 2000 K.
         mantle_melt_fraction: Mantle melt fraction. Defaults to ``None`` to compute from mass
@@ -194,7 +194,7 @@ class System(eqx.Module):
     Groups the quantities that genuinely depend on both bodies (or the orbit between them), as
     opposed to properties of the Star or Planet alone. `mu` (mean atmospheric particle mass) is
     deliberately never stored here: unlike everything else on this class, it evolves over the
-    course of a simulation (see isocalc), so it must stay something the caller passes in each
+    course of a simulation, so it must stay something the caller passes in each
     time rather than a fixed System property.
 
     Args:

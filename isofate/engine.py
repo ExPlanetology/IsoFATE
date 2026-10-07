@@ -27,7 +27,8 @@ def convective_envelope_thickness(parameters: Parameters, y: Array, age: ArrayLi
     radiative-convective boundary), one of the three additive terms making up the total planet
     radius: R_p = R_rocky + convective_envelope_thickness + radiative_atmosphere_thickness.
 
-    Adapted from Lopez and Fortney, 2014.
+    Adapted from Lopez and Fortney, 2014. Zero if `IsocalcOptions.rad_evol` is False (the radius
+    is fixed at the rocky radius).
 
     Args:
         parameters: Parameters
@@ -39,6 +40,8 @@ def convective_envelope_thickness(parameters: Parameters, y: Array, age: ArrayLi
     """
     planet: Planet = parameters.system.planet
     envelope_mass_fraction: Array = parameters.envelope_mass_fraction(y)
+    if not parameters.isocalc_options.rad_evol:
+        return jnp.zeros_like(envelope_mass_fraction)
     thermal: bool = parameters.isocalc_options.thermal
     Fp: Array = parameters.system.insolation
 
@@ -126,7 +129,8 @@ def escape_radius(parameters: Parameters, y: Array, age: ArrayLike) -> Array:
 
     The structural radius (`total_radius`) capped by the Bondi radius, beyond which gas is not
     thermally bound to the planet, and by the Hill radius, beyond which the star's gravity
-    dominates.
+    dominates. If `IsocalcOptions.rad_evol` is False, the radius is instead fixed at the rocky
+    radius (no envelope, and no Bondi or Hill cap).
 
     Args:
         parameters: Parameters
@@ -136,6 +140,11 @@ def escape_radius(parameters: Parameters, y: Array, age: ArrayLike) -> Array:
     Returns:
         Escape radius [m]
     """
+    if not parameters.isocalc_options.rad_evol:
+        # FIXME: The Atmodeller coupling does not converge with this zero-thickness atmosphere
+        # (see AtmodellerCoupler.run), so a fixed radius only works with n_atmodeller = 0
+        return jnp.asarray(parameters.system.planet.rocky_radius, dtype=float)
+
     return jnp.minimum(
         bondi_radius(parameters, y),
         jnp.minimum(parameters.system.hill_radius, total_radius(parameters, y, age)),

@@ -30,8 +30,7 @@ star: Star = LHS1140Star
 planet: Planet = LHS1140b
 system = System(star=star, planet=planet)
 
-# kept as plain names since the rest of this script (and isocalc's positional args) still refer
-# to them directly
+# kept as plain names since the rest of this script still refers to them directly
 M_star = star.mass
 t_jump = star.t_jump
 # Initial atmospheric mass fraction, used by the initial condition (ProtosolarInitialCondition)
@@ -129,8 +128,8 @@ N_H, N_He, N_D, N_O, N_C, N_N, N_S = (float(n) for n in parameters.initial_abund
 
 # run simulation (from isofate.py)
 isocalc_start = TIME.time()
-sol = isocalc(parameters, time)
-print(f"isocalc runtime: {TIME.time() - isocalc_start:.2f} s")
+sol = isocalc_jax3(parameters, time)
+print(f"isocalc_jax3 runtime: {TIME.time() - isocalc_start:.2f} s")
 
 # path = '/Users/collin/Documents/Harvard/Research/atm_escape/IsoFATE/monte_carlo/atmodeller/corrected_Psi/transient_D_world_full_isofate'
 # outfile = open(path, 'wb')

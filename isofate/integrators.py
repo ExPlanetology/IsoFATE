@@ -11,7 +11,7 @@
 - `Integrator`: base class for integrating in segments, updating the state through a hook (e.g.
   re-equilibrating with Atmodeller) between segments. Subclasses override `integrate`:
     - `AdaptiveIntegrator`: adaptive, event-driven integration, restarting after each event.
-    - `EulerIntegrator`: isocalc's fixed-step forward Euler march with a re-equilibration every n
+    - `EulerIntegrator`: fixed-step forward Euler march with a re-equilibration every n
       steps.
 
 The planet-radius and escape physics used by the right-hand side is in `isofate.engine`.
@@ -458,8 +458,8 @@ class Integrator(eqx.Module):
             same structure, shapes and dtypes it received. Defaults to
             `placeholder_reequilibration`.
         reequilibration_steps: Call the hook every this many output steps, as
-            `isofate_coupler.isocalc` re-equilibrates every `n_atmodeller` steps. The output grid
-            must then be uniform, ``t_a[j] = t_start + (j + 1) * delta_t``, and the row at a
+            `isofate_coupler.isocalc_jax3` re-equilibrates every `n_atmodeller` steps. The output
+            grid must then be uniform, ``t_a[j] = t_start + (j + 1) * delta_t``, and the row at a
             re-equilibration holds the updated state. Defaults to ``None`` (no scheduled
             re-equilibrations).
     """
@@ -671,17 +671,18 @@ class AdaptiveIntegrator(Integrator):
 
 class EulerIntegrator(Integrator):
     """Fixed-step forward Euler march with a re-equilibration every `reequilibration_steps` steps:
-    the same scheme as `isofate_coupler.isocalc`.
+    the scheme of the original (since retired) `isocalc` driver.
 
     The output times must be the uniform grid ``t_a[j] = t_start + (j + 1) * delta_t``; row j holds
     the state after j + 1 steps. Each step is ``y <- max(y + delta_t * f(t, y), 0)`` with
-    `IsocalcModel.vector_field` as f, clipped at zero after every step as in isocalc (diffrax's
+    `IsocalcModel.vector_field` as f, clipped at zero after every step (diffrax's
     Euler solver offers no per-step clipping, hence the explicit step). After every
     `reequilibration_steps` steps, `on_mass_lost(carry, t, y)` re-equilibrates the state, and the
     row at that time holds the re-equilibrated state. The mass-loss event is not used.
 
     Once the atmospheric mass drops below `exhaustion_floor`, the state is frozen and no further
-    re-equilibrations happen (isocalc instead runs on until the abundances are exactly zero).
+    re-equilibrations happen (the original isocalc instead ran on until the abundances were exactly
+    zero).
 
     Jitted with `jax.lax.scan` over segments and steps; `reequilibration_steps` is static, so a
     different value retraces.

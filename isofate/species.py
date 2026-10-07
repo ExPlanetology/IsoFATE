@@ -6,7 +6,7 @@
 """Canonical registry of the species tracked by IsoFATE's escape/interior model.
 
 Single source of truth for the 7 tracked species (H, He, D, O, C, N, S), their atomic masses,
-and their binary diffusion coefficients, used throughout isocalc()/isofunks.py instead of each
+and their binary diffusion coefficients, used throughout the drivers/isofunks.py instead of each
 site hand-typing its own copy.
 """
 
