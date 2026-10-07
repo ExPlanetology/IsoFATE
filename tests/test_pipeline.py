@@ -131,8 +131,9 @@ def _toy_system():
 
 def _toy_isocalc_kwargs(**option_overrides):
     """`option_overrides` are forwarded to `IsocalcOptions`; n_steps/n_atmodeller are kept small
-    so this stays a fast, non-escape-dominated test scenario."""
-    options = IsocalcOptions(n_steps=20, n_atmodeller=5, **option_overrides)
+    so this stays a fast, non-escape-dominated test scenario. dynamic_phi is off (static H/He
+    pair), as when the regression values were pinned."""
+    options = IsocalcOptions(n_steps=20, n_atmodeller=5, **{"dynamic_phi": False, **option_overrides})
     parameters = Parameters(
         _toy_system(), escape_mechanism=XUVEscape(F0=500.0), isocalc_options=options
     )

@@ -8,9 +8,9 @@ tests/test_pipeline.py's synthetic toy scenario. sim.py itself can't be imported
 plotting script with top-level side effects, including a blocking `plt.show()`), so this
 reconstructs its isocalc() inputs directly - kept in sync with sim.py by hand.
 
-n_atmodeller=0 and dynamic_phi=False here match sim.py's current values (temporarily simplified
-while isocalc is decoupled from Atmodeller/refactored towards a JAX driver - see the FIXME/TODO
-comments in sim.py); update both together if sim.py's parameters change.
+n_atmodeller=0 and dynamic_phi=False here pin the scenario as it was when the regression values
+were taken (sim.py now runs with dynamic_phi=True and Atmodeller coupling); update the pinned
+values if these change.
 """
 
 import dataclasses
@@ -20,14 +20,15 @@ import numpy as np
 import pytest
 
 from isofate.constants import const
-from isofate.engine import (
+from isofate.integrators import (
     EXHAUSTION_FRACTION,
     IntegrationStop,
     IsocalcIntegrator,
     integrate_segments,
 )
 from isofate.escape.mechanisms import XUVEscape
-from isofate.isofate_coupler import isocalc, isocalc_jax, isocalc_jax2
+from isofate.atmodeller_coupler_new import AtmodellerCoupler
+from isofate.isofate_coupler import isocalc, isocalc_jax, isocalc_jax2, isocalc_jax3
 from isofate.parameters import IsocalcOptions, Parameters
 from isofate.presets import LHS1140b, LHS1140Star
 from isofate.system import System
@@ -144,19 +145,24 @@ def test_sim_regression():
     `/(1 + HetoH_protosolar_mass)` normalization every other species' formula has. A deliberate
     accuracy improvement (removes a redundant, slightly-inconsistent second bookkeeping of
     atmosphere mass), not a regression.
+
+    Re-pinned again (~2e-5 relative) when isocalc started evaluating its age-dependent physics
+    (R_env's contraction term, the XUV flux history) at the integration time t0 + n*delta_t rather
+    than the output label t_a[n], which runs about one step ahead. This moves isocalc towards
+    isocalc_jax (final Matm difference 6.7e-5 -> 4.7e-5), so it is a correction, not a regression.
     """
     sol = isocalc(**_sim_isocalc_kwargs())
 
-    assert sol["Matm"][-1] == pytest.approx(2.7847119860674774e23, rel=1e-6)
-    assert sol["N_H"][-1] == pytest.approx(1.109756853479713e50, rel=1e-6)
-    assert sol["N_He"][-1] == pytest.approx(1.341472117896385e49, rel=1e-6)
-    assert sol["N_D"][-1] == pytest.approx(2.3455560513061053e45, rel=1e-6)
-    assert sol["N_O"][-1] == pytest.approx(8.353266024867263e46, rel=1e-6)
-    assert sol["N_C"][-1] == pytest.approx(4.168490941832542e46, rel=1e-6)
-    assert sol["N_N"][-1] == pytest.approx(1.5953265918420376e46, rel=1e-6)
-    assert sol["N_S"][-1] == pytest.approx(2.5955614470233587e45, rel=1e-6)
-    assert sol["Rp"][-1] == pytest.approx(13824654.981228502, rel=1e-6)
-    assert sol["Vpot"][-1] == pytest.approx(153883574.58031628, rel=1e-6)
+    assert sol["Matm"][-1] == pytest.approx(2.784654750240057e23, rel=1e-6)
+    assert sol["N_H"][-1] == pytest.approx(1.1097311942220029e50, rel=1e-6)
+    assert sol["N_He"][-1] == pytest.approx(1.3414512951085343e49, rel=1e-6)
+    assert sol["N_D"][-1] == pytest.approx(2.3455061586587238e45, rel=1e-6)
+    assert sol["N_O"][-1] == pytest.approx(8.353162454098547e46, rel=1e-6)
+    assert sol["N_C"][-1] == pytest.approx(4.1684331956265637e46, rel=1e-6)
+    assert sol["N_N"][-1] == pytest.approx(1.595305687580649e46, rel=1e-6)
+    assert sol["N_S"][-1] == pytest.approx(2.595544854318647e45, rel=1e-6)
+    assert sol["Rp"][-1] == pytest.approx(13824623.332857858, rel=1e-6)
+    assert sol["Vpot"][-1] == pytest.approx(153883944.20291469, rel=1e-6)
 
 
 def test_isocalc_isocalc_jax_cross_check():
@@ -374,3 +380,81 @@ def test_integrate_segments_max_segments():
     _, _, restarts, _ = integrate_segments(integrator, t_start, t_a, y0, max_segments=2)
     assert int(restarts.count) == 1
     assert not bool(restarts.finished)
+
+
+def _jax3_kwargs(n_steps=200, mass_loss_fraction=0.05, save_molecules=False):
+    """LHS 1140 b with the Atmodeller coupling on, re-equilibrating every `mass_loss_fraction` of
+    atmospheric mass lost (`isocalc_jax3`)."""
+    kwargs = _sim_isocalc_kwargs(n_steps=n_steps, n_atmodeller=1)
+    options = dataclasses.replace(
+        kwargs["parameters"].isocalc_options,
+        mass_loss_fraction=mass_loss_fraction,
+        save_molecules=save_molecules,
+    )
+    kwargs["parameters"] = dataclasses.replace(kwargs["parameters"], isocalc_options=options)
+    return kwargs
+
+
+def test_reequilibrate_conserves_each_element():
+    """Each Atmodeller re-equilibration in the segmented integration only redistributes atoms
+    between the atmosphere and the interior: per element (D counted with H), atmosphere + interior
+    is the same before and after."""
+    integrator, t_start, t_a, y0 = _sim_integrator_setup(0.05)
+    coupler = AtmodellerCoupler(integrator.parameters)
+    state0, y_eq = coupler.reequilibrate(coupler.initial_state(), t_start, y0)
+
+    def total(y_atm, y_int):
+        return np.asarray(coupler.aggregate_D_into_H(jnp.asarray(y_atm) + jnp.asarray(y_int)))
+
+    np.testing.assert_allclose(total(y_eq, state0.y_int), total(y0, 0.0), rtol=1e-10)
+
+    _, _, restarts, _ = integrate_segments(
+        integrator, t_start, t_a, y_eq, on_mass_lost=coupler.reequilibrate, carry=state0
+    )
+    count = int(restarts.count)
+    assert count >= 1
+    y_int_before = state0.y_int
+    for i in range(count):
+        np.testing.assert_allclose(
+            total(restarts.y_after[i], restarts.carry.y_int[i]),
+            total(restarts.y_before[i], y_int_before),
+            rtol=1e-10,
+        )
+        y_int_before = restarts.carry.y_int[i]
+
+
+@pytest.mark.parametrize("save_molecules", [False, True])
+def test_isocalc_jax3_outputs(save_molecules):
+    """isocalc_jax3 returns the same keys as isocalc (plus `t_atmodeller`), all finite, with the
+    interior outputs piecewise constant between re-equilibrations."""
+    kwargs = _jax3_kwargs(save_molecules=save_molecules)
+    sol = isocalc_jax3(**kwargs)
+    sol_isocalc = isocalc(**kwargs)
+
+    assert set(sol) == set(sol_isocalc) | {"t_atmodeller"}
+    for key, value in sol.items():
+        if key != "atmodeller_final":
+            assert np.all(np.isfinite(value)), key
+    assert np.all(np.isfinite(list(sol["atmodeller_final"].values())))
+
+    # The interior only changes at the output rows straddling a re-equilibration
+    restart_rows = set(np.searchsorted(sol["time"], sol["t_atmodeller"][1:]).tolist())
+    for symbol in ("H", "O", "C"):
+        change_rows = set((np.nonzero(np.diff(sol[f"N_{symbol}_int"]))[0] + 1).tolist())
+        assert change_rows <= restart_rows, symbol
+
+
+
+@pytest.mark.parametrize("n_atmodeller", [0, 20])
+def test_isocalc_jax3_euler_reproduces_isocalc(n_atmodeller):
+    """isocalc_jax3(euler=True) marches with isocalc's own scheme (forward Euler clipped at zero,
+    re-equilibrating every n_atmodeller steps on the shared schedule) via
+    isofate.integrators.integrate_segments_euler, so every output agrees with isocalc to round-off."""
+    kwargs = _sim_isocalc_kwargs(n_steps=200, n_atmodeller=n_atmodeller)
+    sol_isocalc = isocalc(**kwargs)
+    sol = isocalc_jax3(**kwargs, euler=True)
+
+    for key, expected in sol_isocalc.items():
+        if key == "atmodeller_final":
+            continue
+        np.testing.assert_allclose(sol[key], expected, rtol=1e-10, atol=0, err_msg=key)
