@@ -76,8 +76,8 @@ class AtmodellerResult(eqx.Module):
 class CouplerState(eqx.Module):
     """State carried between Atmodeller re-equilibrations (see `AtmodellerCoupler.reequilibrate`).
 
-    Fixed structure, so it can be carried through `jax.lax.while_loop` by
-    `isofate.integrators.integrate_segments`.
+    Fixed structure, so it can be carried through `jax.lax.while_loop`/`jax.lax.scan` by the
+    `isofate.integrators.Integrator` subclasses.
 
     Args:
         y_int: Interior (dissolved) abundances [atoms], ordered per `isofate.species.SYMBOLS`.
@@ -585,7 +585,7 @@ class AtmodellerCoupler(eqx.Module):
         self, carry: CouplerState, t: ArrayLike, y: Array
     ) -> tuple[CouplerState, Array]:
         """Re-equilibrates the atmosphere and interior at the fixed time `t` - the `on_mass_lost`
-        hook for `isofate.integrators.integrate_segments`.
+        hook for `isofate.integrators.Integrator`.
 
         The escape radius and mean particle mass are derived from `(t, y)`, the interior reservoir
         and warm start come from `carry`. An all-NaN `carry.solution` (see `initial_state`) is

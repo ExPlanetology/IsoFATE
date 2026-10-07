@@ -5,6 +5,7 @@
 
 """Main IsoFATE script for coupled model."""
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -32,9 +33,10 @@ from isofate.engine import (
 from isofate.escape.mechanisms import EscapeState
 from isofate.integrators import (
     EXHAUSTION_FRACTION,
-    IsocalcIntegrator,
-    integrate_segments,
-    integrate_segments_euler,
+    AdaptiveIntegrator,
+    EulerIntegrator,
+    IsocalcModel,
+    no_reequilibration,
 )
 from isofate.isofunks import R_atm, R_env
 from isofate.legacy import Phi_1_2, Phi_minor_species
@@ -116,7 +118,7 @@ def isocalc(
     # local names, matching isocalc_jax3. Every IsocalcOptions field is read-only for the whole run
     # and referenced directly as `options.<field>` below. `mu`/R_B are derived fresh from the
     # evolving y every iteration below (no bootstrap `IsocalcOptions.mu` field exists anymore),
-    # matching `IsocalcIntegrator.algebraic` (see engine.py). (`options.mantle_iron` similarly
+    # matching `IsocalcModel.algebraic` (see engine.py). (`options.mantle_iron` similarly
     # seeds a local `mantle_iron_state` below, once `interior_atmosphere` is available.)
     system = parameters.system
     options = parameters.isocalc_options
@@ -366,7 +368,7 @@ def isocalc(
         # Derived fresh from the (possibly re-equilibrated) y every iteration (mass-conservation
         # identity: the atmosphere's total mass is exactly the sum of its constituent atoms'
         # masses), rather than tracked as separately-updated state - matches isocalc_jax3's design
-        # (see integrators.py's IsocalcIntegrator.algebraic).
+        # (see integrators.py's IsocalcModel.algebraic).
         M_atm = np.dot(y, atomic_masses)
         N_tot = np.sum(y)
         mu, radius_env, radius_p, f_atm = geometry(y, t_now)
@@ -577,7 +579,7 @@ def isocalc_jax3(
 ):
     """Atmospheric escape with event-triggered Atmodeller coupling.
 
-    The integration runs through `isofate.integrators.integrate_segments`, which stops on an
+    The integration runs through `isofate.integrators.AdaptiveIntegrator`, which stops on an
     event, re-equilibrates the atmosphere and interior with Atmodeller
     (`AtmodellerCoupler.reequilibrate`), and restarts. The atmosphere and interior are first
     equilibrated once at the start time.
@@ -592,7 +594,7 @@ def isocalc_jax3(
 
     The mantle iron reaction is ignored for now
     (`IsocalcOptions.mantle_iron` is not read). Output rows after the atmosphere is exhausted are
-    ``inf``, as `integrate_segments` leaves them (with ``euler=True`` the atmosphere is instead
+    ``inf``, as `AdaptiveIntegrator` leaves them (with ``euler=True`` the atmosphere is instead
     frozen once exhausted). An empty initial atmosphere is not equilibrated, as in `isocalc`.
 
     The reference for comparison is `isocalc` (manual fixed time step, re-equilibrating every
@@ -605,8 +607,8 @@ def isocalc_jax3(
         isofate_species_abund: Initial atmospheric abundances [atoms], ordered per
             `isofate.species.SYMBOLS` (H, He, D, O, C, N, S)
         euler: Integrate with isocalc's fixed-step forward Euler scheme
-            (`isofate.integrators.integrate_segments_euler`: re-equilibrating every `n_atmodeller`
-            steps, no events) instead of the adaptive solver with events. Defaults to ``False``.
+            (`isofate.integrators.EulerIntegrator`: re-equilibrating every `n_atmodeller` steps,
+            no events) instead of the adaptive solver with events. Defaults to ``False``.
 
     Returns:
         Dictionary with the same keys as `isocalc` (plus ``t_atmodeller``, the re-equilibration
@@ -624,13 +626,8 @@ def isocalc_jax3(
     # Output times [s]: row j is the state after j + 1 steps, so the last row is at t_end
     t_a = t_start_seconds + delta_t * np.arange(1, n_tot + 1)
 
-    # Re-equilibrate every n_atmodeller output steps, like isocalc (a time event)
-    integrator = IsocalcIntegrator(
-        parameters,
-        reequilibration_interval=(
-            float(options.n_atmodeller * delta_t) if options.n_atmodeller != 0 else None
-        ),
-    )
+    model = IsocalcModel(parameters)
+    integrator_class = EulerIntegrator if euler else AdaptiveIntegrator
     # Built once per run, outside jit (it builds the Atmodeller model). Also built when the
     # coupling is off, for the molecule output keys
     coupler = EventAtmodellerCoupler(parameters)
@@ -650,14 +647,10 @@ def isocalc_jax3(
     ###_____Integrate_____###
 
     if options.n_atmodeller == 0:
-        if euler:
-            y_a, alg_a, _, _ = integrate_segments_euler(
-                integrator, jnp.asarray(t_start_seconds), jnp.asarray(t_a), y_raw, n_tot
-            )
-        else:
-            sol = integrator.integrate(jnp.asarray(t_start_seconds), jnp.asarray(t_a), y_raw)
-            y_a = sol.ys[0]  # pyright: ignore[reportOptionalSubscript]
-            alg_a = integrator.diagnostics(jnp.asarray(t_a), y_a)
+        integrator = integrator_class(model, on_mass_lost=no_reequilibration)
+        y_a, alg_a, _, _ = integrator.integrate(
+            jnp.asarray(t_start_seconds), jnp.asarray(t_a), y_raw
+        )
     else:
         t_start_j = jnp.asarray(t_start_seconds)
         equilibrated0 = float(parameters.atmosphere_mass(y_raw)) > 0
@@ -666,25 +659,15 @@ def isocalc_jax3(
         else:
             # Nothing to equilibrate: like isocalc, skip Atmodeller for an empty atmosphere
             state0, y0 = coupler.initial_state(), y_raw
-        if euler:
-            y_a, alg_a, restarts, state = integrate_segments_euler(
-                integrator,
-                t_start_j,
-                jnp.asarray(t_a),
-                y0,
-                options.n_atmodeller,
-                on_mass_lost=coupler.reequilibrate,
-                carry=state0,
-            )
-        else:
-            y_a, alg_a, restarts, state = integrate_segments(
-                integrator,
-                t_start_j,
-                jnp.asarray(t_a),
-                y0,
-                on_mass_lost=coupler.reequilibrate,
-                carry=state0,
-            )
+        # Re-equilibrate every n_atmodeller output steps, like isocalc
+        integrator = integrator_class(
+            model,
+            on_mass_lost=coupler.reequilibrate,
+            reequilibration_steps=options.n_atmodeller,
+        )
+        y_a, alg_a, restarts, state = integrator.integrate(
+            t_start_j, jnp.asarray(t_a), y0, carry=state0
+        )
         count = int(restarts.count)
 
         # TODO: temporary output assembly to match isocalc's keys - clean up.
@@ -696,14 +679,15 @@ def isocalc_jax3(
         eq_t = stacked(t_start_seconds, restarts.t)
         eq_y_before = stacked(y_raw, restarts.y_before)
         y_int_states = stacked(state0.y_int, carries.y_int)
+        solution_states = stacked(state0.solution, carries.solution)
         T_surf_states = stacked(state0.surface_temperature, carries.surface_temperature)
         T_atmod_states = stacked(
             state0.surface_temperature_atmodeller, carries.surface_temperature_atmodeller
         )
 
         # Re-equilibrate once more at the end time when it is on the schedule (n_steps a multiple
-        # of n_atmodeller), as isocalc does - integrate_segments never restarts at the last output
-        # time. The last row then holds the re-equilibrated state.
+        # of n_atmodeller), as isocalc does - the integrators never re-equilibrate at the last
+        # output time. The last row then holds the re-equilibrated state.
         y_a = np.array(y_a)
         floor = EXHAUSTION_FRACTION * float(parameters.atmosphere_mass(y0))
         if (
@@ -715,10 +699,11 @@ def isocalc_jax3(
             eq_t = np.append(eq_t, t_a[-1])
             eq_y_before = np.concatenate([eq_y_before, y_a[-1][None]])
             y_int_states = np.concatenate([y_int_states, np.asarray(state.y_int)[None]])
+            solution_states = np.concatenate([solution_states, np.asarray(state.solution)[None]])
             T_surf_states = np.append(T_surf_states, float(state.surface_temperature))
             T_atmod_states = np.append(T_atmod_states, float(state.surface_temperature_atmodeller))
             y_a[-1] = np.asarray(y_end)
-            alg_a = integrator.diagnostics(jnp.asarray(t_a), jnp.asarray(y_a))
+            alg_a = model.diagnostics(jnp.asarray(t_a), jnp.asarray(y_a))
         # (the initial entry is a placeholder for the interior when the initial solve was skipped)
         t_atmodeller = eq_t if equilibrated0 else eq_t[1:]
         # Stop if any equilibration (initial, in the loop, or final) failed to converge
@@ -735,18 +720,23 @@ def isocalc_jax3(
 
         if options.save_molecules:
             # Re-run each equilibration with full output, with exactly the inputs the hook had
-            # (the pre-equilibration atmosphere and the previous interior), so it reproduces the
-            # same equilibrium
+            # (the pre-equilibration atmosphere, the previous interior and the previous solution
+            # as the warm start), so it reproduces the same equilibrium
             y_int_before_states = np.concatenate([np.zeros((1, 7)), y_int_states[:-1]])
+            guesses = [coupler.cold_guess()] + [jnp.asarray(g) for g in solution_states[:-1]]
+            # Jitted once for all the re-runs (eagerly, the warm start's jax.lax.cond recompiles on
+            # every call)
+            run_full_output = eqx.filter_jit(coupler.run)
             for j in range(len(eq_t)):
                 y_before = jnp.asarray(eq_y_before[j])
                 t_j = jnp.asarray(eq_t[j])
-                rerun = coupler.run(
+                rerun = run_full_output(
                     escape_radius(parameters, y_before, t_j),
                     parameters.atmosphere_mean_mu(y_before),
                     None,
                     y_before,
                     jnp.asarray(y_int_before_states[j]),
+                    initial_guess=guesses[j],
                     full_output=True,
                 )
                 if not bool(rerun.success):

@@ -23,9 +23,10 @@ import pytest
 from isofate.constants import const
 from isofate.integrators import (
     EXHAUSTION_FRACTION,
+    AdaptiveIntegrator,
     IntegrationStop,
-    IsocalcIntegrator,
-    integrate_segments,
+    IsocalcModel,
+    no_reequilibration,
 )
 from isofate.escape.mechanisms import XUVEscape
 from isofate.atmodeller_coupler_new import AtmodellerCoupler
@@ -147,8 +148,8 @@ def test_sim_regression():
     Re-pinned again when isocalc stopped seeding the initial atmosphere mass from
     `Mp * planet.f_atm` and instead derives M_atm/f_atm fresh from y every iteration (matching
     the JAX drivers) - `dot(isofate_species_abund, atomic_masses)` differs from
-    `Mp * planet.f_atm` by ~3e-4 relative here, traced to sim.py's N_N abundance formula omitting the
-    `/(1 + HetoH_protosolar_mass)` normalization every other species' formula has. A deliberate
+    `Mp * planet.f_atm` by ~3e-4 relative here, traced to sim.py's N_N abundance formula omitting
+    the `/(1 + HetoH_protosolar_mass)` normalization every other species' formula has. A deliberate
     accuracy improvement (removes a redundant, slightly-inconsistent second bookkeeping of
     atmosphere mass), not a regression.
 
@@ -227,8 +228,8 @@ def test_isocalc_jax3_empty_atmosphere(euler):
 def test_reequilibrate_warm_start_matches_cold_start():
     """`AtmodellerCoupler.reequilibrate` warm-starts from the previous solution in its carry; the
     result is the same equilibrium as a cold start."""
-    integrator, t_start, _, y0 = _sim_integrator_setup()
-    coupler = AtmodellerCoupler(integrator.parameters)
+    model, t_start, _, y0 = _sim_integrator_setup()
+    coupler = AtmodellerCoupler(model.parameters)
     state, y_eq = coupler.reequilibrate(coupler.initial_state(), t_start, y0)
     assert np.all(np.isfinite(np.asarray(state.solution)))  # a real solution to warm-start from
 
@@ -239,17 +240,19 @@ def test_reequilibrate_warm_start_matches_cold_start():
     cold_state, y_cold = coupler.reequilibrate(cold, t_start, y_lost)
 
     np.testing.assert_allclose(np.asarray(y_warm), np.asarray(y_cold), rtol=1e-6)
-    np.testing.assert_allclose(np.asarray(warm_state.y_int), np.asarray(cold_state.y_int), rtol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(warm_state.y_int), np.asarray(cold_state.y_int), rtol=1e-6
+    )
 
 
 def _sim_integrator_setup(mass_loss_fraction=None):
-    """The LHS 1140 b scenario set up for direct `IsocalcIntegrator` use (no Atmodeller), with the
+    """The LHS 1140 b scenario set up for direct `IsocalcModel` use (no Atmodeller), with the
     given `IsocalcOptions.mass_loss_fraction` (``None`` keeps the default). This scenario is
     escape-dominated (about 17% of the atmospheric mass is lost over the run), unlike
     test_pipeline's toy scenario.
 
     Returns:
-        `(integrator, t_start, t_a, y0)`
+        `(model, t_start, t_a, y0)`
     """
     kwargs = _sim_isocalc_kwargs(n_steps=200)
     options = kwargs["parameters"].isocalc_options
@@ -263,21 +266,16 @@ def _sim_integrator_setup(mass_loss_fraction=None):
     t_a = jnp.asarray(delta_t * np.linspace(1, options.n_steps + 1, options.n_steps) + t_start)
     y0 = jnp.asarray(kwargs["isofate_species_abund"], dtype=float)
 
-    return IsocalcIntegrator(parameters), jnp.asarray(t_start), t_a, y0
+    return IsocalcModel(parameters), jnp.asarray(t_start), t_a, y0
 
 
 def _integrate_sim(mass_loss_fraction=None):
-    """One `IsocalcIntegrator.integrate` call on the LHS 1140 b scenario."""
-    integrator, t_start, t_a, y0 = _sim_integrator_setup(mass_loss_fraction)
-    sol = integrator.integrate(t_start, t_a, y0)
+    """One `IsocalcModel.integrate` call on the LHS 1140 b scenario."""
+    model, t_start, t_a, y0 = _sim_integrator_setup(mass_loss_fraction)
+    sol = model.integrate(t_start, t_a, y0)
     y_a, stop = sol.ys[0], IntegrationStop.from_solution(sol)
 
-    return integrator.parameters, np.asarray(t_a), y0, y_a, stop
-
-
-def _identity_hook(carry, t, y):
-    """`on_mass_lost` hook that leaves the state unchanged."""
-    return carry, y
+    return model.parameters, np.asarray(t_a), y0, y_a, stop
 
 
 def test_integrator_mass_loss_event():
@@ -307,18 +305,18 @@ def test_integrator_default_runs_to_end():
     assert float(stop.t) == pytest.approx(t_a[-1])
 
 
-def test_integrate_segments_identity_hook_matches_single_solve():
+def test_adaptive_integrator_identity_hook_matches_single_solve():
     """Plumbing check: restarting every 5% of mass loss with a hook that leaves the state unchanged
     must reproduce one uninterrupted integration."""
-    integrator, t_start, t_a, y0 = _sim_integrator_setup(0.05)
-    parameters = integrator.parameters
+    model, t_start, t_a, y0 = _sim_integrator_setup(0.05)
+    parameters = model.parameters
 
-    y_a, _, restarts, _ = integrate_segments(
-        integrator, t_start, t_a, y0, on_mass_lost=_identity_hook
+    y_a, _, restarts, _ = AdaptiveIntegrator(model, on_mass_lost=no_reequilibration).integrate(
+        t_start, t_a, y0
     )
 
-    reference_integrator, _, _, _ = _sim_integrator_setup()
-    y_reference = reference_integrator.integrate(t_start, t_a, y0).ys[0]
+    reference_model, _, _, _ = _sim_integrator_setup()
+    y_reference = reference_model.integrate(t_start, t_a, y0).ys[0]
 
     count = int(restarts.count)
     assert count >= 2
@@ -339,16 +337,16 @@ def test_integrate_segments_identity_hook_matches_single_solve():
     np.testing.assert_allclose(y_a, y_reference, rtol=1e-3)
 
 
-def test_integrate_segments_placeholder_hook():
+def test_adaptive_integrator_placeholder_hook():
     """The default placeholder hook removes 1% of every abundance at each restart, and the next
     segment continues from the reduced state."""
-    integrator, t_start, t_a, y0 = _sim_integrator_setup(0.05)
-    parameters = integrator.parameters
+    model, t_start, t_a, y0 = _sim_integrator_setup(0.05)
+    parameters = model.parameters
 
-    y_a, _, restarts, _ = integrate_segments(integrator, t_start, t_a, y0)
-    y_identity, _, restarts_identity, _ = integrate_segments(
-        integrator, t_start, t_a, y0, on_mass_lost=_identity_hook
-    )
+    y_a, _, restarts, _ = AdaptiveIntegrator(model).integrate(t_start, t_a, y0)
+    y_identity, _, restarts_identity, _ = AdaptiveIntegrator(
+        model, on_mass_lost=no_reequilibration
+    ).integrate(t_start, t_a, y0)
 
     count = int(restarts.count)
     assert count >= 2
@@ -367,25 +365,25 @@ def test_integrate_segments_placeholder_hook():
     )
 
 
-def test_integrate_segments_hook_and_floor():
+def test_adaptive_integrator_hook_and_floor():
     """The hook is called once per restart with its carried state threaded through, and a hook
     that removes almost all of the atmosphere ends the integration at the exhaustion floor."""
-    integrator, t_start, t_a, y0 = _sim_integrator_setup(0.05)
-    parameters = integrator.parameters
+    model, t_start, t_a, y0 = _sim_integrator_setup(0.05)
+    parameters = model.parameters
 
     def counting_hook(carry, t, y):
         return carry + 1, y
 
-    _, _, restarts, n_calls = integrate_segments(
-        integrator, t_start, t_a, y0, on_mass_lost=counting_hook, carry=jnp.array(0)
+    _, _, restarts, n_calls = AdaptiveIntegrator(model, on_mass_lost=counting_hook).integrate(
+        t_start, t_a, y0, carry=jnp.array(0)
     )
     assert int(n_calls) == int(restarts.count) >= 2
 
     def removing_hook(carry, t, y):
         return carry, 1e-7 * y
 
-    y_a, _, restarts, _ = integrate_segments(
-        integrator, t_start, t_a, y0, on_mass_lost=removing_hook
+    y_a, _, restarts, _ = AdaptiveIntegrator(model, on_mass_lost=removing_hook).integrate(
+        t_start, t_a, y0
     )
     assert int(restarts.count) == 1
     i_next = int(np.searchsorted(np.asarray(t_a), float(restarts.t[0]), side="right"))
@@ -397,12 +395,12 @@ def test_integrate_segments_hook_and_floor():
     )
 
 
-def test_integrate_segments_max_segments():
+def test_adaptive_integrator_max_segments():
     """Running out of segments is reported by `restarts.finished` (and raises only if Equinox
     errors are enabled, which isofate turns off by default)."""
-    integrator, t_start, t_a, y0 = _sim_integrator_setup(0.05)
+    model, t_start, t_a, y0 = _sim_integrator_setup(0.05)
 
-    _, _, restarts, _ = integrate_segments(integrator, t_start, t_a, y0, max_segments=2)
+    _, _, restarts, _ = AdaptiveIntegrator(model, max_segments=2).integrate(t_start, t_a, y0)
     assert int(restarts.count) == 1
     assert not bool(restarts.finished)
 
@@ -424,8 +422,8 @@ def test_reequilibrate_conserves_each_element():
     """Each Atmodeller re-equilibration in the segmented integration only redistributes atoms
     between the atmosphere and the interior: per element (D counted with H), atmosphere + interior
     is the same before and after."""
-    integrator, t_start, t_a, y0 = _sim_integrator_setup(0.05)
-    coupler = AtmodellerCoupler(integrator.parameters)
+    model, t_start, t_a, y0 = _sim_integrator_setup(0.05)
+    coupler = AtmodellerCoupler(model.parameters)
     state0, y_eq = coupler.reequilibrate(coupler.initial_state(), t_start, y0)
 
     def total(y_atm, y_int):
@@ -433,8 +431,8 @@ def test_reequilibrate_conserves_each_element():
 
     np.testing.assert_allclose(total(y_eq, state0.y_int), total(y0, 0.0), rtol=1e-10)
 
-    _, _, restarts, _ = integrate_segments(
-        integrator, t_start, t_a, y_eq, on_mass_lost=coupler.reequilibrate, carry=state0
+    _, _, restarts, _ = AdaptiveIntegrator(model, on_mass_lost=coupler.reequilibrate).integrate(
+        t_start, t_a, y_eq, carry=state0
     )
     count = int(restarts.count)
     assert count >= 1
@@ -474,7 +472,7 @@ def test_isocalc_jax3_outputs(save_molecules):
 def test_isocalc_jax3_euler_reproduces_isocalc(n_atmodeller):
     """isocalc_jax3(euler=True) marches with isocalc's own scheme (forward Euler clipped at zero,
     re-equilibrating every n_atmodeller steps on the shared schedule) via
-    isofate.integrators.integrate_segments_euler, so every output agrees with isocalc to round-off."""
+    isofate.integrators.EulerIntegrator, so every output agrees with isocalc to round-off."""
     kwargs = _sim_isocalc_kwargs(n_steps=200, n_atmodeller=n_atmodeller)
     sol_isocalc = isocalc(**kwargs)
     sol = isocalc_jax3(**kwargs, euler=True)

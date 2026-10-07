@@ -54,7 +54,7 @@ class IsocalcOptions(eqx.Module):
             loss stops the integration (a diffrax event). The default ``1 - 1e-6`` stops it once
             the atmosphere is effectively exhausted; a smaller value (e.g. ``0.05``) stops it
             earlier so that it can be restarted, e.g. after re-equilibrating with Atmodeller (see
-            `isofate.integrators.integrate_segments`). Defaults to ``1 - 1e-6``.
+            `isofate.integrators.AdaptiveIntegrator`). Defaults to ``1 - 1e-6``.
         species_loss_fraction: If set, the integration also stops once any species has lost this
             fraction of its own atmospheric abundance at the start of the integration (e.g.
             ``0.05``), so that trace species drained by escape trigger a restart even when the
