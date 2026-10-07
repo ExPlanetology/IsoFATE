@@ -300,7 +300,7 @@ class IsocalcIntegrator(eqx.Module):
 
         _, t_trigger = args
 
-        return t - t_trigger
+        return jnp.asarray(t) - t_trigger
 
     @eqx.filter_jit
     def integrate(self, t_start: float | Array, t_a: Array, y0: Array) -> diffrax.Solution:
@@ -564,7 +564,8 @@ def integrate_segments(
 
             return y_a, next_stop, needs_restart(next_stop)
 
-        y_a, stop, needs_another = jax.lax.cond(
+        # pyright infers NoReturn for jax.lax.cond's result (a typing quirk), so ignore here
+        y_a, stop, needs_another = jax.lax.cond(  # pyright: ignore[reportGeneralTypeIssues]
             parameters.atmosphere_mass(y_new) <= floor, finish, restart, y_a
         )
 
@@ -635,7 +636,7 @@ def integrate_segments_euler(
 
     def euler_step(y: Array, n: Array) -> tuple[Array, Array]:
         """One forward Euler step from state n (time t_start + n * delta_t) to state n + 1."""
-        dy_dt: Array = integrator.vector_field(t_start + n * delta_t, y, None)
+        dy_dt: ArrayLike = integrator.vector_field(t_start + n * delta_t, y, None)
         y_next: Array = jnp.maximum(y + delta_t * dy_dt, 0.0)
         # frozen once exhausted
         y_next = jnp.where(parameters.atmosphere_mass(y) <= floor, y, y_next)
@@ -651,7 +652,8 @@ def integrate_segments_euler(
         t_end = t_start + (n0 + steps_per_segment) * delta_t
         is_last = (k == n_segments - 1) & (remainder == 0)
         hooked = jnp.invert(is_last) & (parameters.atmosphere_mass(y_end) > floor)
-        carry, y_new = jax.lax.cond(
+        # pyright infers NoReturn for jax.lax.cond's result (a typing quirk), so ignore here
+        carry, y_new = jax.lax.cond(  # pyright: ignore[reportGeneralTypeIssues]
             hooked,
             lambda c, y_: on_mass_lost(c, t_end, y_),
             lambda c, y_: (c, y_),
