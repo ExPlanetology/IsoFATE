@@ -8,6 +8,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from atmodeller import ChemicalSpecies, EquilibriumModel, ReservoirSpecies
 from atmodeller import Planet as AtmodellerPlanet
 from atmodeller.constants import GAS_PHASE_INDEX, SILICATE_MELT_PHASE_INDEX
@@ -57,6 +58,8 @@ class AtmodellerResult(eqx.Module):
         output: Extracted Atmodeller output (full or narrow, see `AtmodellerCoupler.run`)
         mantle_iron_state: Mantle iron state; returned unchanged until the Fe-O2 reaction is
             migrated
+        success: Whether the solve converged. If not, the other fields are not a valid
+            equilibrium (they need not even conserve each element) and must not be used.
     """
 
     y: Array
@@ -67,6 +70,7 @@ class AtmodellerResult(eqx.Module):
     solution: Array
     output: dict
     mantle_iron_state: MantleIronState | None
+    success: Array
 
 
 class CouplerState(eqx.Module):
@@ -83,12 +87,17 @@ class CouplerState(eqx.Module):
         surface_temperature: Surface temperature from the atmosphere descent at the last solve [K]
         surface_temperature_atmodeller: Surface temperature used by Atmodeller at the last solve
             [K]
+        first_failure_time: Time of the first re-equilibration whose solve failed to converge
+            [s], or ``inf`` if none has. A failure can't raise inside the jitted segment loop, so
+            it is recorded here and the caller checks it afterwards (see
+            `AtmodellerCoupler.check_converged`). Defaults to ``inf``.
     """
 
     y_int: Array
     solution: Array
     surface_temperature: Array
     surface_temperature_atmodeller: Array
+    first_failure_time: Array = eqx.field(default_factory=lambda: jnp.array(jnp.inf))
 
 
 class TrackedGasSpecies(eqx.Module):
@@ -556,6 +565,7 @@ class AtmodellerCoupler(eqx.Module):
             solution=solution,
             output=sol,
             mantle_iron_state=mantle_iron_state,
+            success=jnp.all(success),
         )
 
     def initial_state(self) -> CouplerState:
@@ -600,6 +610,12 @@ class AtmodellerCoupler(eqx.Module):
             initial_guess=carry.solution,
             full_output=False,
         )
+        # Record the first failed solve, to raise once outside jit (see check_converged)
+        first_failure_time = jnp.where(
+            jnp.isinf(carry.first_failure_time) & ~result.success,
+            jnp.asarray(t, dtype=float),
+            carry.first_failure_time,
+        )
         new_carry = CouplerState(
             y_int=result.y_int,
             solution=result.solution,
@@ -607,7 +623,26 @@ class AtmodellerCoupler(eqx.Module):
             surface_temperature_atmodeller=jnp.asarray(
                 result.surface_temperature_atmodeller, dtype=float
             ),
+            first_failure_time=first_failure_time,
         )
 
         return new_carry, result.y
+
+    @staticmethod
+    def check_converged(state: CouplerState) -> None:
+        """Raises if any re-equilibration recorded in `state` failed to converge. Call outside jit.
+
+        Args:
+            state: Coupler state after the re-equilibrations to check
+
+        Raises:
+            RuntimeError: If a solve failed to converge
+        """
+        t_fail = float(state.first_failure_time)
+        if np.isfinite(t_fail):
+            raise RuntimeError(
+                f"Atmodeller failed to converge (warm start and cold fallback) at "
+                f"t = {t_fail * const.s2yr:.6g} yr; its result does not conserve the elements, "
+                "so the run is stopped"
+            )
 

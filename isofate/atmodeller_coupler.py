@@ -474,6 +474,13 @@ def AtmodellerCoupler(
             mass_constraints_j,
             jnp.full_like(base_solution_array, jnp.nan),
         )
+    if not np.all(np.asarray(success)):
+        # The unconverged result does not conserve the elements, so it must not be used
+        raise RuntimeError(
+            f"Atmodeller failed to converge (warm start and cold fallback) at surface temperature "
+            f"{surface_temperature:.6g} K, radius {Rp:.6g} m; mass constraints [kg]: "
+            + ", ".join(f"{key}={value:.6g}" for key, value in mass_constraints.items())
+        )
     # Entries that need in-place-style updates below are replaced wholesale (new array of the
     # same (1, 1) shape) rather than item-assigned; jax.device_get gives plain (writable) numpy
     # arrays, same as the to_numpy=True the jitted helper skips (jit can't emit numpy directly).
