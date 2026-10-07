@@ -1,10 +1,10 @@
 """Regression anchor for the isofate <-> atmodeller coupling (see isofate/sim.py for the
 interactive/plotting driver this is derived from).
 
-These pin the current (atmodeller v2preview) behavior of AtmodellerCoupler and isocalc_jax3 so
+These pin the current (atmodeller v2preview) behavior of AtmodellerCoupler and isocalc so
 future refactoring has something concrete to check against. The toy scenario below was
-re-cross-checked (with the legacy isocalc, since retired; isocalc_jax3(euler=True) reproduces it to
-round-off), by hand, against
+re-cross-checked (with the former NumPy loop driver, since retired; isocalc(euler=True)
+reproduces it to round-off), by hand, against
 ../IsoFATE_main running the pre-v2 atmodeller API (0.9.1) with the equivalent Mp/f_atm/Mstar/F0/
 Fp/T/d passed directly: the single-solve values agree to ~1e-4 relative, and the short run
 agrees to ~1e-4 relative (small residual differences are expected from atmodeller's own
@@ -35,7 +35,7 @@ from isofate.atmodeller_coupler import AtmodellerCoupler
 from isofate.constants import const
 from isofate.escape.mechanisms import XUVEscape
 from isofate.initial_condition import AbundanceInitialCondition
-from isofate.isofate_coupler import isocalc_jax3
+from isofate.isofate_coupler import isocalc
 from isofate.parameters import IsocalcOptions, Parameters
 from isofate.species import DEFAULT_SPECIES
 from isofate.system import Planet, Star, System
@@ -164,10 +164,10 @@ def _toy_isocalc_kwargs(**option_overrides):
     return dict(parameters=parameters, t_end=1e6)
 
 
-def test_isocalc_jax3_toy_regression():
-    """Short, non-escape-dominated run with isocalc_jax3(euler=True); the legacy isocalc's values,
+def test_isocalc_toy_regression():
+    """Short, non-escape-dominated run with isocalc(euler=True); the former NumPy loop's values,
     cross-checked against ../IsoFATE_main to ~1e-4 relative."""
-    sol = isocalc_jax3(**_toy_isocalc_kwargs(), euler=True)
+    sol = isocalc(**_toy_isocalc_kwargs(), euler=True)
 
     _assert_finite(sol["Matm"], sol["N_H"], sol["N_O_int"], sol["N_C_int"])
 
@@ -183,8 +183,8 @@ def test_isocalc_jax3_toy_regression():
     assert final["H2O_mantle"] == pytest.approx(7.670751470352576e20, rel=1e-2)
 
 
-def test_isocalc_jax3_save_molecules():
-    sol = isocalc_jax3(**_toy_isocalc_kwargs(save_molecules=True), euler=True)
+def test_isocalc_save_molecules():
+    sol = isocalc(**_toy_isocalc_kwargs(save_molecules=True), euler=True)
 
     for key in ("n_H2O_a", "n_H2_a", "n_O2_a", "n_CO2_a", "n_CO_a", "n_CH4_a", "n_N2_a", "n_S2_a"):
         assert key in sol

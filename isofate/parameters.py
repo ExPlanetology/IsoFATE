@@ -26,7 +26,7 @@ from isofate.system import System
 
 
 class IsocalcOptions(eqx.Module):
-    """Mode switches and tuning constants for the driver (`isocalc_jax3`), fixed for the whole run.
+    """Mode switches and tuning constants for the driver (`isocalc`), fixed for the whole run.
 
     These are numerical/modeling choices, as opposed to the rest of `Parameters` (`system`, the
     escape mechanism, the initial condition) and the end time, which describe the physical
@@ -193,7 +193,7 @@ class Parameters(eqx.Module):
 
         Returns 0 when the total abundance is zero, rather than letting 0/0 propagate as NaN -
         this keeps the value finite even when a caller only conditionally uses it (e.g. near-total
-        atmospheric exhaustion in isocalc_jax3), so a discarded branch can't corrupt a gradient
+        atmospheric exhaustion in isocalc), so a discarded branch can't corrupt a gradient
         through the selecting `jnp.where`.
 
         Args:

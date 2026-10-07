@@ -128,8 +128,8 @@ N_H, N_He, N_D, N_O, N_C, N_N, N_S = (float(n) for n in parameters.initial_abund
 
 # run simulation (from isofate.py)
 isocalc_start = TIME.time()
-sol = isocalc_jax3(parameters, time)
-print(f"isocalc_jax3 runtime: {TIME.time() - isocalc_start:.2f} s")
+sol = isocalc(parameters, time)
+print(f"isocalc runtime: {TIME.time() - isocalc_start:.2f} s")
 
 # path = '/Users/collin/Documents/Harvard/Research/atm_escape/IsoFATE/monte_carlo/atmodeller/corrected_Psi/transient_D_world_full_isofate'
 # outfile = open(path, 'wb')

@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""The IsoFATE driver, `isocalc_jax3`: atmospheric escape coupled to interior-atmosphere
+"""The IsoFATE driver, `isocalc`: atmospheric escape coupled to interior-atmosphere
 equilibrium."""
 
 import equinox as eqx
@@ -30,7 +30,7 @@ from isofate.parameters import Parameters
 from isofate.species import SYMBOLS
 
 
-def isocalc_jax3(
+def isocalc(
     parameters: Parameters,
     t_end=5e9,
     euler: bool = False,
@@ -54,7 +54,7 @@ def isocalc_jax3(
     (with ``euler=True`` the atmosphere is instead frozen once exhausted). An empty initial
     atmosphere is not equilibrated.
 
-    With ``euler=True`` this is the scheme of the original (since retired) `isocalc` driver, a
+    With ``euler=True`` this is the scheme of the former NumPy loop driver (retired), a
     manual fixed time step re-equilibrating every `n_atmodeller` steps, which it reproduced to
     round-off.
 
@@ -91,7 +91,7 @@ def isocalc_jax3(
     tracked_species = coupler.tracked_species
     y_raw = jnp.asarray(parameters.initial_abundances(), dtype=float)
 
-    # TODO: temporary output assembly (the original isocalc's keys) - clean up
+    # TODO: temporary output assembly (the former NumPy loop's keys) - clean up
     y_a_int = np.zeros((n_tot, 7))  # interior number array [atoms]
     T_surf_analytic_a = np.zeros(n_tot)  # surface temperature from the atmosphere descent [K]
     T_surf_atmod_a = np.zeros(n_tot)  # surface temperature used by Atmodeller [K]
@@ -127,7 +127,7 @@ def isocalc_jax3(
         )
         count = int(restarts.count)
 
-        # TODO: temporary output assembly (the original isocalc's keys) - clean up.
+        # TODO: temporary output assembly (the former NumPy loop's keys) - clean up.
         # One entry per equilibration: the initial one, then each restart.
         def stacked(initial, per_restart):
             return np.concatenate([np.asarray(initial)[None], np.asarray(per_restart)[:count]])

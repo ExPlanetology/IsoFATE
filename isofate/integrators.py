@@ -458,7 +458,7 @@ class Integrator(eqx.Module):
             same structure, shapes and dtypes it received. Defaults to
             `placeholder_reequilibration`.
         reequilibration_steps: Call the hook every this many output steps, as
-            `isofate_coupler.isocalc_jax3` re-equilibrates every `n_atmodeller` steps. The output
+            `isofate_coupler.isocalc` re-equilibrates every `n_atmodeller` steps. The output
             grid must then be uniform, ``t_a[j] = t_start + (j + 1) * delta_t``, and the row at a
             re-equilibration holds the updated state. Defaults to ``None`` (no scheduled
             re-equilibrations).
@@ -671,7 +671,7 @@ class AdaptiveIntegrator(Integrator):
 
 class EulerIntegrator(Integrator):
     """Fixed-step forward Euler march with a re-equilibration every `reequilibration_steps` steps:
-    the scheme of the original (since retired) `isocalc` driver.
+    the scheme of the former NumPy loop driver.
 
     The output times must be the uniform grid ``t_a[j] = t_start + (j + 1) * delta_t``; row j holds
     the state after j + 1 steps. Each step is ``y <- max(y + delta_t * f(t, y), 0)`` with
@@ -681,7 +681,7 @@ class EulerIntegrator(Integrator):
     row at that time holds the re-equilibrated state. The mass-loss event is not used.
 
     Once the atmospheric mass drops below `exhaustion_floor`, the state is frozen and no further
-    re-equilibrations happen (the original isocalc instead ran on until the abundances were exactly
+    re-equilibrations happen (the former NumPy loop instead ran on until the abundances were exactly
     zero).
 
     Jitted with `jax.lax.scan` over segments and steps; `reequilibration_steps` is static, so a
