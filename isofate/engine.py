@@ -15,11 +15,7 @@ from jaxtyping import ArrayLike
 from isofate.constants import const
 from isofate.parameters import Parameters
 from isofate.system import Planet, System
-from isofate.utils import (
-    gravitational_acceleration,
-    gravitational_potential,
-    scale_height,
-)
+from isofate.utils import gravitational_acceleration, gravitational_potential, scale_height
 
 
 def convective_envelope_thickness(parameters: Parameters, y: Array, age: ArrayLike) -> Array:

@@ -497,7 +497,7 @@ def test_isocalc_outputs():
     count = int(output.equilibrations.count)
     assert len(sol["t_atmodeller"]) == count
     assert output.atmodeller.parameters.batch_size == count
-    assert np.all(np.asarray(output.atmodeller.multi_attempt_solution.success))
+    assert np.all(np.asarray(output.atmodeller.checked_solution.success))
 
     # The interior only changes at the output rows straddling a re-equilibration
     restart_rows = set(np.searchsorted(sol["time"], sol["t_atmodeller"][1:]).tolist())

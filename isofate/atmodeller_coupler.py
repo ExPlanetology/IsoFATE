@@ -12,6 +12,8 @@ whether the solve converged. The complete Atmodeller output for every equilibrat
 afterwards, separately, by `AtmodellerCoupler.batched_output`.
 """
 
+from collections.abc import Mapping
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -145,7 +147,7 @@ class AtmodellerCoupler(eqx.Module):
         self,
         temperature: ArrayLike | None = None,
         mantle_melt_fraction: ArrayLike | None = None,
-        mass_constraints: dict[str, ArrayLike] | None = None,
+        mass_constraints: Mapping[str, ArrayLike] | None = None,
     ) -> EquilibriumModel:
         """Constructs an equilibrium model for the interior-atmosphere coupling.
 
@@ -250,6 +252,8 @@ class AtmodellerCoupler(eqx.Module):
             silicate_melt_species=melt_species,
             **melt_fraction_kwargs,
         )
+        # Atmodeller's default cold guess (ElementPotentialInitializer) converges for IsoFATE's
+        # large silicate melt reservoir from version 2.1.0 on
         model: EquilibriumModel = EquilibriumModel.from_state(
             planet, mass_constraints=mass_constraints
         )
@@ -420,7 +424,9 @@ class AtmodellerCoupler(eqx.Module):
         ).update_constraints(mass_constraints=mass_constraints)
         output = model.solve(base_solution_array)
 
-        out_dict = OutputNamedArraysDict(output.parameters, output.multi_attempt_solution)
+        out_dict = OutputNamedArraysDict(
+            output.parameters, output.checked_solution, output.initial_guess
+        )
         gas_output = out_dict.get_phase_output_from_index(GAS_PHASE_INDEX)
         melt_output = out_dict.get_phase_output_from_index(SILICATE_MELT_PHASE_INDEX)
 
@@ -441,7 +447,7 @@ class AtmodellerCoupler(eqx.Module):
             jnp.stack(gas_moles),
             jnp.stack(melt_moles),
             output.solution,
-            jnp.all(output.multi_attempt_solution.success),
+            jnp.all(output.checked_solution.success),
         )
 
     def run(

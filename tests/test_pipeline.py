@@ -1,7 +1,7 @@
 """Regression anchor for the isofate <-> atmodeller coupling (see isofate/sim.py for the
 interactive/plotting driver this is derived from).
 
-These pin the current (atmodeller v2preview) behavior of AtmodellerCoupler and isocalc so
+These pin the current (atmodeller 2.1.0) behavior of AtmodellerCoupler and isocalc so
 future refactoring has something concrete to check against. The toy scenario below was
 re-cross-checked (with the former NumPy loop driver, since retired; isocalc with euler=True
 reproduces it to round-off), by hand, against
