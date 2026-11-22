@@ -10,7 +10,7 @@ import time as TIME
 import matplotlib.pyplot as plt
 
 from isofate.constants import const
-from isofate.escape.mechanisms import XUVEscape
+from isofate.escape.mechanisms import XUVEscape, fully_convective_saturation_time
 from isofate.initial_condition import ProtosolarInitialCondition
 from isofate.isofate_coupler import isocalc
 from isofate.isoplot import isoplot
@@ -24,8 +24,6 @@ star: Star = LHS1140Star
 planet: Planet = LHS1140b
 system = System(star=star, planet=planet)
 
-# kept as plain names since the rest of this script still refers to them directly
-t_jump = star.t_jump
 # Initial atmospheric mass fraction, used by the initial condition (ProtosolarInitialCondition)
 # below; the drivers derive the atmosphere mass/fraction from the initial abundances
 f_atm = 0.01  # 0.00085
@@ -42,7 +40,7 @@ F_final = 0.17  # LHS 1140; 0.170 for GJ 699 MUSCLES; use 0.033 for GJ 1132 MUSC
 flux_model = "power law"
 stellar_type = "M1"
 # t_sat = 2e8 # XUV saturation time [yr]
-t_sat = t_jump * 1e9  # XUV saturation time [yr]
+t_sat = fully_convective_saturation_time(star.mass)  # XUV saturation time [yr]
 time = 5e9  # total simulation time [yr]
 t0 = 1e6  # start time [yr]
 t_pms = 0  # pms phase duration [yr]

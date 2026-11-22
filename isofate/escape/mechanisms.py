@@ -18,7 +18,8 @@ from abc import abstractmethod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
+from scipy.constants import giga
 
 from isofate import override
 from isofate.constants import const
@@ -65,6 +66,27 @@ class EscapeMechanism(eqx.Module):
 
 
 # ---- shared XUV-flux-model helpers -----------------------------------------------------------
+
+
+def fully_convective_saturation_time(stellar_mass: ArrayLike) -> Array:
+    """XUV saturation time [yr] of a low-mass, fully convective M dwarf.
+
+    An empirical linear fit in stellar mass, t_sat = (5.9 - 15.4 M/M_sun) Gyr. Such stars stay
+    saturated for Gyr and then drop abruptly in activity, so pair it with
+    ``XUVEscape(step_fn=True)``. Used for LHS 1140 (3.1 Gyr) and TRAPPIST-1.
+
+    Only valid for low masses: the fit reaches zero at 0.38 M_sun and is negative above, so it
+    does not apply to early M dwarfs (e.g. the ``M1Star`` preset at 0.5 M_sun) or hotter stars.
+    Source of the fit: TODO (from the LHS 1140 b work).
+
+    Args:
+        stellar_mass: Stellar mass [kg]
+
+    Returns:
+        Saturation time [yr], for ``XUVEscape(t_sat=...)``
+    """
+    saturation_time_gyr: Array = 5.9 - 15.4 * jnp.asarray(stellar_mass) / const.Ms
+    return saturation_time_gyr * giga  # Gyr to yr
 
 
 def Fxuv(t, F0, t0=1e6, t_sat=5e8, beta=-1.23, step_fn=False, F_final=0, t_pms=0, pms_factor=1e2):

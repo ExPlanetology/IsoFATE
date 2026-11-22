@@ -27,7 +27,7 @@ from isofate.integrators import (
     IsocalcModel,
     no_reequilibration,
 )
-from isofate.escape.mechanisms import XUVEscape
+from isofate.escape.mechanisms import XUVEscape, fully_convective_saturation_time
 from isofate.initial_condition import AbundanceInitialCondition, ProtosolarInitialCondition
 from isofate.atmodeller_coupler import AtmodellerCoupler
 from isofate.isofate_coupler import isocalc
@@ -57,14 +57,12 @@ def _sim_isocalc_kwargs(
     planet = LHS1140b
     system = System(star=star, planet=planet)
 
-    t_jump = star.t_jump
-
     Fp = system.insolation
     F0 = Fp * 1e-3  # use for M star
     F_final = 0.17  # LHS 1140; 0.170 for GJ 699 MUSCLES
     flux_model = "power law"
     stellar_type = "M1"
-    t_sat = t_jump * 1e9  # XUV saturation time [yr]
+    t_sat = fully_convective_saturation_time(star.mass)  # XUV saturation time [yr]
     time = 5e9  # total simulation time [yr]
     t0 = 1e6  # start time [yr]
     t_pms = 0  # pms phase duration [yr]

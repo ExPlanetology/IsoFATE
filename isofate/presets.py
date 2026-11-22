@@ -9,68 +9,38 @@ from isofate.constants import const
 from isofate.system import Planet, Star
 
 # Sun-like star
-# R_star = 1.0*Rs # [m]
-# M_star = 1.0*Ms
-# T_star = 6000 # [K]
 DefaultStar: Star = Star(radius=const.Rs, mass=const.Ms, temperature=6000)
 
 # M1 star
-# R_star = 0.5*Rs # [m]
-# M_star = 0.5*Ms
-# T_star = 3600 # [K]
 M1Star: Star = Star(radius=0.5 * const.Rs, mass=0.5 * const.Ms, temperature=3600)
 
 # K5 star
-# R_star = 0.7*Rs # [m]
-# M_star = 0.7*Ms
-# T_star = 4440 # [K]
 K5Star: Star = Star(radius=0.7 * const.Rs, mass=0.7 * const.Ms, temperature=4440)
 
 # LHS 1140
 R_star = 0.22 * const.Rs  # [m]
 M_star = 0.18 * const.Ms  # [kg]
 T_star = 3096  # [K]
-# Currently coded as a method in the class
-# t_jump = 5.9 - 15.4 * (M_star / const.Ms)
 # TODO: This was wired in, but presumably should be an override?
 # L = 0.0038 * const.Ls
 LHS1140Star: Star = Star(radius=R_star, mass=M_star, temperature=T_star)  # , luminosity=L)
 
-# # Kepler-138
-# R_star = 0.535*Rs # [m]
-# M_star = 0.535*Ms # [kg]
-# T_star = 3841 # [K]
+# Kepler-138
 Kepler138Star: Star = Star(radius=0.535 * const.Rs, mass=0.535 * const.Ms, temperature=3841)
 
 # K2-3
-# R_star = 0.546*Rs # [m]
-# M_star = 0.549*Ms # [kg]
-# T_star = 3844 # [K]
 K23Star: Star = Star(radius=0.546 * const.Rs, mass=0.549 * const.Ms, temperature=3844)
 
 # GJ 3090
-# R_star = 0.516*Rs # [m]
-# M_star = 0.519*Ms # [kg]
-# T_star = 3556 # [K]
 GJ3090Star: Star = Star(radius=0.516 * const.Rs, mass=0.519 * const.Ms, temperature=3556)
 
 # K2-18
-# R_star = 0.469*Rs # [m]
-# M_star = 0.495*Ms
-# T_star = 3500 # [K]
 K218Star: Star = Star(radius=0.469 * const.Rs, mass=0.495 * const.Ms, temperature=3500)
 
 # HAT-P-11, K4V
-# R_star = 0.752*Rs # [m]
-# M_star = 0.809*Ms # [kg]
-# T_star = 4780 # [K]
 HATP11Star: Star = Star(radius=0.752 * const.Rs, mass=0.809 * const.Ms, temperature=4780)
 
 # TRAPPIST-1
-# R_star = 0.1192*Rs # [m]
-# M_star = 0.0898*Ms # [kg]
-# T_star = 2566 # [K]
-# t_jump = 5.9 - 15.4*(M_star/Ms)
 TRAPPIST1Star: Star = Star(radius=0.1192 * const.Rs, mass=0.0898 * const.Ms, temperature=2566)
 
 # TODO: Here define some planets
