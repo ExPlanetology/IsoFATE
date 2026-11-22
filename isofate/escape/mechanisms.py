@@ -76,7 +76,8 @@ def fully_convective_saturation_time(stellar_mass: ArrayLike) -> Array:
     ``XUVEscape(step_fn=True)``. Used for LHS 1140 (3.1 Gyr) and TRAPPIST-1.
 
     Only valid for low masses: the fit reaches zero at 0.38 M_sun and is negative above, so it
-    does not apply to early M dwarfs (e.g. the ``M1Star`` preset at 0.5 M_sun) or hotter stars.
+    does not apply to early M dwarfs (e.g. the ``STARS["M1"]`` preset at 0.5 M_sun) or hotter
+    stars.
     Source of the fit: TODO (from the LHS 1140 b work).
 
     Args:

@@ -32,7 +32,7 @@ from isofate.initial_condition import AbundanceInitialCondition, ProtosolarIniti
 from isofate.atmodeller_coupler import AtmodellerCoupler
 from isofate.isofate_coupler import isocalc
 from isofate.parameters import IsocalcOptions, Parameters
-from isofate.presets import LHS1140b, LHS1140Star
+from isofate.presets import PLANETS, STARS
 from isofate.species import DEFAULT_SPECIES, SYMBOLS
 from isofate.system import System
 
@@ -53,8 +53,8 @@ def _sim_isocalc_kwargs(
     Atmodeller coupling. `f_atm` and `dynamic_phi` default to the values the regression tests
     were pinned with; `SIM_PY` holds sim.py's current values.
     """
-    star = LHS1140Star
-    planet = LHS1140b
+    star = STARS["LHS 1140"]
+    planet = PLANETS["LHS 1140 b"]
     system = System(star=star, planet=planet)
 
     Fp = system.insolation
@@ -116,7 +116,7 @@ def test_protosolar_initial_condition():
     """ProtosolarInitialCondition gives exactly the protosolar mole ratios to H, an atmospheric
     mass of exactly f_atm times the planet mass (in the species' atomic masses), and an O
     enhancement that only changes O/H."""
-    Mp = LHS1140b.mass
+    Mp = PLANETS["LHS 1140 b"].mass
     f_atm = 0.01
     y0 = np.asarray(ProtosolarInitialCondition(f_atm).abundances(Mp))
     ratios = ProtosolarInitialCondition.PROTOSOLAR_MOLE_RATIOS_TO_H
@@ -137,11 +137,12 @@ def test_protosolar_initial_condition():
 def test_abundance_initial_condition():
     """AbundanceInitialCondition returns its abundances, and rejects a mismatched length."""
     abundances = (1e45, 1e44, 1e41, 1.5e45, 1e44, 1e43, 1e43)
+    Mp = PLANETS["LHS 1140 b"].mass
     np.testing.assert_array_equal(
-        np.asarray(AbundanceInitialCondition(abundances).abundances(LHS1140b.mass)), abundances
+        np.asarray(AbundanceInitialCondition(abundances).abundances(Mp)), abundances
     )
     with pytest.raises(ValueError):
-        AbundanceInitialCondition(abundances[:-1]).abundances(LHS1140b.mass)
+        AbundanceInitialCondition(abundances[:-1]).abundances(Mp)
 
 
 def test_sim_regression():

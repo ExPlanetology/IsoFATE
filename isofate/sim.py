@@ -15,13 +15,13 @@ from isofate.initial_condition import ProtosolarInitialCondition
 from isofate.isofate_coupler import isocalc
 from isofate.isoplot import isoplot
 from isofate.parameters import IsocalcOptions, Parameters
-from isofate.presets import LHS1140b, LHS1140Star
+from isofate.presets import PLANETS, STARS
 from isofate.species import DEFAULT_SPECIES
 from isofate.system import Planet, Star, System
 
 # LHS 1140 / LHS 1140 b
-star: Star = LHS1140Star
-planet: Planet = LHS1140b
+star: Star = STARS["LHS 1140"]
+planet: Planet = PLANETS["LHS 1140 b"]
 system = System(star=star, planet=planet)
 
 # Initial atmospheric mass fraction, used by the initial condition (ProtosolarInitialCondition)
